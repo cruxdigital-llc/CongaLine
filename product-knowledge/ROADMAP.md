@@ -61,10 +61,12 @@ Goal: Migrate Aaron's locally-running OpenClaw gateway to a hardened AWS deploym
 - [x] OS hardening: openssh-server removed, sysctl lockdown, dnf-automatic enabled
 - [x] `NODE_OPTIONS="--max-old-space-size=1536"` to prevent V8 heap OOM
 
-### Epic 4: Config Integrity + Monitoring
-- [ ] Systemd timer: hash-check openclaw.json, alert on change
-- [ ] CloudWatch log group for gateway logs
-- [ ] CloudWatch alarm for config integrity alert
+### Epic 4: Config Integrity + Monitoring ✅
+- [x] Systemd timer: hash-check openclaw.json every 5 minutes (configurable via `config_check_interval_minutes`)
+- [x] CloudWatch agent shipping container logs + integrity check logs to `/openclaw/gateway`
+- [x] CloudWatch metric filter for `CONFIG_INTEGRITY_VIOLATION`
+- [x] CloudWatch alarm → SNS topic (`alert_email` configurable, no subscribers by default)
+- [ ] TODO: Move hash baseline to after OpenClaw's first boot settles (~60s delay) to avoid false positive
 
 ### Milestone: Aaron's local gateway replaced by AWS deployment ✅
 - [x] Local OpenClaw gateway stopped (launchd unloaded)

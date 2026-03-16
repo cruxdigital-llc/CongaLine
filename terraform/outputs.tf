@@ -52,3 +52,13 @@ output "ssm_connect_command" {
   description = "Command to connect via SSM"
   value       = "aws ssm start-session --target ${aws_instance.openclaw.id} --region ${var.aws_region} --profile ${var.aws_profile}"
 }
+
+output "sns_topic_arn" {
+  description = "SNS topic ARN for alerts"
+  value       = aws_sns_topic.alerts.arn
+}
+
+output "config_check_interval" {
+  description = "Config integrity check interval in minutes"
+  value       = var.config_check_interval_minutes
+}

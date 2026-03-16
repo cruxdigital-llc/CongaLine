@@ -35,10 +35,11 @@ resource "aws_launch_template" "openclaw" {
   }
 
   user_data = base64encode(templatefile("${path.module}/user-data.sh.tftpl", {
-    aws_region    = var.aws_region
-    project_name  = var.project_name
-    user_id       = "aaron"
-    slack_channel = "C0ALL272SV8"
+    aws_region                    = var.aws_region
+    project_name                  = var.project_name
+    user_id                       = "aaron"
+    slack_channel                 = "C0ALL272SV8"
+    config_check_interval_minutes = var.config_check_interval_minutes
   }))
 
   tag_specifications {
