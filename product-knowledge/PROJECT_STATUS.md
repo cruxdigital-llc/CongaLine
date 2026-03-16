@@ -29,7 +29,7 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [x] **Epic 1**: VPC + networking — complete (31 resources)
 - [x] **Epic 2**: IAM + secrets — complete (5 secrets populated)
 - [x] **Epic 3**: EC2 + Docker bootstrap — complete, Slack connected, end-to-end verified
-- [ ] **Epic 4**: Config integrity + monitoring
+- [x] **Epic 4**: Config integrity + monitoring — complete (timer + CW agent + alarm)
 - **Milestone**: Aaron's local gateway replaced by AWS deployment
 - [ ] **Epic 5**: Config template + onboarding script (user 2)
 - [ ] **Epic 6**: Multi-user Terraform (for-each pattern)
@@ -44,6 +44,7 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - Open question: which OpenClaw skills/plugins to enable and sandbox requirements
 
 ## Recent Changes
+- 2026-03-16: Epic 4 complete — config integrity timer, CloudWatch agent + alarm, SNS topic
 - 2026-03-16: Epic 3 complete — EC2 host running, OpenClaw container healthy, Slack socket mode connected, local gateway decommissioned
 - 2026-03-15: Epic 2 complete — IAM role + deny-dangerous policy, KMS key, 5 secrets populated
 - 2026-03-15: Epic 1 complete — VPC + networking (31 resources: VPC, subnets, fck-nat ASG, zero-ingress SG, NACLs, flow logs)

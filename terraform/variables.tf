@@ -15,3 +15,15 @@ variable "project_name" {
   type        = string
   default     = "openclaw"
 }
+
+variable "config_check_interval_minutes" {
+  description = "Interval in minutes for config integrity hash checks"
+  type        = number
+  default     = 5
+}
+
+variable "alert_email" {
+  description = "Email address for alert notifications (empty = no subscriber)"
+  type        = string
+  default     = ""
+}
