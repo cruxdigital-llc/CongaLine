@@ -27,3 +27,18 @@ variable "alert_email" {
   type        = string
   default     = ""
 }
+
+variable "users" {
+  description = "Map of user IDs to their config. Admin adds entries, users self-serve secrets."
+  type = map(object({
+    slack_channel = string
+  }))
+  default = {
+    UEXAMPLE01 = {
+      slack_channel = "CEXAMPLE01"
+    }
+    UEXAMPLE02 = {
+      slack_channel = "CEXAMPLE02"
+    }
+  }
+}

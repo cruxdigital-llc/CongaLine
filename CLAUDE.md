@@ -22,7 +22,7 @@ This is an infrastructure-as-code project deploying OpenClaw (autonomous AI assi
 
 ## Secrets
 
-- Secrets are in AWS Secrets Manager under `openclaw/shared/*` and `openclaw/myagent/*`
+- Secrets are in AWS Secrets Manager under `openclaw/shared/*` and `openclaw/UEXAMPLE01/*`
 - Terraform creates secrets with `REPLACE_ME` placeholders + `ignore_changes` lifecycle
 - Real values populated via `terraform/populate-secrets.sh`
 - Never put real secret values in Terraform files or state
@@ -38,7 +38,10 @@ This is an infrastructure-as-code project deploying OpenClaw (autonomous AI assi
 - OpenClaw hot-reload writes `.tmp` files next to `openclaw.json` — the config directory must be writable by the container user
 - Container needs `NODE_OPTIONS="--max-old-space-size=1536"` to avoid V8 heap OOM
 - Container memory limit: 2GB (1.5GB was too low)
-- Slack channel for Aaron: `CEXAMPLE01`
+- Users are keyed by Slack member ID (e.g., `UEXAMPLE01`), not username
+- Aaron's member ID: `UEXAMPLE01`, Slack channel: `CEXAMPLE01`
+- Per-user secrets under `openclaw/{member_id}/*` — users self-serve via `scripts/onboard-user.sh`
+- Shared secrets (Slack tokens) under `openclaw/shared/*` — managed by Terraform
 
 ## Planning
 
