@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "aws_profile" {
   description = "AWS CLI profile name"
   type        = string
-  default     = "167595588574_AdministratorAccess"
+  default     = "openclaw"
 }
 
 variable "project_name" {
