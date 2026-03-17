@@ -33,7 +33,13 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - **Milestone**: Aaron's local gateway replaced by AWS deployment
 - [x] **Epics 5+6**: Multi-user onboarding + Slack router — complete
 
-### 2. Backlog / Upcoming
+### 2. SSM Port Forwarding for Web UI
+*Lead: Architect*
+- [x] **Spec complete**: `specs/2026-03-17_feature_ssm-port-forwarding/`
+- [ ] **Implementation**: Add `gateway_port` to users variable, publish container port, add SSM output commands
+- [ ] **Phase 2**: Per-user SSM documents, IAM restrictions, gateway auth tokens
+
+### 3. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (egress allowlisting, GuardDuty, Config rules)
 
