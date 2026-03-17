@@ -106,6 +106,22 @@ client.on('slack_event', async ({ body, ack }) => {
   if (ack) await ack();
 
   const eventType = body?.event?.type || body?.type || 'unknown';
+  const subtype = body?.event?.subtype;
+
+  // Drop events the containers should never see:
+  // - app_mention: Slack fires both 'message' and 'app_mention' for @-mentions
+  // - bot_message / message_changed / message_deleted: bot's own activity echoed back
+  if (eventType === 'app_mention') {
+    return;
+  }
+  if (subtype && ['bot_message', 'message_changed', 'message_deleted'].includes(subtype)) {
+    return;
+  }
+  // Drop messages from bots (covers bot users that don't use the bot_message subtype)
+  if (body?.event?.bot_id) {
+    return;
+  }
+
   const route = resolveTarget(body);
 
   if (route) {
