@@ -13,6 +13,12 @@ USER_ID="${1:?Usage: $0 <user_id> [aws_profile] [aws_region]}"
 AWS_PROFILE="${2:-openclaw}"
 AWS_REGION="${3:-us-east-2}"
 
+# Validate USER_ID to prevent shell injection (Slack member IDs are uppercase alphanumeric)
+if [[ ! "$USER_ID" =~ ^[A-Z0-9]+$ ]]; then
+  echo "ERROR: Invalid user ID '$USER_ID'. Must be uppercase alphanumeric (e.g., UEXAMPLE01)."
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TF_DIR="$SCRIPT_DIR/../terraform"
 
@@ -119,6 +125,15 @@ echo "Starting SSM port forward on localhost:$LOCAL_PORT..."
 echo "Open http://localhost:$LOCAL_PORT in your browser"
 echo ""
 
+cleanup() {
+  if [ -n "${TUNNEL_PID:-}" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
+    echo "Closing SSM tunnel (pid $TUNNEL_PID)..."
+    kill "$TUNNEL_PID" 2>/dev/null
+    wait "$TUNNEL_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
 aws ssm start-session \
   --target "$INSTANCE_ID" \
   --region "$AWS_REGION" \
@@ -130,24 +145,32 @@ TUNNEL_PID=$!
 # Give the tunnel a moment to establish
 sleep 3
 
-# --- Step 4: Wait for user to connect, then approve pairing ---
-# --- Step 4: Check if device pairing is needed ---
+# --- Step 4: Poll for device pairing approval ---
 echo ""
-echo "Checking for pending pairing requests..."
+echo "Open http://localhost:$LOCAL_PORT in your browser and paste the token."
+echo "Waiting for a pending pairing request (polling every 10s, timeout 5m)..."
 
-PENDING=$(run_remote "docker exec openclaw-$USER_ID npx openclaw devices list 2>&1") || true
-HAS_PENDING=$(echo "$PENDING" | grep -c "Pending" || true)
+PAIRING_APPROVED=false
+for _ in $(seq 1 30); do
+  PENDING=$(run_remote "docker exec openclaw-$USER_ID npx openclaw devices list 2>&1") || true
+  HAS_PENDING=$(echo "$PENDING" | grep -c "Pending" || true)
 
-if [ "$HAS_PENDING" -gt 0 ]; then
-  REQUEST_ID=$(echo "$PENDING" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1) || true
-  if [ -n "${REQUEST_ID:-}" ]; then
-    echo "Approving device: $REQUEST_ID"
-    run_remote "docker exec openclaw-$USER_ID npx openclaw devices approve $REQUEST_ID 2>&1" >/dev/null || true
-    echo "Device approved! Refresh your browser if needed."
+  if [ "$HAS_PENDING" -gt 0 ]; then
+    REQUEST_ID=$(echo "$PENDING" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1) || true
+    if [ -n "${REQUEST_ID:-}" ]; then
+      echo "Approving device: $REQUEST_ID"
+      run_remote "docker exec openclaw-$USER_ID npx openclaw devices approve $REQUEST_ID 2>&1" >/dev/null || true
+      echo "Device approved! Refresh your browser if needed."
+      PAIRING_APPROVED=true
+      break
+    fi
   fi
-else
-  echo "No pending pairing requests. If this is a new device, open the browser"
-  echo "and paste the token first, then re-run this script to approve pairing."
+  sleep 10
+done
+
+if [ "$PAIRING_APPROVED" = false ]; then
+  echo "No pairing request detected within 5 minutes."
+  echo "You can approve manually via SSM if needed."
 fi
 
 echo ""
