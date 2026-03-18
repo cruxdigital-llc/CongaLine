@@ -115,7 +115,7 @@ func secretsDeleteRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if !secretForce {
-		if !ui.Confirm(fmt.Sprintf("Delete secret '%s' for user %s?", args[0], memberID)) {
+		if !ui.Confirm(fmt.Sprintf("Delete secret '%s' for %s?", args[0], memberID)) {
 			fmt.Println("Cancelled.")
 			return nil
 		}

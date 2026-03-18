@@ -50,7 +50,7 @@ var authLoginCmd = &cobra.Command{
 
 var authStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show current AWS identity and OpenClaw user",
+	Short: "Show current AWS identity and Slack Member ID",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 		if err := ensureClients(ctx); err != nil {
@@ -62,14 +62,14 @@ var authStatusCmd = &cobra.Command{
 			return fmt.Errorf("session expired or invalid. Run `cruxclaw auth login` to authenticate.\n%w", err)
 		}
 
-		fmt.Printf("Identity:  %s\n", aws.ToString(out.Arn))
-		fmt.Printf("Account:   %s\n", aws.ToString(out.Account))
+		fmt.Printf("Identity:        %s\n", aws.ToString(out.Arn))
+		fmt.Printf("Account:         %s\n", aws.ToString(out.Account))
 
 		identity, err := discovery.ResolveIdentity(ctx, clients.STS, clients.SSM)
 		if err == nil && identity.MemberID != "" {
-			fmt.Printf("User:      %s\n", identity.MemberID)
+			fmt.Printf("Slack Member ID: %s\n", identity.MemberID)
 		} else {
-			fmt.Println("User:      (not mapped — use --user or ask admin)")
+			fmt.Println("Slack Member ID: (not mapped — use --user or ask admin)")
 		}
 
 		return nil

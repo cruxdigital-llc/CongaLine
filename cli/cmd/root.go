@@ -40,7 +40,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagRegion, "region", "", "AWS region (default: from config)")
 	rootCmd.PersistentFlags().StringVar(&flagProfile, "profile", "", "AWS CLI profile name")
-	rootCmd.PersistentFlags().StringVar(&flagUser, "user", "", "OpenClaw member ID (auto-detected from IAM if omitted)")
+	rootCmd.PersistentFlags().StringVar(&flagUser, "user", "", "Slack Member ID (auto-detected from IAM if omitted)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output")
 }
 
@@ -101,13 +101,13 @@ func resolveUserIDWithOverride(ctx context.Context, allowOverride bool) (string,
 			return "", err
 		}
 		if !allowOverride && identity.MemberID != "" && flagUser != identity.MemberID {
-			return "", fmt.Errorf("cannot operate on another user's resources. You are %s", identity.MemberID)
+			return "", fmt.Errorf("cannot operate on another user's resources. Your Slack Member ID is %s", identity.MemberID)
 		}
 		return flagUser, nil
 	}
 
 	if identity.MemberID == "" {
-		return "", fmt.Errorf("your IAM identity (%s) is not mapped to an OpenClaw user.\nUse --user <member_id> or ask admin to update the mapping", identity.SessionName)
+		return "", fmt.Errorf("your IAM identity (%s) is not mapped to a Slack Member ID.\nUse --user <SLACK_MEMBER_ID> or ask admin to update the mapping", identity.SessionName)
 	}
 	return identity.MemberID, nil
 }
