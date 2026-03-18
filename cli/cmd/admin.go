@@ -30,7 +30,7 @@ func init() {
 	}
 
 	addUserCmd := &cobra.Command{
-		Use:   "add-user <member_id> <slack_channel>",
+		Use:   "add-user <slack_member_id> <slack_channel>",
 		Short: "Provision a new user on the instance",
 		Args:  cobra.ExactArgs(2),
 		RunE:  adminAddUserRun,
@@ -45,7 +45,7 @@ func init() {
 	}
 
 	removeUserCmd := &cobra.Command{
-		Use:   "remove-user <member_id>",
+		Use:   "remove-user <slack_member_id>",
 		Short: "Remove a user from the instance",
 		Args:  cobra.ExactArgs(1),
 		RunE:  adminRemoveUserRun,
@@ -189,7 +189,7 @@ func adminListUsersRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	headers := []string{"MEMBER ID", "SLACK CHANNEL", "GATEWAY PORT"}
+	headers := []string{"SLACK MEMBER ID", "SLACK CHANNEL", "GATEWAY PORT"}
 	var rows [][]string
 	for _, e := range entries {
 		// Extract member ID from parameter name
