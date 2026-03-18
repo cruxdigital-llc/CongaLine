@@ -31,4 +31,4 @@ checksum:
 release:
   github:
     owner: cruxdigital-llc
-    name: openclaw-template
+    name: crux-claw
