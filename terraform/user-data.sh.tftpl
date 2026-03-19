@@ -165,13 +165,21 @@ echo "=== Setting up agent: ${agent_name} (type: ${agent_config.type}, container
 
 %{ if agent_config.type == "user" ~}
 # --- Discover and fetch this user's secrets ---
-USER_SECRET_NAMES=$(aws secretsmanager list-secrets \
+AGENT_SECRET_NAMES=$(aws secretsmanager list-secrets \
   --filter Key=name,Values="openclaw/${agent_config.member_id}/" \
   --query 'SecretList[].Name' --output text \
   --region "$AWS_REGION" 2>/dev/null || echo "")
+AGENT_SECRET_PREFIX="openclaw/${agent_config.member_id}/"
+%{ else ~}
+# --- Discover and fetch this team's secrets ---
+AGENT_SECRET_NAMES=$(aws secretsmanager list-secrets \
+  --filter Key=name,Values="openclaw/teams/${agent_name}/" \
+  --query 'SecretList[].Name' --output text \
+  --region "$AWS_REGION" 2>/dev/null || echo "")
+AGENT_SECRET_PREFIX="openclaw/teams/${agent_name}/"
 %{ endif ~}
 
-# Build env file: shared bot token + signing secret + user secrets
+# Build env file: shared bot token + signing secret + agent-specific secrets
 # Note: APP_TOKEN is NOT included — router holds it
 cat > /opt/openclaw/config/$CONTAINER_ID.env << ENVFILE
 SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN
@@ -180,15 +188,13 @@ GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 ENVFILE
 
-%{ if agent_config.type == "user" ~}
-if [ -n "$USER_SECRET_NAMES" ]; then
-  for SECRET_PATH in $USER_SECRET_NAMES; do
+if [ -n "$AGENT_SECRET_NAMES" ]; then
+  for SECRET_PATH in $AGENT_SECRET_NAMES; do
     SECRET_VALUE=$(get_secret "$SECRET_PATH")
-    SECRET_NAME=$(echo "$SECRET_PATH" | sed "s|openclaw/${agent_config.member_id}/||" | tr '[:lower:]-' '[:upper:]_')
+    SECRET_NAME=$(echo "$SECRET_PATH" | sed "s|$AGENT_SECRET_PREFIX||" | tr '[:lower:]-' '[:upper:]_')
     echo "$SECRET_NAME=$SECRET_VALUE" >> /opt/openclaw/config/$CONTAINER_ID.env
   done
 fi
-%{ endif ~}
 chmod 0400 /opt/openclaw/config/$CONTAINER_ID.env
 
 echo "  Secrets loaded for $CONTAINER_ID"

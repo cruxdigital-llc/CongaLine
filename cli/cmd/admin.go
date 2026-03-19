@@ -296,6 +296,12 @@ func adminListAgentsRun(cmd *cobra.Command, args []string) error {
 	if userErr != nil && teamErr != nil {
 		return fmt.Errorf("failed to query agents: %w", userErr)
 	}
+	if userErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to query user agents: %v\n", userErr)
+	}
+	if teamErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to query team agents: %v\n", teamErr)
+	}
 
 	headers := []string{"NAME", "TYPE", "MEMBER ID / CHANNEL", "GATEWAY PORT"}
 	var rows [][]string
