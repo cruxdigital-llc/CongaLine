@@ -16,12 +16,26 @@ SLACK_SIGNING_SECRET=$(get_secret "openclaw/shared/slack-signing-secret")
 GOOGLE_CLIENT_ID=$(get_secret "openclaw/shared/google-client-id")
 GOOGLE_CLIENT_SECRET=$(get_secret "openclaw/shared/google-client-secret")
 
+# Discover per-team secrets (e.g. openclaw/teams/<team_name>/anthropic-api-key)
+TEAM_SECRET_NAMES=$(aws secretsmanager list-secrets \
+  --filter Key=name,Values="openclaw/teams/$TEAM_NAME/" \
+  --query 'SecretList[].Name' --output text \
+  --region "$AWS_REGION" 2>/dev/null || echo "")
+
 cat > /opt/openclaw/config/$TEAM_NAME.env << ENVFILE
 SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN
 SLACK_SIGNING_SECRET=$SLACK_SIGNING_SECRET
 GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 ENVFILE
+
+if [ -n "$TEAM_SECRET_NAMES" ]; then
+  for SECRET_PATH in $TEAM_SECRET_NAMES; do
+    SECRET_VALUE=$(get_secret "$SECRET_PATH")
+    SECRET_NAME=$(echo "$SECRET_PATH" | sed "s|openclaw/teams/$TEAM_NAME/||" | tr '[:lower:]-' '[:upper:]_')
+    echo "$SECRET_NAME=$SECRET_VALUE" >> /opt/openclaw/config/$TEAM_NAME.env
+  done
+fi
 chmod 0400 /opt/openclaw/config/$TEAM_NAME.env
 
 cat > /opt/openclaw/config/$TEAM_NAME-openclaw.json << OCCONFIG

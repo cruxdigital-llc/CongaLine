@@ -29,17 +29,17 @@ alert_email = ""  # Set to receive alert emails
 # type="team": Channel-based team agents, keyed by team name
 agents = {
   # Individual agent (DM-only):
-  # aaron = {
+  # myname = {
   #   type         = "user"
-  #   member_id    = "UA13HEGTS"
+  #   member_id    = "UXXXXXXXXXX"
   #   gateway_port = 18789
-  #   iam_identity = "aaronstone"
+  #   iam_identity = "myname"
   # }
   #
   # Team agent (channel-based):
   # devops = {
   #   type          = "team"
-  #   slack_channel = "C0ALL272SV8"
+  #   slack_channel = "CXXXXXXXXXX"
   #   gateway_port  = 18800
   # }
 }
