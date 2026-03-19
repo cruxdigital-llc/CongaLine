@@ -1,6 +1,5 @@
 set -euxo pipefail
 MEMBER_ID="{{.MemberID}}"
-SLACK_CHANNEL="{{.SlackChannel}}"
 AWS_REGION="{{.AWSRegion}}"
 GATEWAY_PORT="{{.GatewayPort}}"
 
@@ -9,7 +8,7 @@ get_secret() {
     --secret-id "$1" --query SecretString --output text --region "$AWS_REGION"
 }
 
-echo "=== Setting up user: $MEMBER_ID ==="
+echo "=== Setting up user agent: $MEMBER_ID ==="
 
 SLACK_BOT_TOKEN=$(get_secret "openclaw/shared/slack-bot-token")
 SLACK_SIGNING_SECRET=$(get_secret "openclaw/shared/slack-signing-secret")
@@ -79,10 +78,12 @@ cat > /opt/openclaw/config/$MEMBER_ID-openclaw.json << OCCONFIG
       "signingSecret": "$SLACK_SIGNING_SECRET",
       "webhookPath": "/slack/events",
       "userTokenReadOnly": true,
-      "groupPolicy": "allowlist",
+      "groupPolicy": "disabled",
+      "dmPolicy": "allowlist",
+      "allowFrom": ["$MEMBER_ID"],
+      "dm": { "enabled": true },
       "streaming": "partial",
-      "nativeStreaming": true,
-      "channels": { "$SLACK_CHANNEL": { "allow": true, "requireMention": false } }
+      "nativeStreaming": true
     }
   },
   "gateway": { "port": 18789, "mode": "local", "bind": "lan" },
@@ -135,11 +136,10 @@ systemctl daemon-reload
 systemctl enable openclaw-$MEMBER_ID.service
 systemctl start openclaw-$MEMBER_ID.service
 
-# Update routing config with the new user's channel + member entry
+# Update routing config with the user's member entry (DM routing only)
 node -e "
   const fs = require('fs');
   const cfg = JSON.parse(fs.readFileSync('/opt/openclaw/config/routing.json', 'utf-8'));
-  cfg.channels['$SLACK_CHANNEL'] = 'http://openclaw-$MEMBER_ID:18789/slack/events';
   cfg.members['$MEMBER_ID'] = 'http://openclaw-$MEMBER_ID:18789/slack/events';
   fs.writeFileSync('/opt/openclaw/config/routing.json', JSON.stringify(cfg, null, 2));
 "
@@ -147,4 +147,4 @@ node -e "
 # Connect router to the new user's network so it can reach the container
 docker network connect "openclaw-$MEMBER_ID" openclaw-router 2>/dev/null || true
 
-echo "=== User $MEMBER_ID setup complete ==="
+echo "=== User agent $MEMBER_ID setup complete ==="
