@@ -26,7 +26,7 @@ var refreshCmd = &cobra.Command{
 			return err
 		}
 
-		agentName, err := resolveAgentNameAdmin(ctx)
+		agentName, err := resolveAgentName(ctx)
 		if err != nil {
 			return err
 		}
