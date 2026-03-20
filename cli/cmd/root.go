@@ -110,29 +110,17 @@ func validateChannelID(id string) error {
 	return nil
 }
 
-// resolveAgentName returns the caller's agent name. If allowOverride is true,
-// the --agent flag can specify a different agent (for admin commands).
-// User-facing commands should pass allowOverride=false to prevent
-// cross-user operations.
+// resolveAgentName returns the agent name to operate on.
+// Uses --agent flag if provided, otherwise auto-detects from IAM identity.
+// Access control is enforced by IAM, not the CLI.
 func resolveAgentName(ctx context.Context) (string, error) {
-	return resolveAgentNameWithOverride(ctx, false)
-}
+	if flagAgent != "" {
+		return flagAgent, nil
+	}
 
-func resolveAgentNameAdmin(ctx context.Context) (string, error) {
-	return resolveAgentNameWithOverride(ctx, true)
-}
-
-func resolveAgentNameWithOverride(ctx context.Context, allowOverride bool) (string, error) {
 	identity, err := discovery.ResolveIdentity(ctx, clients.STS, clients.SSM)
 	if err != nil {
 		return "", err
-	}
-
-	if flagAgent != "" {
-		if !allowOverride && identity.AgentName != "" && flagAgent != identity.AgentName {
-			return "", fmt.Errorf("cannot operate on another user's resources. Your agent name is %s", identity.AgentName)
-		}
-		return flagAgent, nil
 	}
 
 	if identity.AgentName == "" {
