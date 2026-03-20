@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"text/template"
 	"time"
@@ -21,7 +20,8 @@ var refreshCmd = &cobra.Command{
 	Use:   "refresh",
 	Short: "Restart your container with fresh secrets",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx, cancel := commandContext()
+		defer cancel()
 		if err := ensureClients(ctx); err != nil {
 			return err
 		}

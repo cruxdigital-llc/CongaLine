@@ -33,7 +33,7 @@ func init() {
 }
 
 func connectRun(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := commandContext()
 	defer cancel()
 
 	if err := tunnel.CheckPlugin(); err != nil {
@@ -97,7 +97,7 @@ func connectRun(cmd *cobra.Command, args []string) error {
 
 	// Device pairing poll (background)
 	if !connectNoPairing {
-		go pollDevicePairing(ctx, instanceID, agentName)
+		go pollDevicePairing(ctx, instanceID, agentName, flagVerbose)
 	}
 
 	// Wait for tunnel exit or signal
@@ -119,7 +119,7 @@ func connectRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func pollDevicePairing(ctx context.Context, instanceID, agentName string) {
+func pollDevicePairing(ctx context.Context, instanceID, agentName string, verbose bool) {
 	fmt.Println("Watching for device pairing requests...")
 
 	for i := 0; i < 30; i++ {
@@ -132,6 +132,12 @@ func pollDevicePairing(ctx context.Context, instanceID, agentName string) {
 		listScript := fmt.Sprintf("docker exec openclaw-%s npx openclaw devices list --json 2>&1", agentName)
 		result, err := awsutil.RunCommand(ctx, clients.SSM, instanceID, listScript, 30*time.Second)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[verbose] device pairing poll error: %v\n", err)
+			}
 			continue
 		}
 
@@ -142,6 +148,9 @@ func pollDevicePairing(ctx context.Context, instanceID, agentName string) {
 		approveScript := fmt.Sprintf("docker exec openclaw-%s npx openclaw devices approve --latest 2>&1", agentName)
 		result, err = awsutil.RunCommand(ctx, clients.SSM, instanceID, approveScript, 30*time.Second)
 		if err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[verbose] device pairing approve error: %v\n", err)
+			}
 			continue
 		}
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	awsutil "github.com/cruxdigital-llc/openclaw-template/cli/internal/aws"
 )
 
@@ -19,7 +18,7 @@ type AgentConfig struct {
 	IAMIdentity   string `json:"iam_identity,omitempty"`
 }
 
-func ResolveAgent(ctx context.Context, ssmClient *ssm.Client, name string) (*AgentConfig, error) {
+func ResolveAgent(ctx context.Context, ssmClient awsutil.SSMClient, name string) (*AgentConfig, error) {
 	paramName := fmt.Sprintf("/openclaw/agents/%s", name)
 	value, err := awsutil.GetParameter(ctx, ssmClient, paramName)
 	if err != nil {
@@ -34,7 +33,7 @@ func ResolveAgent(ctx context.Context, ssmClient *ssm.Client, name string) (*Age
 	return &cfg, nil
 }
 
-func ResolveAgentByIAM(ctx context.Context, ssmClient *ssm.Client, iamIdentity string) (*AgentConfig, error) {
+func ResolveAgentByIAM(ctx context.Context, ssmClient awsutil.SSMClient, iamIdentity string) (*AgentConfig, error) {
 	entries, err := awsutil.GetParametersByPath(ctx, ssmClient, "/openclaw/agents/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query agents: %w", err)
@@ -55,7 +54,7 @@ func ResolveAgentByIAM(ctx context.Context, ssmClient *ssm.Client, iamIdentity s
 	return nil, fmt.Errorf("no agent found with iam_identity %q", iamIdentity)
 }
 
-func ListAgents(ctx context.Context, ssmClient *ssm.Client) ([]AgentConfig, error) {
+func ListAgents(ctx context.Context, ssmClient awsutil.SSMClient) ([]AgentConfig, error) {
 	entries, err := awsutil.GetParametersByPath(ctx, ssmClient, "/openclaw/agents/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query agents: %w", err)

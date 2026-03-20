@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -65,7 +64,8 @@ var authStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show current AWS identity and agent mapping",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
+		ctx, cancel := commandContext()
+		defer cancel()
 		if err := ensureClients(ctx); err != nil {
 			return err
 		}

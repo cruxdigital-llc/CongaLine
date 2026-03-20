@@ -10,7 +10,7 @@ import (
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
-func GetParameter(ctx context.Context, client *ssm.Client, name string) (string, error) {
+func GetParameter(ctx context.Context, client SSMClient, name string) (string, error) {
 	out, err := client.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String(name),
 	})
@@ -20,7 +20,7 @@ func GetParameter(ctx context.Context, client *ssm.Client, name string) (string,
 	return aws.ToString(out.Parameter.Value), nil
 }
 
-func PutParameter(ctx context.Context, client *ssm.Client, name, value string) error {
+func PutParameter(ctx context.Context, client SSMClient, name, value string) error {
 	_, err := client.PutParameter(ctx, &ssm.PutParameterInput{
 		Name:      aws.String(name),
 		Value:     aws.String(value),
@@ -30,7 +30,7 @@ func PutParameter(ctx context.Context, client *ssm.Client, name, value string) e
 	return err
 }
 
-func DeleteParameter(ctx context.Context, client *ssm.Client, name string) error {
+func DeleteParameter(ctx context.Context, client SSMClient, name string) error {
 	_, err := client.DeleteParameter(ctx, &ssm.DeleteParameterInput{
 		Name: aws.String(name),
 	})
@@ -42,7 +42,7 @@ type ParameterEntry struct {
 	Value string
 }
 
-func GetParametersByPath(ctx context.Context, client *ssm.Client, path string) ([]ParameterEntry, error) {
+func GetParametersByPath(ctx context.Context, client SSMClient, path string) ([]ParameterEntry, error) {
 	var entries []ParameterEntry
 	var nextToken *string
 
