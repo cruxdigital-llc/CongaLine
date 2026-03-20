@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"time"
 
 	awsutil "github.com/cruxdigital-llc/openclaw-template/cli/internal/aws"
 	"github.com/cruxdigital-llc/openclaw-template/cli/internal/discovery"
@@ -13,14 +14,15 @@ import (
 
 const defaultInstanceTag = "openclaw-host"
 
-var validIDPattern = regexp.MustCompile(`^[A-Z0-9]+$`)
-var validChannelPattern = regexp.MustCompile(`^[A-Z0-9]+$`)
+var validMemberIDPattern = regexp.MustCompile(`^U[A-Z0-9]{10}$`)
+var validChannelIDPattern = regexp.MustCompile(`^C[A-Z0-9]{10}$`)
 
 var (
 	flagRegion  string
 	flagProfile string
 	flagAgent   string
 	flagVerbose bool
+	flagTimeout time.Duration
 
 	clients *awsutil.Clients
 
@@ -53,6 +55,12 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagProfile, "profile", "", "AWS CLI profile name (default: auto-detect from active SSO session)")
 	rootCmd.PersistentFlags().StringVar(&flagAgent, "agent", "", "Agent name (auto-detected from IAM if omitted)")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output")
+	rootCmd.PersistentFlags().DurationVar(&flagTimeout, "timeout", 5*time.Minute, "Global timeout for AWS operations")
+}
+
+// commandContext returns a context with the global timeout applied.
+func commandContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), flagTimeout)
 }
 
 func Execute() {
@@ -97,15 +105,15 @@ func resolveProfile() (string, *awsutil.AWSProfileInfo) {
 }
 
 func validateMemberID(id string) error {
-	if !validIDPattern.MatchString(id) {
-		return fmt.Errorf("invalid member ID %q: must be uppercase alphanumeric (e.g., UXXXXXXXXXX)", id)
+	if !validMemberIDPattern.MatchString(id) {
+		return fmt.Errorf("invalid Slack member ID %q: must start with 'U' followed by 10 alphanumeric characters (e.g., U0123456789)", id)
 	}
 	return nil
 }
 
 func validateChannelID(id string) error {
-	if !validChannelPattern.MatchString(id) {
-		return fmt.Errorf("invalid channel ID %q: must be uppercase alphanumeric (e.g., CXXXXXXXXXX)", id)
+	if !validChannelIDPattern.MatchString(id) {
+		return fmt.Errorf("invalid Slack channel ID %q: must start with 'C' followed by 10 alphanumeric characters (e.g., C0123456789)", id)
 	}
 	return nil
 }

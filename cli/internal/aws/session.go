@@ -14,10 +14,10 @@ import (
 
 type Clients struct {
 	Config         aws.Config
-	EC2            *ec2.Client
-	SSM            *ssm.Client
-	STS            *sts.Client
-	SecretsManager *secretsmanager.Client
+	EC2            EC2Client
+	SSM            SSMClient
+	STS            STSClient
+	SecretsManager SecretsManagerClient
 }
 
 func NewClients(ctx context.Context, region, profile string) (*Clients, error) {

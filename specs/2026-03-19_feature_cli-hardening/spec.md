@@ -777,3 +777,15 @@ Phase 5 (admin.go split) ← Phase 4 (tests)          ← Phase 3
 ```
 
 All phases are independently mergeable. Phase 3 (refactoring) should be a single commit to avoid half-migrated state.
+
+---
+
+## Implementation Divergences from Spec
+
+| Spec Item | Implementation | Reason |
+|-----------|---------------|--------|
+| CLIContext struct (6e) | Deferred | Interfaces (the critical path for testability) were implemented. The struct migration is organizational and can be done separately without blocking test coverage. |
+| Executor migration in command handlers (6a) | HostExecutor + SSMExecutor created; command handlers not migrated | Tied to CLIContext. Commands still call `awsutil.RunCommand` directly. Migration is a future task for local mode enablement. |
+| `--timeout 0` minimum validation | Not implemented | Zero timeout creates an immediately-cancelled context, which fails fast with a clear error. Acceptable behavior. |
+| `params_test.go` (4.7) | Deferred | Same mock pattern as secrets_test.go. Lower priority — params functions are thin wrappers. |
+| `agent_test.go` (4.8) | Deferred | Requires mock SSM for GetParametersByPath. Lower priority than RunCommand and SetSecret tests. |

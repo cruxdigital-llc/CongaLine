@@ -8,7 +8,50 @@
 - **Plan defined**: `plan.md` — 6 phases, ordered by risk reduction
 - **Spec defined**: `spec.md` — detailed implementation spec with code examples
 
-### Files Created
+### 2026-03-19 — Implementation Session
+- **Session resumed**: Beginning implementation, Phase 1-7
+- **Active Capabilities**: File editing (Read/Write/Edit), Bash (go build/test), Glob/Grep
+- **Phases completed**: 1 (bug fixes), 2 (validation/UX), 3 (interfaces, partial), 4 (tests), 5 (admin split), 6 (uptime display), 7 (CI)
+- **Phases deferred**: CLIContext struct migration (3.7-3.10), params_test.go (4.7), agent_test.go (4.8)
+
+### Files Modified (Implementation Phase)
+- `cli/cmd/admin.go` — trimmed to command definitions + init() + list-agents
+- `cli/cmd/admin_setup.go` — **new** — extracted setup command
+- `cli/cmd/admin_provision.go` — **new** — extracted add-user, add-team, resolveGatewayPort, validateAgentName
+- `cli/cmd/admin_remove.go` — **new** — extracted remove-agent with error collection
+- `cli/cmd/admin_cycle.go` — **new** — extracted cycle-host
+- `cli/cmd/root.go` — tighter Slack ID validation, --timeout flag, commandContext()
+- `cli/cmd/secrets.go` — env var preview for argument path
+- `cli/cmd/status.go` — formatUptime helper, human-readable uptime display
+- `cli/cmd/connect.go` — pollDevicePairing verbose logging + clean context exit
+- `cli/cmd/auth.go` — commandContext() migration
+- `cli/cmd/logs.go` — commandContext() migration
+- `cli/cmd/refresh.go` — commandContext() migration
+- `cli/internal/aws/interfaces.go` — **new** — SSMClient, SecretsManagerClient, EC2Client, STSClient interfaces
+- `cli/internal/aws/session.go` — Clients struct uses interface types
+- `cli/internal/aws/ssm.go` — RunCommand accepts SSMClient interface
+- `cli/internal/aws/params.go` — all functions accept SSMClient interface
+- `cli/internal/aws/secrets.go` — all functions accept SecretsManagerClient interface, DeleteSecret error wrapping
+- `cli/internal/aws/ec2.go` — all functions accept EC2Client interface
+- `cli/internal/executor/executor.go` — **new** — HostExecutor interface + Result type
+- `cli/internal/executor/ssm.go` — **new** — SSMExecutor implementation
+- `cli/internal/discovery/instance.go` — accepts awsutil.EC2Client interface
+- `cli/internal/discovery/agent.go` — accepts awsutil.SSMClient interface
+- `cli/internal/discovery/identity.go` — accepts awsutil.STSClient + SSMClient interfaces
+- `cli/internal/tunnel/tunnel.go` — accepts awsutil.SSMClient interface
+- `cli/internal/ui/prompt.go` — added ConfirmWith, TextPromptWith, TextPromptWithDefaultFrom (io.Reader/Writer)
+- `.github/workflows/ci.yml` — added test + coverage steps
+
+### Test Files Created
+- `cli/cmd/status_test.go` — parseKeyValues, splitStats, formatUptime
+- `cli/cmd/secrets_test.go` — secretNameToEnvVar
+- `cli/cmd/root_test.go` — validateAgentName, validateMemberID, validateChannelID
+- `cli/internal/aws/ssm_test.go` — RunCommand (5 test cases with mock SSMClient)
+- `cli/internal/aws/secrets_test.go` — SetSecret, ListSecrets, DeleteSecret (7 test cases)
+- `cli/internal/discovery/identity_test.go` — ARN session name extraction
+- `cli/internal/ui/prompt_test.go` — ConfirmWith, TextPromptWith, TextPromptWithDefaultFrom
+
+### Files Created (Spec Phase)
 - `specs/2026-03-19_feature_cli-hardening/requirements.md`
 - `specs/2026-03-19_feature_cli-hardening/plan.md`
 - `specs/2026-03-19_feature_cli-hardening/spec.md`
@@ -21,7 +64,15 @@
 4. **Slack ID validation tightened**: `U` + 10 chars for members, `C` + 10 chars for channels
 5. **Out of scope**: Color output, `--json` flag, `auth login` auto-exec, LocalStack E2E tests
 
-## Persona Reviews
+### 2026-03-19 — Verification Session
+- **Automated verification**: `go build` PASS, `go vet` PASS, `go test` 28/28 PASS, `gofmt` PASS (1 file fixed)
+- **Persona verification**: All 3 personas APPROVE (QA notes: resolveGatewayPort and remove-agent cleanup not directly testable without CLIContext)
+- **Standards gate**: All security standards PASS (post-implementation)
+- **Spec retrospection**: 5 divergences documented (all deferred items, no regressions)
+- **Test sync**: No stale references, mock alignment verified, all new public methods covered
+- **Status**: COMPLETE
+
+## Persona Reviews (Spec Phase)
 
 ### Product Manager
 **Verdict**: Approve
