@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -27,7 +28,7 @@ func init() {
 		Short: "Connect to OpenClaw web UI via SSM tunnel",
 		RunE:  connectRun,
 	}
-	connectCmd.Flags().IntVar(&connectLocalPort, "local-port", 18789, "Local port for tunnel")
+	connectCmd.Flags().IntVar(&connectLocalPort, "local-port", 0, "Local port for tunnel (default: agent's gateway port)")
 	connectCmd.Flags().BoolVar(&connectNoPairing, "no-pairing", false, "Skip device pairing poll")
 	rootCmd.AddCommand(connectCmd)
 }
@@ -76,26 +77,26 @@ func connectRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("gateway token not found. Container may not have started yet.\nTry: cruxclaw status")
 	}
 
-	fmt.Println()
-	fmt.Println("════════════════════════════════════════")
-	fmt.Println("  Gateway Token (paste into browser):")
-	fmt.Printf("  %s\n", token)
-	fmt.Println("════════════════════════════════════════")
-	fmt.Println()
+	// Default local port to the agent's gateway port for stable per-agent URLs
+	localPort := connectLocalPort
+	if localPort == 0 {
+		localPort = agentCfg.GatewayPort
+	}
 
 	// Switch to unbounded context for long-lived tunnel
 	tunnelCtx, tunnelCancel := context.WithCancel(context.Background())
 	defer tunnelCancel()
 
 	// Start tunnel
-	fmt.Printf("Starting tunnel: localhost:%d → instance:%d\n", connectLocalPort, agentCfg.GatewayPort)
+	fmt.Printf("Starting tunnel: localhost:%d → instance:%d\n", localPort, agentCfg.GatewayPort)
 
-	tun, err := tunnel.StartTunnel(tunnelCtx, clients.SSM, instanceID, agentCfg.GatewayPort, connectLocalPort, resolvedRegion, resolvedProfile)
+	tun, err := tunnel.StartTunnel(tunnelCtx, clients.SSM, instanceID, agentCfg.GatewayPort, localPort, resolvedRegion, resolvedProfile)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Open http://localhost:%d in your browser\n\n", connectLocalPort)
+	dashboardURL := fmt.Sprintf("http://localhost:%d#token=%s", localPort, token)
+	fmt.Printf("\nOpen in your browser:\n  %s\n\n", dashboardURL)
 
 	// Signal handling
 	sigCh := make(chan os.Signal, 1)
@@ -148,7 +149,16 @@ func pollDevicePairing(ctx context.Context, instanceID, agentName string, verbos
 			continue
 		}
 
-		if !strings.Contains(result.Stdout, "pending") && !strings.Contains(result.Stdout, "Pending") {
+		var devList struct {
+			Pending []json.RawMessage `json:"pending"`
+		}
+		if err := json.Unmarshal([]byte(result.Stdout), &devList); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[verbose] device list parse error: %v\n", err)
+			}
+			continue
+		}
+		if len(devList.Pending) == 0 {
 			continue
 		}
 
@@ -157,6 +167,13 @@ func pollDevicePairing(ctx context.Context, instanceID, agentName string, verbos
 		if err != nil {
 			if verbose {
 				fmt.Fprintf(os.Stderr, "[verbose] device pairing approve error: %v\n", err)
+			}
+			continue
+		}
+
+		if !strings.Contains(result.Stdout, "Approved") {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[verbose] unexpected approve output: %s\n", result.Stdout)
 			}
 			continue
 		}
