@@ -1,7 +1,7 @@
 # OpenClaw on AWS
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-%3E%3D1.21-00ADD8.svg)](cli/)
+[![Go](https://img.shields.io/badge/Go-%3E%3D1.25-00ADD8.svg)](cli/)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-7B42BC.svg)](terraform/)
 
 Deploy and manage clusters of autonomous AI agents on hardened AWS infrastructure. Each agent runs in its own isolated Docker container with dedicated secrets, networking, and access controls — giving teams and enterprises granular permission management over their AI workforce.
@@ -109,7 +109,7 @@ No Terraform, Go, or repo clone required.
 ### Install
 
 ```bash
-gh release download --repo cruxdigital-llc/openclaw --pattern "cruxclaw_*_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" --output - | tar xz -C /usr/local/bin cruxclaw
+gh release download --repo cruxdigital-llc/crux-claw --pattern "cruxclaw_*_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" --output - | tar xz -C /usr/local/bin cruxclaw
 ```
 
 ### First-time setup
@@ -133,8 +133,7 @@ Open http://localhost:18789 in your browser.
 
 | Command | Description |
 |---------|-------------|
-| `cruxclaw init` | Configure CruxClaw for first use |
-| `cruxclaw auth login` | Show SSO setup instructions |
+| `cruxclaw auth login` | Authenticate via AWS SSO |
 | `cruxclaw auth status` | Show your AWS identity and agent mapping |
 | `cruxclaw secrets set <name>` | Create or update a secret |
 | `cruxclaw secrets list` | List your secrets |
@@ -143,6 +142,7 @@ Open http://localhost:18789 in your browser.
 | `cruxclaw refresh` | Restart container with fresh secrets |
 | `cruxclaw status` | Show container status and resource usage |
 | `cruxclaw logs` | Tail container logs |
+| `cruxclaw version` | Show CLI version |
 
 ### Admin Commands
 
