@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This guide covers how to get involved.
 
 ## Reporting Bugs and Requesting Features
 
-Open a [GitHub Issue](https://github.com/cruxdigital-llc/openclaw/issues). Include steps to reproduce for bugs.
+Open a [GitHub Issue](https://github.com/cruxdigital-llc/crux-claw/issues). Include steps to reproduce for bugs.
 
 ## Development Setup
 

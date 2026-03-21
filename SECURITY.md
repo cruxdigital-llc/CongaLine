@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-Please use [GitHub's private vulnerability reporting](https://github.com/cruxdigital-llc/openclaw/security/advisories/new) to report security issues. Do not open public issues for vulnerabilities.
+Please use [GitHub's private vulnerability reporting](https://github.com/cruxdigital-llc/crux-claw/security/advisories/new) to report security issues. Do not open public issues for vulnerabilities.
 
 ## Scope
 
