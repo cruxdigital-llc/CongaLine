@@ -111,7 +111,7 @@ echo "team" > /opt/conga/config/$AGENT_NAME.type
 echo "$SLACK_CHANNEL" > /opt/conga/config/$AGENT_NAME.slack-id
 
 # Sync and deploy behavior files
-aws s3 sync "s3://{{.StateBucket}}/openclaw/behavior/" /opt/conga/behavior/ --region "$AWS_REGION" 2>/dev/null || true
+aws s3 sync "s3://{{.StateBucket}}/conga/behavior/" /opt/conga/behavior/ --region "$AWS_REGION" 2>/dev/null || true
 if [ -x /opt/conga/bin/deploy-behavior.sh ]; then
   /opt/conga/bin/deploy-behavior.sh "$AGENT_NAME" "team"
 fi
