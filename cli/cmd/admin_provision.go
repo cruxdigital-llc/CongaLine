@@ -69,6 +69,13 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create agent config parameter: %w", err)
 	}
 
+	// Resolve state bucket for behavior file sync
+	stateBucket, err := awsutil.GetParameter(ctx, clients.SSM, "/openclaw/config/state-bucket")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not resolve state bucket — behavior files will not sync. Run 'terraform apply' first.\n")
+		stateBucket = "" // Non-fatal: behavior files won't sync but provisioning continues
+	}
+
 	// Find instance and run setup script
 	instanceID, err := findInstance(ctx)
 	if err != nil {
@@ -86,11 +93,13 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 		SlackMemberID string
 		AWSRegion     string
 		GatewayPort   int
+		StateBucket   string
 	}{
 		AgentName:     agentName,
 		SlackMemberID: slackMemberID,
 		AWSRegion:     resolvedRegion,
 		GatewayPort:   gatewayPort,
+		StateBucket:   stateBucket,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to render add-user script: %w", err)
@@ -154,6 +163,13 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create agent config parameter: %w", err)
 	}
 
+	// Resolve state bucket for behavior file sync
+	stateBucket, err := awsutil.GetParameter(ctx, clients.SSM, "/openclaw/config/state-bucket")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not resolve state bucket — behavior files will not sync. Run 'terraform apply' first.\n")
+		stateBucket = "" // Non-fatal: behavior files won't sync but provisioning continues
+	}
+
 	// Find instance and run setup script
 	instanceID, err := findInstance(ctx)
 	if err != nil {
@@ -171,11 +187,13 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 		SlackChannel string
 		AWSRegion    string
 		GatewayPort  int
+		StateBucket  string
 	}{
 		AgentName:    agentName,
 		SlackChannel: slackChannel,
 		AWSRegion:    resolvedRegion,
 		GatewayPort:  gatewayPort,
+		StateBucket:  stateBucket,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to render add-team script: %w", err)
