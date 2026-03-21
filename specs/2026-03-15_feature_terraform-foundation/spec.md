@@ -13,8 +13,8 @@ Idempotent shell script that creates the state backend resources using AWS CLI.
 ```bash
 AWS_PROFILE="167595588574_AdministratorAccess"
 AWS_REGION="us-east-2"
-STATE_BUCKET="openclaw-terraform-state-167595588574"
-LOCK_TABLE="openclaw-terraform-locks"
+STATE_BUCKET="conga-terraform-state-167595588574"
+LOCK_TABLE="conga-terraform-locks"
 ```
 
 **Actions**:
@@ -72,10 +72,10 @@ LOCK_TABLE="openclaw-terraform-locks"
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "openclaw-terraform-state-167595588574"
-    key            = "openclaw/terraform.tfstate"
+    bucket         = "conga-terraform-state-167595588574"
+    key            = "conga/terraform.tfstate"
     region         = "us-east-2"
-    dynamodb_table = "openclaw-terraform-locks"
+    dynamodb_table = "conga-terraform-locks"
     encrypt        = true
     profile        = "167595588574_AdministratorAccess"
   }
@@ -121,7 +121,7 @@ variable "aws_profile" {
 variable "project_name" {
   description = "Project name used for resource naming"
   type        = string
-  default     = "openclaw"
+  default     = "conga"
 }
 ```
 
@@ -130,12 +130,12 @@ variable "project_name" {
 ```hcl
 output "state_bucket" {
   description = "S3 bucket name for Terraform state"
-  value       = "openclaw-terraform-state-167595588574"
+  value       = "conga-terraform-state-167595588574"
 }
 
 output "lock_table" {
   description = "DynamoDB table name for state locking"
-  value       = "openclaw-terraform-locks"
+  value       = "conga-terraform-locks"
 }
 ```
 
@@ -147,7 +147,7 @@ aws_region  = "us-east-2"
 aws_profile = "167595588574_AdministratorAccess"
 
 # Project
-project_name = "openclaw"
+project_name = "conga"
 ```
 
 ### 7. `terraform/.gitignore`

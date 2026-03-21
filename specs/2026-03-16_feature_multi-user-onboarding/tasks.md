@@ -9,7 +9,7 @@
 - [x] Task 7: Create `scripts/onboard-user.sh`
 - [x] Task 8: Update `terraform/populate-secrets.sh` — shared only
 - [x] Task 9: Update `terraform/terraform.tfvars.example`
-- [x] Task 10: Migrate secrets from `openclaw/aaron/*` to `openclaw/UA13HEGTS/*`
+- [x] Task 10: Migrate secrets from `conga/aaron/*` to `conga/UA13HEGTS/*`
 - [x] Task 11: `terraform plan` + `terraform apply` — no secret destruction
 - [x] Task 12: Instance replaced, container healthy, Slack connected
 - [ ] Task 13: Test onboarding flow with second user
