@@ -55,7 +55,16 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 ### 5. Behavior Management — Verified Complete
 *See `specs/2026-03-20_feature_behavior-management/` for full trace*
 
-### 6. Backlog / Upcoming
+### 6. Conga Line Rename — Specified, Ready for Implementation
+*See `specs/2026-03-20_feature_conga-line-rename/` for full trace*
+- [x] Requirements defined
+- [x] 9-phase plan defined
+- [x] Detailed spec with file-by-file changes
+- [x] Persona review passed (Architect + QA)
+- [x] Standards gate passed (all security standards ✅)
+- [ ] Implementation (Phases 1–9)
+
+### 7. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (egress allowlisting, GuardDuty, Config rules)
 
