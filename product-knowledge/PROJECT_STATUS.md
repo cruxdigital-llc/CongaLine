@@ -130,6 +130,15 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [x] Phase 4: MCP tool wrappers (5 tools)
 - [x] Phase 5: Tests (7 MCP tool tests) + demo update (gateway-first flow)
 
+### 18. OpenShell-Inspired Security Hardening — Specified, Ready for Implementation
+*See `specs/2026-03-22_feature_openshell-inspired-hardening/` for full trace*
+- [ ] **Feature D: Credential-in-Chat Defense** — Behavioral guardrail in SOUL.md + credential pattern scanner
+- [ ] **Feature C: Egress Allowlist Proxy** — Wire existing nginx proxy with SNI-based domain filtering
+- [ ] **Feature A: Credential Proxy Sidecar** — Go reverse proxy holds real API keys; agent sees only proxy URL
+- [ ] **Feature B: Landlock Filesystem Isolation** — Kernel-enforced write restrictions via init wrapper
+- Standards gate: passed (1 warning — proxy env file on disk, same as current model)
+- Persona review: Architect + QA passed. Two pre-implementation verifications needed: ANTHROPIC_BASE_URL support in pinned image, Landlock O_PATH on tmpfs.
+
 ### 11. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
