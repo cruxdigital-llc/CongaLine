@@ -64,6 +64,16 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
+		// Container exists but isn't running — check if agent is paused
+		if status.Container.State != "running" {
+			if cfg, err := prov.GetAgent(ctx, agentName); err == nil && cfg != nil && cfg.Paused {
+				fmt.Println("Container:  stopped (agent paused)")
+				fmt.Printf("Service:    %s\n", status.ServiceState)
+				fmt.Printf("\nTo resume: conga admin unpause %s\n", agentName)
+				return nil
+			}
+		}
+
 		fmt.Printf("Container:  %s\n", status.Container.State)
 		fmt.Printf("Service:    %s\n", status.ServiceState)
 		fmt.Printf("Readiness:  %s\n", status.ReadyPhase)
