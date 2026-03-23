@@ -7,17 +7,21 @@
   <img src="assets/congaline.png" alt="OpenClaw agents" width="300">
 </p>
 
-Deploy and manage "clusters" of OpenClaw instances with per-agent isolation. Supports **local Docker** deployment for development and personal use, and **hardened AWS** deployment for teams and production.
+Deploy and manage "clusters" of OpenClaw instances with per-agent isolation. Three deployment modes:
+
+- **Local** — run on your own machine, no cloud needed
+- **Remote** — run on any SSH-accessible host: a VPS (Hetzner, DigitalOcean, Linode), bare metal (Raspberry Pi, Mac Mini), a colocated server, or any Linux machine with Docker
+- **AWS** — hardened, zero-ingress deployment for teams and production
 
 > **conga line** *n.* A single-file procession of spiny lobsters that travel in physical contact during seasonal migration, reducing hydrodynamic drag and offering collective protection from predators.
 ## Key Features
 
-- **Two deployment modes** — local Docker (no cloud needed) or hardened AWS
+- **Three deployment modes** — local Docker, remote (any SSH host), or hardened AWS
 - **Per-agent isolation** — separate Docker containers, networks, secrets, and config
 - **Slack optional** — use via web UI (gateway) only, or connect to Slack for team chat
 - **Two agent types** — user agents (DM-only) for individuals, team agents (channel-based) for groups
 - **CLI for everything** — operators and end users manage agents, secrets, and infrastructure through the `conga` CLI
-- **Modular provider system** — pluggable deployment targets (AWS, local, future: Kubernetes, ECS)
+- **Modular provider system** — pluggable deployment targets (AWS, local, remote, future: Kubernetes, ECS)
 
 ## Architecture
 
@@ -27,22 +31,22 @@ Deploy and manage "clusters" of OpenClaw instances with per-agent isolation. Sup
 │  (setup, add-user, status, logs, connect, ...)   │
 └────────────────────┬────────────────────────────┘
                      │ Provider interface
-         ┌───────────┴───────────┐
-         ▼                       ▼
-┌─────────────────┐   ┌─────────────────┐
-│  AWS Provider   │   │ Local Provider  │
-│                 │   │                 │
-│ EC2 + SSM       │   │ Docker CLI      │
-│ Secrets Manager │   │ File secrets    │
-│ Zero-ingress VPC│   │ localhost-only  │
-└─────────────────┘   └─────────────────┘
+         ┌───────────┼───────────┐
+         ▼           ▼           ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ AWS Provider │ │Remote Provider│ │Local Provider│
+│              │ │              │ │              │
+│ EC2 + SSM    │ │ SSH + Docker │ │ Docker CLI   │
+│ Secrets Mgr  │ │ File secrets │ │ File secrets │
+│ Zero-ingress │ │ SSH tunnel   │ │ localhost    │
+└──────────────┘ └──────────────┘ └──────────────┘
 ```
 
 ### Separation of Concerns
 
 | Layer | Managed by | What it does |
 |-------|-----------|-------------|
-| **Infrastructure** | Terraform (AWS) or `conga admin setup` (local) | VPC/EC2 or Docker environment |
+| **Infrastructure** | Terraform (AWS), `conga admin setup` (remote/local) | VPC/EC2, remote host, or local Docker environment |
 | **Configuration** | CLI (`conga admin setup`) | Shared secrets, Docker image, deployment settings |
 | **Agents** | CLI (`conga admin add-user/add-team`) | Per-agent containers, configs, routing, secrets |
 
@@ -107,6 +111,72 @@ conga admin teardown
 
 Removes all containers, networks, and local config.
 
+## Quick Start (Remote — VPS, Bare Metal, Any SSH Host)
+
+Deploy to any Linux machine you can SSH into — a cloud VPS (Hetzner, DigitalOcean, Linode, Hostinger), a Raspberry Pi, a Mac Mini, a colocated server, or anything else running Linux with 4GB+ RAM.
+
+### Prerequisites
+
+- **Any SSH-accessible Linux host** with 4GB+ RAM and 10GB+ free disk
+- **SSH key authentication** configured (password auth not supported)
+- **Go** >= 1.25 (to build the CLI)
+- **Anthropic API key**
+
+Docker is installed automatically during setup if not already present.
+
+### 1. Build the CLI
+
+```bash
+cd cli
+go build -o /usr/local/bin/conga .
+```
+
+### 2. Setup remote environment
+
+```bash
+conga admin setup --provider remote
+```
+
+This will prompt for:
+- SSH connection details (host, port, user, key path)
+- Docker image (auto-installs Docker if needed)
+- Slack tokens (optional — skip for gateway-only web UI)
+
+### 3. Add an agent
+
+```bash
+conga admin add-user myagent
+```
+
+With Slack:
+```bash
+conga admin add-user myagent U0123456789
+```
+
+### 4. Set your API key and start
+
+```bash
+conga secrets set anthropic-api-key --agent myagent
+conga refresh --agent myagent
+conga status --agent myagent
+```
+
+### 5. Connect
+
+```bash
+conga connect --agent myagent
+```
+
+Opens an SSH tunnel to the remote host's gateway. Open the URL in your browser — no ports are exposed to the internet.
+
+### 6. Teardown (when done)
+
+```bash
+conga admin teardown
+```
+
+Removes all containers, networks, and data from the remote host.
+
 ## Quick Start (AWS)
 
 For teams and production — hardened, zero-ingress deployment.
@@ -166,6 +236,10 @@ No Terraform, Go, or repo clone required. This is how users manage their agents 
 - **session-manager-plugin** — macOS: `brew install --cask session-manager-plugin` | [Other platforms](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
 - **AWS SSO access** — your admin will provide the SSO URL and account ID
 
+### Prerequisites (Remote provider)
+
+- **SSH access** to the remote host (key-based auth)
+
 ### Prerequisites (Local provider)
 
 - **Docker Desktop** installed and running
@@ -205,6 +279,16 @@ conga refresh
 conga connect            # opens SSM tunnel to web UI
 ```
 
+### First-time setup (Remote — VPS, Raspberry Pi, Mac Mini, etc.)
+
+```bash
+conga admin setup --provider remote   # prompts for SSH host, installs Docker
+conga admin add-user myagent
+conga secrets set anthropic-api-key --agent myagent
+conga refresh --agent myagent
+conga connect --agent myagent          # opens SSH tunnel to web UI
+```
+
 ### First-time setup (Local)
 
 ```bash
@@ -226,7 +310,7 @@ conga connect --agent myagent
 | `conga secrets set <name>` | Create or update a secret |
 | `conga secrets list` | List your secrets |
 | `conga secrets delete <name>` | Delete a secret |
-| `conga connect` | Connect to web UI (AWS: SSM tunnel; local: direct localhost) |
+| `conga connect` | Connect to web UI (AWS: SSM tunnel; remote: SSH tunnel; local: direct localhost) |
 | `conga refresh` | Restart container with fresh secrets |
 | `conga status` | Show container status and resource usage |
 | `conga logs` | Tail container logs |
@@ -251,7 +335,7 @@ conga connect --agent myagent
 
 | Flag | Description |
 |------|-------------|
-| `--provider` | Deployment provider: `aws`, `local` (default: `local`) |
+| `--provider` | Deployment provider: `aws`, `local`, `remote` (default: `local`) |
 | `--data-dir` | Data directory for local provider (default: `~/.conga/`) |
 | `--profile` | AWS CLI profile (default: `AWS_PROFILE` env var) |
 | `--region` | AWS region (default: from config) |
@@ -268,7 +352,7 @@ The CLI selects a provider using:
 2. `~/.conga/config.json` `provider` field if set (persisted by `conga admin setup`)
 3. Default: `local`
 
-Use `--provider aws` for AWS deployments, or run `conga admin setup` to persist the choice.
+Use `--provider aws`, `--provider remote`, or `--provider local`, or run `conga admin setup` to persist the choice.
 
 ### AWS Provider
 
@@ -277,6 +361,18 @@ Discovers infrastructure via AWS APIs — no Terraform access or repo clone need
 - **Agent config**: SSM Parameter Store at `/conga/agents/{name}`
 - **Secrets**: AWS Secrets Manager under `conga/agents/{name}/`
 - **Remote operations**: SSM RunCommand (no SSH, no ingress)
+
+### Remote Provider
+
+For any SSH-accessible Linux host — VPS instances (Hetzner, DigitalOcean, Linode, Hostinger), bare metal servers (Raspberry Pi, Mac Mini), colocated servers, or any machine you can SSH into:
+- **Agent config**: `/opt/conga/agents/{name}.json` on remote host
+- **Secrets**: `/opt/conga/secrets/agents/{name}/` on remote host (file per secret, mode 0400)
+- **Container data**: `/opt/conga/data/{name}/` on remote host
+- **Container operations**: Docker CLI over SSH
+- **Network isolation**: Per-agent Docker bridge networks, localhost-only port binding on remote
+- **Gateway access**: SSH tunnel (no inbound ports exposed beyond SSH)
+- **Slack routing**: Router container auto-started when Slack tokens are configured
+- **Docker auto-install**: Setup detects the OS and installs Docker if not present
 
 ### Local Provider
 
@@ -328,6 +424,7 @@ cli/
 │   ├── discovery/              # Agent & identity resolution (AWS)
 │   ├── provider/               # Provider interface & registry
 │   │   ├── awsprovider/        # AWS provider implementation
+│   │   ├── remoteprovider/    # Remote (SSH) provider implementation
 │   │   └── localprovider/      # Local Docker provider implementation
 │   ├── tunnel/                 # SSM port forwarding
 │   └── ui/                     # Spinners, prompts, tables
