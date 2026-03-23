@@ -9,6 +9,7 @@
 
 Deploy and manage "clusters" of OpenClaw instances with per-agent isolation. Supports **local Docker** deployment for development and personal use, and **hardened AWS** deployment for teams and production.
 
+> **conga line** *n.* A single-file procession of spiny lobsters that travel in physical contact during seasonal migration, reducing hydrodynamic drag and offering collective protection from predators.
 ## Key Features
 
 - **Two deployment modes** — local Docker (no cloud needed) or hardened AWS
