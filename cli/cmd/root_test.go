@@ -21,7 +21,7 @@ func TestValidateAgentName(t *testing.T) {
 }
 
 func TestValidateMemberID(t *testing.T) {
-	valid := []string{"U0123456789", "UABCDEFGHIJ", "UEXAMPLE0101", "UXXXXXXXXXX"}
+	valid := []string{"U0123456789", "UABCDEFGHIJ", "UEXAMPLE010", "UXXXXXXXXXX"}
 	for _, id := range valid {
 		if err := validateMemberID(id); err != nil {
 			t.Errorf("validateMemberID(%q) returned error: %v", id, err)
