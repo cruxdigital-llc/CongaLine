@@ -1,4 +1,4 @@
-# Conga Line 🦞🦞🦞 - Run an OpenClaw "cluster" anywhere
+# Conga Line 🦞🦞🦞
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-%3E%3D1.25.0-00ADD8.svg)](cli/)
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-7B42BC.svg)](terraform/)
@@ -7,11 +7,7 @@
   <img src="assets/congaline.png" alt="OpenClaw agents" width="300">
 </p>
 
-Deploy and manage "clusters" of OpenClaw instances with per-agent isolation. Three deployment modes:
-
-- **Local** — run on your own machine, no cloud needed
-- **Remote** — run on any SSH-accessible host: a VPS (Hetzner, DigitalOcean, Linode), bare metal (Raspberry Pi, Mac Mini), a colocated server, or any Linux machine with Docker
-- **AWS** — hardened, zero-ingress deployment for teams and production
+Self-host a fleet of isolated [OpenClaw](https://github.com/openclaw/openclaw) AI agents — each with its own container, network, secrets, and identity — managed through a single CLI. Deploy anywhere: your laptop, a $5 VPS, a Raspberry Pi, or a hardened AWS account.
 
 > **conga line** *n.* A single-file procession of spiny lobsters that travel in physical contact during seasonal migration, reducing hydrodynamic drag and offering collective protection from predators.
 ## Key Features
