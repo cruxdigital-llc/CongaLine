@@ -92,39 +92,68 @@ func connectRun(cmd *cobra.Command, args []string) error {
 
 // pollDevicePairing watches for pending device pairing requests and auto-approves them.
 // Uses the Provider's ContainerExec so it works on both AWS (via SSM) and local (via docker exec).
+// Polls aggressively (500ms) for the first 10 seconds, then backs off to 3s.
 func pollDevicePairing(ctx context.Context, p provider.Provider, agentName string) {
 	fmt.Println("Watching for device pairing requests...")
 
-	for i := 0; i < 60; i++ {
+	const (
+		fastInterval      = 500 * time.Millisecond
+		slowInterval      = 3 * time.Second
+		fastPhaseDuration = 10 * time.Second
+		totalTimeout      = 3 * time.Minute
+	)
+
+	start := time.Now()
+	timer := time.NewTimer(0) // fire immediately on first iteration
+	defer timer.Stop()
+
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(3 * time.Second):
+		case <-timer.C:
 		}
 
-		output, err := p.ContainerExec(ctx, agentName, []string{"npx", "openclaw", "devices", "list", "--json"})
-		if err != nil {
-			continue
-		}
-
-		var devList struct {
-			Pending []json.RawMessage `json:"pending"`
-		}
-		if err := json.Unmarshal([]byte(output), &devList); err != nil {
-			continue
-		}
-		if len(devList.Pending) == 0 {
-			continue
-		}
-
-		output, err = p.ContainerExec(ctx, agentName, []string{"npx", "openclaw", "devices", "approve", "--latest"})
-		if err != nil {
-			continue
-		}
-
-		if strings.Contains(output, "Approved") {
-			fmt.Println("Device paired! Refresh your browser if needed.")
+		if time.Since(start) > totalTimeout {
 			return
 		}
+
+		if tryApproveDevice(ctx, p, agentName) {
+			return
+		}
+
+		interval := slowInterval
+		if time.Since(start) < fastPhaseDuration {
+			interval = fastInterval
+		}
+		timer.Reset(interval)
 	}
+}
+
+func tryApproveDevice(ctx context.Context, p provider.Provider, agentName string) bool {
+	output, err := p.ContainerExec(ctx, agentName, []string{"npx", "openclaw", "devices", "list", "--json"})
+	if err != nil {
+		return false
+	}
+
+	var devList struct {
+		Pending []json.RawMessage `json:"pending"`
+	}
+	if err := json.Unmarshal([]byte(output), &devList); err != nil {
+		return false
+	}
+	if len(devList.Pending) == 0 {
+		return false
+	}
+
+	output, err = p.ContainerExec(ctx, agentName, []string{"npx", "openclaw", "devices", "approve", "--latest"})
+	if err != nil {
+		return false
+	}
+
+	if strings.Contains(output, "Approved") {
+		fmt.Println("Device paired! Refresh your browser if needed.")
+		return true
+	}
+	return false
 }
