@@ -707,7 +707,7 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		if err := writeSecret(path, value); err != nil {
 			return fmt.Errorf("failed to save %s: %w", item.name, err)
 		}
-		fmt.Println("  Saved.")
+		fmt.Printf("  Saved (%s).\n", common.MaskSecret(value))
 		changed++
 	}
 

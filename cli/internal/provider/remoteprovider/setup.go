@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
 )
@@ -253,7 +254,7 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		if err := p.ssh.Upload(remotePath, []byte(value), 0400); err != nil {
 			return fmt.Errorf("failed to save %s: %w", item.name, err)
 		}
-		fmt.Println("  Saved.")
+		fmt.Printf("  Saved (%s).\n", common.MaskSecret(value))
 		changed++
 	}
 

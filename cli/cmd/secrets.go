@@ -118,7 +118,7 @@ func secretsSetRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Secret '%s' saved (env var: %s). Run `conga refresh` to pick it up.\n", name, common.SecretNameToEnvVar(name))
+	fmt.Printf("Secret '%s' saved (value: %s, env var: %s). Run `conga refresh` to pick it up.\n", name, common.MaskSecret(value), common.SecretNameToEnvVar(name))
 	return nil
 }
 
