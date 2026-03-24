@@ -176,11 +176,6 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
 	}
 
-	// Chown workspace to uid 1000 (node user inside container) so OpenClaw can
-	// update MEMORY.md and other workspace files via hot-reload
-	workspaceDir := filepath.Join(dataDir, "data", "workspace")
-	exec.CommandContext(ctx, "chown", "-R", "1000:1000", workspaceDir).Run()
-
 	// 4. Read image
 	image := p.getConfigValue("image")
 	if image == "" {
@@ -206,6 +201,11 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	cName := containerName(cfg.Name)
 	if containerExists(ctx, cName) {
 		removeContainer(ctx, cName)
+	}
+
+	// Ensure all files are owned by the container user (node, uid 1000).
+	if err := exec.CommandContext(ctx, "chown", "-R", "1000:1000", dataDir).Run(); err != nil {
+		return fmt.Errorf("failed to chown data directory: %w", err)
 	}
 
 	fmt.Printf("Starting container %s...\n", cName)
@@ -456,12 +456,17 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		createNetwork(ctx, netName)
 	}
 
+	// Ensure all files are owned by the container user before starting.
+	if err := exec.CommandContext(ctx, "chown", "-R", "1000:1000", dataDir).Run(); err != nil {
+		return fmt.Errorf("failed to chown data directory: %w", err)
+	}
+
 	if err := runAgentContainer(ctx, agentContainerOpts{
 		Name:        cName,
 		AgentName:   agentName,
 		Network:     netName,
 		EnvFile:     envPath,
-		DataDir:     p.dataSubDir(agentName),
+		DataDir:     dataDir,
 		GatewayPort: cfg.GatewayPort,
 		Image:       image,
 	}); err != nil {

@@ -189,8 +189,6 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	for _, sub := range []string{"data/workspace", "memory", "logs", "agents", "canvas", "cron", "devices", "identity", "media"} {
 		p.ssh.MkdirAll(posixpath.Join(dataDir, sub), 0755)
 	}
-	// Container runs as node (uid 1000) — must own the data directory for hot-reload temp files
-	p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir)))
 	// Create empty MEMORY.md
 	memoryPath := posixpath.Join(dataDir, "data", "workspace", "MEMORY.md")
 	p.ssh.Run(ctx, fmt.Sprintf("test -f %s || echo '# Memory' > %s", shellQuote(memoryPath), shellQuote(memoryPath)))
@@ -210,9 +208,6 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	if err := p.deployBehavior(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
 	}
-
-	// Re-chown after behavior deployment — files are uploaded as root
-	p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(posixpath.Join(dataDir, "data", "workspace"))))
 
 	// 4. Read image
 	image := p.getConfigValue("image")
@@ -238,6 +233,12 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	cName := containerName(cfg.Name)
 	if p.containerExists(ctx, cName) {
 		p.removeContainer(ctx, cName)
+	}
+
+	// Ensure all files in the data directory are owned by the container user (node, uid 1000).
+	// SFTP uploads create files as root — this must run after all uploads and before starting the container.
+	if _, err := p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir))); err != nil {
+		return fmt.Errorf("failed to chown data directory: %w", err)
 	}
 
 	fmt.Printf("Starting container %s...\n", cName)
@@ -479,6 +480,11 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	netName := networkName(agentName)
 	if !p.networkExists(ctx, netName) {
 		p.createNetwork(ctx, netName)
+	}
+
+	// Ensure all files are owned by the container user before starting.
+	if _, err := p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir))); err != nil {
+		return fmt.Errorf("failed to chown data directory: %w", err)
 	}
 
 	if err := p.runAgentContainer(ctx, agentContainerOpts{
