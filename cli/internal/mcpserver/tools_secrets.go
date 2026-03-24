@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -94,17 +93,7 @@ func (s *Server) toolListSecrets() server.ServerTool {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
-			// SecretEntry lacks JSON tags, build response manually.
-			entries := make([]map[string]any, len(secrets))
-			for i, sec := range secrets {
-				entries[i] = map[string]any{
-					"name":         sec.Name,
-					"env_var":      sec.EnvVar,
-					"path":         sec.Path,
-					"last_changed": sec.LastChanged.UTC().Format(time.RFC3339),
-				}
-			}
-			return jsonResult(entries)
+			return jsonResult(secrets)
 		},
 	}
 }

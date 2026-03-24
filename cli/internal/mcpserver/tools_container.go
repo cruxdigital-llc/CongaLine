@@ -41,23 +41,7 @@ func (s *Server) toolGetStatus() server.ServerTool {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
-			// Marshal with human-friendly field names since AgentStatus lacks JSON tags.
-			result := map[string]any{
-				"agent_name":    status.AgentName,
-				"service_state": status.ServiceState,
-				"ready_phase":   status.ReadyPhase,
-				"errors":        status.Errors,
-				"container": map[string]any{
-					"state":         status.Container.State,
-					"uptime":        status.Container.Uptime.String(),
-					"started_at":    status.Container.StartedAt,
-					"restart_count": status.Container.RestartCount,
-					"memory_usage":  status.Container.MemoryUsage,
-					"cpu_percent":   status.Container.CPUPercent,
-					"pids":          status.Container.PIDs,
-				},
-			}
-			return jsonResult(result)
+			return jsonResult(status)
 		},
 	}
 }

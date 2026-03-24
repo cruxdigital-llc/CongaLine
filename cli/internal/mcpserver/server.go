@@ -15,8 +15,9 @@ const toolTimeout = 5 * time.Minute
 
 // Server wraps a Provider as an MCP tool server.
 type Server struct {
-	prov provider.Provider
-	mcp  *server.MCPServer
+	prov  provider.Provider
+	mcp   *server.MCPServer
+	tools []server.ServerTool
 }
 
 // NewServer creates an MCP server backed by the given provider.
@@ -30,6 +31,11 @@ func NewServer(prov provider.Provider, version string) *Server {
 	)
 	s.registerTools()
 	return s
+}
+
+// Tools returns the registered MCP tools. Useful for testing.
+func (s *Server) Tools() []server.ServerTool {
+	return s.tools
 }
 
 // Serve blocks on stdio transport until the client disconnects.
