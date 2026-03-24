@@ -705,14 +705,20 @@ In JSON mode, confirmation is auto-accepted (like `--force`). The `"Cancelled."`
 | `cli/cmd/admin_refresh_all.go` | `ConfirmJ`; JSON output |
 | `cli/cmd/admin_teardown.go` | `ConfirmJ`; JSON output |
 
+### Provider Files Modified (discovered during implementation)
+
+| File | Change |
+|---|---|
+| `cli/internal/provider/provider.go` | `Setup(ctx)` → `Setup(ctx, *SetupConfig)` to accept non-interactive config |
+| `cli/internal/provider/setup_config.go` | New file: `SetupConfig` struct + `ParseSetupConfig()` |
+| `cli/internal/provider/awsprovider/provider.go` | Updated `Setup` signature |
+| `cli/internal/provider/localprovider/provider.go` | Updated `Setup` to use `SetupConfig` values when non-nil |
+| `cli/internal/provider/remoteprovider/setup.go` | Updated `Setup` to use `SetupConfig` values when non-nil |
+
 ### Files NOT Modified
 
 | File | Reason |
 |---|---|
-| `cli/internal/provider/provider.go` | No interface changes |
-| `cli/internal/provider/localprovider/*` | No provider changes |
-| `cli/internal/provider/awsprovider/*` | No provider changes |
-| `cli/internal/provider/remoteprovider/*` | No provider changes |
 | `cli/internal/common/*` | No changes to shared logic |
 | `cli/internal/ui/prompt.go` | Original functions preserved; new `*J` variants in `json_mode.go` |
 
