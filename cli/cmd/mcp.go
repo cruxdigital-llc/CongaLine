@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	awsutil "github.com/cruxdigital-llc/conga-line/cli/internal/aws"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/mcpserver"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
@@ -45,6 +46,12 @@ var mcpServeCmd = &cobra.Command{
 				cfg.Region = v
 			} else if v := os.Getenv("AWS_REGION"); v != "" {
 				cfg.Region = v
+			}
+			// Resolve region from the AWS profile if not set via env vars.
+			if cfg.Region == "" && cfg.Profile != "" {
+				if info := awsutil.GetProfileInfo(cfg.Profile); info != nil && info.Region != "" {
+					cfg.Region = info.Region
+				}
 			}
 		}
 
