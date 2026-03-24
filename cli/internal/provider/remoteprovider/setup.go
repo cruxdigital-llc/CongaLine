@@ -18,8 +18,15 @@ import (
 func (p *RemoteProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) error {
 	fmt.Println("Setting up remote Conga Line deployment...")
 
-	// Track SSH key path for config persistence
+	// Track SSH key path for config persistence — load from existing config if available
 	var sshKeyPath string
+	if existingCfg, err := provider.LoadConfig(provider.DefaultConfigPath()); err == nil {
+		sshKeyPath = existingCfg.SSHKeyPath
+	}
+	// Config override takes precedence
+	if cfg != nil && cfg.SSHKeyPath != "" {
+		sshKeyPath = cfg.SSHKeyPath
+	}
 
 	// If no SSH connection yet (first-time setup), prompt for details and connect
 	if p.ssh == nil {
@@ -265,6 +272,15 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 			return fmt.Errorf("failed to upload router files: %w", err)
 		}
 		fmt.Println("  Router source uploaded to /opt/conga/router/")
+
+		fmt.Println("Installing router dependencies...")
+		installCmd := fmt.Sprintf("docker run --rm -v %s:/app -w /app node:22-alpine npm install --omit=dev 2>&1",
+			shellQuote(p.remoteRouterDir()))
+		if out, installErr := p.ssh.Run(ctx, installCmd); installErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: npm install failed: %v\n%s\n", installErr, out)
+		} else {
+			fmt.Println("  Router dependencies installed.")
+		}
 
 		fmt.Println("Uploading behavior files...")
 		if err := p.ssh.UploadDir(filepath.Join(repoPath, "behavior"), p.remoteBehaviorDir()); err != nil {
