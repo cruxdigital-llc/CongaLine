@@ -17,7 +17,7 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
-					"name": map[string]any{
+					"agent_name": map[string]any{
 						"type":        "string",
 						"description": "Agent name (lowercase alphanumeric + hyphens)",
 					},
@@ -39,11 +39,11 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 						"description": "Gateway port (auto-assigned if omitted)",
 					},
 				},
-				Required: []string{"name", "type"},
+				Required: []string{"agent_name", "type"},
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name, err := req.RequireString("name")
+			agentName, err := req.RequireString("agent_name")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -51,9 +51,12 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			if agentType != "user" && agentType != "team" {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid agent type %q: must be \"user\" or \"team\"", agentType)), nil
+			}
 
 			cfg := provider.AgentConfig{
-				Name:          name,
+				Name:          agentName,
 				Type:          provider.AgentType(agentType),
 				SlackMemberID: req.GetString("slack_member_id", ""),
 				SlackChannel:  req.GetString("slack_channel", ""),
@@ -66,7 +69,7 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 			if err := s.prov.ProvisionAgent(ctx, cfg); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q provisioned successfully.", name)), nil
+			return okResult(fmt.Sprintf("Agent %q provisioned successfully.", agentName)), nil
 		},
 	}
 }
@@ -79,7 +82,7 @@ func (s *Server) toolRemoveAgent() server.ServerTool {
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
-					"name": map[string]any{
+					"agent_name": map[string]any{
 						"type":        "string",
 						"description": "Agent name to remove",
 					},
@@ -88,14 +91,14 @@ func (s *Server) toolRemoveAgent() server.ServerTool {
 						"description": "Also delete the agent's secrets (default: false)",
 					},
 				},
-				Required: []string{"name"},
+				Required: []string{"agent_name"},
 			},
 			Annotations: mcp.ToolAnnotation{
 				DestructiveHint: boolPtr(true),
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name, err := req.RequireString("name")
+			agentName, err := req.RequireString("agent_name")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -104,10 +107,10 @@ func (s *Server) toolRemoveAgent() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
-			if err := s.prov.RemoveAgent(ctx, name, deleteSecrets); err != nil {
+			if err := s.prov.RemoveAgent(ctx, agentName, deleteSecrets); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q removed.", name)), nil
+			return okResult(fmt.Sprintf("Agent %q removed.", agentName)), nil
 		},
 	}
 }
@@ -120,16 +123,19 @@ func (s *Server) toolPauseAgent() server.ServerTool {
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
-					"name": map[string]any{
+					"agent_name": map[string]any{
 						"type":        "string",
 						"description": "Agent name to pause",
 					},
 				},
-				Required: []string{"name"},
+				Required: []string{"agent_name"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				IdempotentHint: boolPtr(true),
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name, err := req.RequireString("name")
+			agentName, err := req.RequireString("agent_name")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -137,10 +143,10 @@ func (s *Server) toolPauseAgent() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
-			if err := s.prov.PauseAgent(ctx, name); err != nil {
+			if err := s.prov.PauseAgent(ctx, agentName); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q paused.", name)), nil
+			return okResult(fmt.Sprintf("Agent %q paused.", agentName)), nil
 		},
 	}
 }
@@ -153,16 +159,19 @@ func (s *Server) toolUnpauseAgent() server.ServerTool {
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
-					"name": map[string]any{
+					"agent_name": map[string]any{
 						"type":        "string",
 						"description": "Agent name to unpause",
 					},
 				},
-				Required: []string{"name"},
+				Required: []string{"agent_name"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				IdempotentHint: boolPtr(true),
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name, err := req.RequireString("name")
+			agentName, err := req.RequireString("agent_name")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -170,10 +179,10 @@ func (s *Server) toolUnpauseAgent() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
-			if err := s.prov.UnpauseAgent(ctx, name); err != nil {
+			if err := s.prov.UnpauseAgent(ctx, agentName); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q unpaused.", name)), nil
+			return okResult(fmt.Sprintf("Agent %q unpaused.", agentName)), nil
 		},
 	}
 }

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,6 +14,9 @@ func (s *Server) toolSetSecret() server.ServerTool {
 		Tool: mcp.Tool{
 			Name:        "conga_set_secret",
 			Description: "Create or update a secret for an agent. The value is stored encrypted (AWS Secrets Manager or file mode 0400). The agent container must be refreshed for the new secret to take effect.",
+			Annotations: mcp.ToolAnnotation{
+				IdempotentHint: boolPtr(true),
+			},
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -92,12 +96,12 @@ func (s *Server) toolListSecrets() server.ServerTool {
 
 			// SecretEntry lacks JSON tags, build response manually.
 			entries := make([]map[string]any, len(secrets))
-			for i, s := range secrets {
+			for i, sec := range secrets {
 				entries[i] = map[string]any{
-					"name":         s.Name,
-					"env_var":      s.EnvVar,
-					"path":         s.Path,
-					"last_changed": s.LastChanged.Format("2006-01-02T15:04:05Z"),
+					"name":         sec.Name,
+					"env_var":      sec.EnvVar,
+					"path":         sec.Path,
+					"last_changed": sec.LastChanged.UTC().Format(time.RFC3339),
 				}
 			}
 			return jsonResult(entries)

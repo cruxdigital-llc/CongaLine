@@ -13,6 +13,9 @@ func (s *Server) toolSetup() server.ServerTool {
 		Tool: mcp.Tool{
 			Name:        "conga_setup",
 			Description: "Run initial environment setup. Configures Docker image, Slack tokens, and shared secrets. All fields are optional — omitted fields use existing values or are skipped. Secret values are transmitted as plaintext parameters.",
+			Annotations: mcp.ToolAnnotation{
+				DestructiveHint: boolPtr(true),
+			},
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{

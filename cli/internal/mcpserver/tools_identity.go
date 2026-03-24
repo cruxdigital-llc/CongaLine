@@ -61,16 +61,16 @@ func (s *Server) toolGetAgent() server.ServerTool {
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
-					"name": map[string]any{
+					"agent_name": map[string]any{
 						"type":        "string",
 						"description": "Agent name",
 					},
 				},
-				Required: []string{"name"},
+				Required: []string{"agent_name"},
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name, err := req.RequireString("name")
+			agentName, err := req.RequireString("agent_name")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -78,7 +78,7 @@ func (s *Server) toolGetAgent() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
-			agent, err := s.prov.GetAgent(ctx, name)
+			agent, err := s.prov.GetAgent(ctx, agentName)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

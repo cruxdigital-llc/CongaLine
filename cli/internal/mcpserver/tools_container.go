@@ -119,6 +119,9 @@ func (s *Server) toolRefreshAgent() server.ServerTool {
 				},
 				Required: []string{"agent_name"},
 			},
+			Annotations: mcp.ToolAnnotation{
+				IdempotentHint: boolPtr(true),
+			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			name, err := req.RequireString("agent_name")
@@ -178,6 +181,9 @@ func (s *Server) toolContainerExec() server.ServerTool {
 					},
 				},
 				Required: []string{"agent_name", "command"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				DestructiveHint: boolPtr(true),
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
