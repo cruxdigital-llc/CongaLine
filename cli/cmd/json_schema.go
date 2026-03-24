@@ -184,9 +184,9 @@ var commandSchemas = map[string]CommandSchema{
 			"value": {Type: "string", Required: true, Description: "Secret value"},
 		}},
 		Output: &SchemaSection{Fields: map[string]FieldSchema{
-			"secret": {Type: "string", Description: "Secret name"},
+			"secret":  {Type: "string", Description: "Secret name"},
 			"env_var": {Type: "string", Description: "Environment variable name (SCREAMING_SNAKE_CASE)"},
-			"status": {Type: "string", Description: "Result status", Enum: []string{"saved"}},
+			"status":  {Type: "string", Description: "Result status", Enum: []string{"saved"}},
 		}},
 	},
 	"secrets.list": {
