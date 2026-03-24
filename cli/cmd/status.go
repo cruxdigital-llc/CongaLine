@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -50,6 +51,47 @@ var statusCmd = &cobra.Command{
 		status, err := prov.GetStatus(ctx, agentName)
 		if err != nil {
 			return err
+		}
+
+		if ui.OutputJSON {
+			containerState := status.Container.State
+			paused := false
+			if containerState == "not found" || containerState == "" || containerState != "running" {
+				if cfg, err := prov.GetAgent(ctx, agentName); err == nil && cfg != nil && cfg.Paused {
+					containerState = "stopped"
+					paused = true
+				}
+			}
+			uptime := ""
+			if status.Container.StartedAt != "" {
+				uptime = formatUptime(status.Container.StartedAt)
+			}
+			ui.EmitJSON(struct {
+				Agent        string `json:"agent"`
+				Container    string `json:"container"`
+				Service      string `json:"service"`
+				Readiness    string `json:"readiness,omitempty"`
+				Paused       bool   `json:"paused,omitempty"`
+				StartedAt    string `json:"started_at,omitempty"`
+				Uptime       string `json:"uptime,omitempty"`
+				RestartCount int    `json:"restart_count,omitempty"`
+				CPU          string `json:"cpu,omitempty"`
+				Memory       string `json:"memory,omitempty"`
+				PIDs         int    `json:"pids,omitempty"`
+			}{
+				Agent:        agentName,
+				Container:    containerState,
+				Service:      status.ServiceState,
+				Readiness:    status.ReadyPhase,
+				Paused:       paused,
+				StartedAt:    status.Container.StartedAt,
+				Uptime:       uptime,
+				RestartCount: status.Container.RestartCount,
+				CPU:          status.Container.CPUPercent,
+				Memory:       status.Container.MemoryUsage,
+				PIDs:         status.Container.PIDs,
+			})
+			return nil
 		}
 
 		if status.Container.State == "not found" || status.Container.State == "" {

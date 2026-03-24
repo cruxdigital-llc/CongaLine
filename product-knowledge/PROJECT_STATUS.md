@@ -77,7 +77,18 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [ ] Phase 6: Config + wiring (`config.go`, `root.go`, `go.mod`)
 - [ ] Phase 7: Documentation
 
-### 10. Backlog / Upcoming
+### 10. CLI JSON Input — Implemented, Ready for Verification
+*Lead: Architect + QA*
+- [x] Requirements, plan, spec defined
+- [x] Persona review + standards gate passed
+- [x] Phase 1: JSON mode infrastructure
+- [x] Phase 2: Tier 1 commands — output only
+- [x] Phase 3: Tier 2 commands — simple input + output
+- [x] Phase 4: Tier 3 commands — complex input
+- [x] Phase 5: Schema discovery (`conga json-schema <command>`)
+- [x] Phase 6: All tests pass, go vet clean
+
+### 11. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (egress allowlisting, GuardDuty, Config rules)
 
