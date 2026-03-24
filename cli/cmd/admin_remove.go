@@ -26,6 +26,11 @@ func adminRemoveAgentRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Kill any stale `conga connect` tunnel for this agent
+	if agent.GatewayPort != 0 {
+		killStaleTunnels([]int{agent.GatewayPort})
+	}
+
 	if err := prov.RemoveAgent(ctx, agentName, adminDeleteSecrets); err != nil {
 		return err
 	}

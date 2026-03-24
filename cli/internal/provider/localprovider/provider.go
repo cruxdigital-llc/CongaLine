@@ -667,15 +667,14 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		path := filepath.Join(p.sharedSecretsDir(), item.name)
 		current, _ := readSecret(path)
 
+		// Check for config-provided value first
+		cfgValue := cfg.SecretValue(item.name)
 		status := "set"
-		if current == "" {
+		if current == "" && cfgValue == "" {
 			status = "not set"
 		}
 		optLabel := " (optional)"
 		fmt.Printf("\n[secret] %s — %s%s (%s)\n", item.name, item.description, optLabel, status)
-
-		// Check for config-provided value first
-		cfgValue := cfg.SecretValue(item.name)
 		var value string
 		if cfgValue != "" {
 			value = cfgValue

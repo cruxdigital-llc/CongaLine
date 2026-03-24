@@ -222,14 +222,14 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 			current = string(data)
 		}
 
+		cfgValue := cfg.SecretValue(item.name)
 		status := "set"
-		if current == "" {
+		if current == "" && cfgValue == "" {
 			status = "not set"
 		}
 		fmt.Printf("\n[secret] %s — %s (optional) (%s)\n", item.name, item.description, status)
 
 		// Check for config-provided value first
-		cfgValue := cfg.SecretValue(item.name)
 		var value string
 		if cfgValue != "" {
 			value = cfgValue

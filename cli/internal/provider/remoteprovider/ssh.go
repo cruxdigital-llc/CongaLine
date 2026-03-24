@@ -10,7 +10,6 @@ import (
 	posixpath "path"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -351,33 +350,30 @@ func (c *SSHClient) ForwardPort(ctx context.Context, localPort, remotePort int) 
 }
 
 // tunnelCopy bidirectionally copies between two connections.
+// When either direction finishes, both connections are closed immediately
+// so the other direction unblocks. This prevents WebSocket and HTTP
+// connections from hanging when one side closes.
 func tunnelCopy(ctx context.Context, local, remote net.Conn) {
-	defer local.Close()
-	defer remote.Close()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
+	done := make(chan struct{}, 1)
 
 	go func() {
-		defer wg.Done()
 		io.Copy(remote, local)
+		done <- struct{}{}
 	}()
 	go func() {
-		defer wg.Done()
 		io.Copy(local, remote)
+		done <- struct{}{}
 	}()
 
-	// Wait for copy to finish or context to be cancelled
-	doneCh := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(doneCh)
-	}()
-
+	// As soon as one direction finishes, close both connections
+	// to unblock the other direction.
 	select {
-	case <-doneCh:
+	case <-done:
 	case <-ctx.Done():
 	}
+
+	local.Close()
+	remote.Close()
 }
 
 // Close closes the SSH connection.
