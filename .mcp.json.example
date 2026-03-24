@@ -1,11 +1,11 @@
 {
   "mcpServers": {
     "conga": {
-      "command": "/Volumes/work/code/cruxdigital-llc/conga-line/cli/conga",
+      "command": "conga",
       "args": ["mcp", "serve"],
       "env": {
         "CONGA_PROVIDER": "aws",
-        "AWS_PROFILE": "crux-openclaw"
+        "AWS_PROFILE": "your-profile"
       }
     }
   }
