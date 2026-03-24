@@ -6,6 +6,7 @@ import (
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/mcpserver"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
+	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +20,9 @@ var mcpServeCmd = &cobra.Command{
 	Short: "Start MCP server on stdio",
 	Long:  "Start an MCP (Model Context Protocol) server on stdio. This exposes Conga Line operations as MCP tools for AI agents like Claude Code.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Suppress all terminal UI (spinners, prompts) — stdout is the MCP transport.
+		ui.OutputJSON = true
+
 		// Load config (same as PersistentPreRunE but using env var overrides).
 		cfg, _ := provider.LoadConfig(provider.DefaultConfigPath())
 
