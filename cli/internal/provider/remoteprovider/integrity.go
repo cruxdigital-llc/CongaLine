@@ -72,7 +72,7 @@ func (p *RemoteProvider) RunIntegrityCheck() error {
 	// Append to remote log via stdin pipe (avoids shell interpretation of log content)
 	if len(logLines) > 0 {
 		content := strings.Join(logLines, "\n") + "\n"
-		session, err := p.ssh.client.NewSession()
+		session, err := p.ssh.session()
 		if err == nil {
 			session.Stdin = strings.NewReader(content)
 			session.Run(fmt.Sprintf("cat >> %s", shellQuote(logPath)))
