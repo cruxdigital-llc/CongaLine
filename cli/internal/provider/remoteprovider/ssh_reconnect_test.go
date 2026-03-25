@@ -122,13 +122,14 @@ func handleTestConn(conn net.Conn, config *ssh.ServerConfig, handler func(string
 }
 
 // connectToTestServer creates an SSHClient connected to a test server on the given port.
+// Uses InsecureIgnoreHostKey because the test server generates ephemeral host keys.
 func connectToTestServer(t *testing.T, port int) *SSHClient {
 	t.Helper()
 
 	config := &ssh.ClientConfig{
 		User:            "test",
 		Auth:            []ssh.AuthMethod{ssh.Password("")},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // OK: ephemeral test server
 		Timeout:         5 * time.Second,
 	}
 
@@ -166,8 +167,7 @@ func testSSHServerOnPort(t *testing.T, port int, handler func(cmd string) (strin
 
 	var listener net.Listener
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	for i := range 20 {
-		_ = i
+	for range 20 {
 		listener, err = net.Listen("tcp", addr)
 		if err == nil {
 			break
@@ -331,5 +331,56 @@ func TestRunSucceedsWithoutReconnect(t *testing.T) {
 	// Verify no reconnect happened (same client pointer)
 	if c.client != origClient {
 		t.Fatal("client was replaced — reconnect happened on healthy connection")
+	}
+}
+
+func TestSftpClientReconnectsOnStaleConnection(t *testing.T) {
+	// The SFTP handshake opens a subsystem channel on the SSH connection.
+	// When the connection is dead, sftp.NewClient fails with a connection error.
+	// sftpClient() should reconnect and retry.
+	port, stop := testSSHServer(t, func(cmd string) (string, int) {
+		return "ok", 0
+	})
+
+	c := connectToTestServer(t, port)
+	defer c.Close()
+
+	// Verify the connection works (via a session, since our test server
+	// doesn't support the SFTP subsystem — the important thing is that
+	// sftpClient() triggers a reconnect on the dead connection)
+	_, err := c.Run(context.Background(), "ping")
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	// Kill the server
+	stop()
+
+	// Start a new server on the same port
+	stop2 := testSSHServerOnPort(t, port, func(cmd string) (string, int) {
+		return "ok", 0
+	})
+	defer stop2()
+
+	// sftpClient() should fail on the dead connection, reconnect, then
+	// fail again because the test server doesn't support SFTP subsystem —
+	// but the client pointer should have been replaced (proving reconnect happened)
+	origClient := c.client
+	_, sftpErr := c.sftpClient()
+	// SFTP will fail (no subsystem support in test server), but reconnect should have fired
+	if sftpErr == nil {
+		t.Fatal("expected SFTP error (test server has no SFTP subsystem), got nil")
+	}
+	if c.client == origClient {
+		t.Fatal("client was not replaced — reconnect did not fire for SFTP")
+	}
+
+	// Verify the reconnected connection is healthy by running a command
+	out, err := c.Run(context.Background(), "verify")
+	if err != nil {
+		t.Fatalf("run after SFTP reconnect: %v", err)
+	}
+	if strings.TrimSpace(out) != "ok" {
+		t.Fatalf("run after SFTP reconnect: got %q, want %q", out, "ok")
 	}
 }

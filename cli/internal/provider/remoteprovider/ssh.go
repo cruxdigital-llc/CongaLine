@@ -10,6 +10,7 @@ import (
 	posixpath "path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -20,7 +21,12 @@ import (
 
 // SSHClient wraps an *ssh.Client with convenience methods.
 // Stores connection parameters so it can transparently reconnect on stale connections.
+//
+// Thread safety: SSHClient is NOT safe for concurrent use. All callers (MCP tool calls)
+// must be serialized. If concurrent access is needed in the future, mu must be held
+// around session()/sftpClient()/reconnect() calls.
 type SSHClient struct {
+	mu     sync.Mutex        // guards client replacement during reconnect
 	client *ssh.Client
 	config *ssh.ClientConfig // stored for reconnection
 	host   string
@@ -149,7 +155,7 @@ func (c *SSHClient) Run(ctx context.Context, cmd string) (string, error) {
 func (c *SSHClient) RunWithStderr(ctx context.Context, cmd string) (string, string, error) {
 	session, err := c.session()
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("ssh session failed: %w", err)
 	}
 	defer session.Close()
 
@@ -222,7 +228,7 @@ func (c *SSHClient) uploadViaShell(path string, content []byte, perm os.FileMode
 
 	session, err := c.session()
 	if err != nil {
-		return err
+		return fmt.Errorf("ssh session failed: %w", err)
 	}
 	defer session.Close()
 
@@ -314,6 +320,10 @@ func (c *SSHClient) MkdirAll(path string, perm os.FileMode) error {
 }
 
 // ForwardPort creates an SSH tunnel (local port -> remote port).
+// Note: ForwardPort intentionally does NOT use the reconnect wrapper. Tunnels are
+// long-lived and reconnecting the SSH client mid-tunnel would invalidate the
+// listener's connection state. If the SSH connection dies during a tunnel, the user
+// re-runs the connect command, which creates a fresh tunnel on a reconnected client.
 func (c *SSHClient) ForwardPort(ctx context.Context, localPort, remotePort int) (*SSHTunnel, error) {
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {
@@ -391,7 +401,13 @@ func (c *SSHClient) Close() error {
 
 // reconnect closes the dead connection and establishes a new one using stored parameters.
 func (c *SSHClient) reconnect() error {
-	c.client.Close()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if err := c.client.Close(); err != nil {
+		// Log but don't fail — the connection is likely already dead.
+		fmt.Fprintf(os.Stderr, "ssh: closing stale connection: %v\n", err)
+	}
 	addr := fmt.Sprintf("%s:%d", c.host, c.port)
 	client, err := ssh.Dial("tcp", addr, c.config)
 	if err != nil {
@@ -402,11 +418,35 @@ func (c *SSHClient) reconnect() error {
 	return nil
 }
 
+// isConnectionError returns true if the error likely indicates a dead or broken SSH
+// connection. The SSH library doesn't expose a clean error type hierarchy, so we
+// default to true (attempt reconnect) and only return false for errors that are
+// clearly channel-level rejections where the connection itself is fine.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// Channel open rejections mean the server is alive but refused this specific request.
+	// Reconnecting won't help — the server will reject again.
+	if strings.Contains(msg, "administratively prohibited") ||
+		strings.Contains(msg, "too many open sessions") {
+		return false
+	}
+	// Default: assume the connection is broken and attempt reconnect.
+	// This is safe because we only retry once — worst case we reconnect unnecessarily.
+	return true
+}
+
 // session creates a new SSH session, reconnecting once if the connection is stale.
 func (c *SSHClient) session() (*ssh.Session, error) {
 	session, err := c.client.NewSession()
 	if err == nil {
 		return session, nil
+	}
+	// Only reconnect for connection-level errors, not transient channel errors
+	if !isConnectionError(err) {
+		return nil, err
 	}
 	if reconnErr := c.reconnect(); reconnErr != nil {
 		return nil, fmt.Errorf("ssh session failed (reconnect also failed: %v): %w", reconnErr, err)
@@ -419,6 +459,10 @@ func (c *SSHClient) sftpClient() (*sftp.Client, error) {
 	sc, err := sftp.NewClient(c.client)
 	if err == nil {
 		return sc, nil
+	}
+	// Only reconnect for connection-level errors, not transient channel errors
+	if !isConnectionError(err) {
+		return nil, err
 	}
 	if reconnErr := c.reconnect(); reconnErr != nil {
 		return nil, fmt.Errorf("sftp failed (reconnect also failed: %v): %w", reconnErr, err)
