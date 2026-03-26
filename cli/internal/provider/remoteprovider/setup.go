@@ -255,9 +255,10 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 	// Google OAuth secrets (not channel-specific)
 	for _, item := range []struct {
 		name, description string
+		isSecret          bool
 	}{
-		{"google-client-id", "Google OAuth client ID"},
-		{"google-client-secret", "Google OAuth client secret"},
+		{"google-client-id", "Google OAuth client ID", false},
+		{"google-client-secret", "Google OAuth client secret", true},
 	} {
 		remotePath := posixpath.Join(p.sharedSecretsDir(), item.name)
 		current := ""
@@ -285,7 +286,11 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 				}
 			}
 
-			value, err = ui.SecretPrompt(fmt.Sprintf("  Enter %s", item.name))
+			if item.isSecret {
+				value, err = ui.SecretPrompt(fmt.Sprintf("  Enter %s", item.name))
+			} else {
+				value, err = ui.TextPrompt(fmt.Sprintf("  Enter %s", item.name))
+			}
 			if err != nil {
 				return err
 			}

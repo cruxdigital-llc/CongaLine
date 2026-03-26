@@ -251,9 +251,8 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 10. Ensure router is running and connected (only if a channel has credentials)
-	slackCh, hasSlack := channels.Get("slack")
-	if hasSlack && slackCh.HasCredentials(shared.Values) {
+	// 10. Ensure router is running and connected (only if any channel has credentials)
+	if hasAnyChannel(shared) {
 		p.ensureRouter(ctx)
 		if containerExists(ctx, routerContainer) {
 			connectNetwork(ctx, netName, routerContainer)
@@ -853,17 +852,19 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 	// --- Start egress proxy ---
 	p.ensureEgressProxy(ctx)
 
-	// --- Router (only if a channel with credentials is configured) ---
+	// --- Router (only if any channel has credentials) ---
 	shared, _ := p.readSharedSecrets()
-	slackCh, hasSlack := channels.Get("slack")
-	if hasSlack && slackCh.HasCredentials(shared.Values) {
+	if hasAnyChannel(shared) {
 		routerEnvPath := filepath.Join(p.configDir(), "router.env")
-		routerEnvVars := slackCh.RouterEnvVars(shared.Values)
-		var routerEnv string
-		for k, v := range routerEnvVars {
-			routerEnv += fmt.Sprintf("%s=%s\n", k, v)
+		var routerEnvBuf strings.Builder
+		for _, ch := range channels.All() {
+			if ch.HasCredentials(shared.Values) {
+				for k, v := range ch.RouterEnvVars(shared.Values) {
+					fmt.Fprintf(&routerEnvBuf, "%s=%s\n", k, v)
+				}
+			}
 		}
-		if err := os.WriteFile(routerEnvPath, []byte(routerEnv), 0400); err != nil {
+		if err := os.WriteFile(routerEnvPath, []byte(routerEnvBuf.String()), 0400); err != nil {
 			return fmt.Errorf("failed to write router env file: %w", err)
 		}
 		p.ensureRouter(ctx)
@@ -1351,4 +1352,14 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(dstPath, data, 0644)
 	})
+}
+
+// hasAnyChannel returns true if any registered channel has its required credentials.
+func hasAnyChannel(shared common.SharedSecrets) bool {
+	for _, ch := range channels.All() {
+		if ch.HasCredentials(shared.Values) {
+			return true
+		}
+	}
+	return false
 }

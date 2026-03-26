@@ -23,9 +23,14 @@ func Get(name string) (Channel, bool) {
 	return ch, ok
 }
 
-// All returns all registered channels.
-func All() map[string]Channel {
-	return registered
+// All returns all registered channels in deterministic (sorted) order.
+func All() []Channel {
+	names := registeredNames()
+	out := make([]Channel, len(names))
+	for i, n := range names {
+		out[i] = registered[n]
+	}
+	return out
 }
 
 // ParseBinding parses "platform:id" into a ChannelBinding.
