@@ -250,7 +250,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 9. Ensure router is running and connected (only if Slack configured)
+	// 10. Ensure router is running and connected (only if Slack configured)
 	if shared.HasSlack() {
 		p.ensureRouter(ctx)
 		if containerExists(ctx, routerContainer) {
@@ -258,7 +258,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		}
 	}
 
-	// 10. Save config hash baseline
+	// 11. Save config hash baseline
 	p.saveConfigBaseline(cfg.Name)
 
 	return nil
@@ -1087,13 +1087,21 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		removeContainer(ctx, proxyName)
 	}
 
-	// Generate nginx config
-	conf := policy.GenerateNginxConf(domains)
+	// Build proxy image if not present
+	if !imageExists(ctx, policy.EgressProxyImage) {
+		fmt.Printf("  Building egress proxy image...\n")
+		if err := buildEgressProxyImage(ctx); err != nil {
+			return fmt.Errorf("building egress proxy image: %w", err)
+		}
+	}
+
+	// Generate Squid config
+	conf := policy.GenerateProxyConf(domains)
 	confPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.conf", agentName))
 	if err := os.MkdirAll(filepath.Dir(confPath), 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	if err := os.WriteFile(confPath, []byte(conf), 0644); err != nil {
+	if err := os.WriteFile(confPath, []byte(conf), 0400); err != nil {
 		return fmt.Errorf("writing egress config: %w", err)
 	}
 
@@ -1104,16 +1112,24 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		}
 	}
 
-	// Start proxy on agent's network
+	// Start Squid proxy on agent's network.
+	// Runs as squid user (uid 31) so no SETUID/SETGID capabilities needed.
+	// tmpfs mounts provide writable directories for Squid's pid/log files
+	// while keeping the root filesystem read-only.
 	_, err := dockerRun(ctx, "run", "-d",
 		"--name", proxyName,
 		"--network", netName,
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
-		"--memory", "64m",
+		"--memory", "128m",
 		"--read-only",
-		"-v", fmt.Sprintf("%s:/etc/nginx/nginx.conf:ro", confPath),
+		"--user", "squid:squid",
+		"--tmpfs", "/var/run:rw,noexec,nosuid,uid=31,gid=31",
+		"--tmpfs", "/var/log/squid:rw,noexec,nosuid,uid=31,gid=31",
+		"--tmpfs", "/var/spool/squid:rw,noexec,nosuid,uid=31,gid=31",
+		"-v", fmt.Sprintf("%s:/etc/squid/squid.conf:ro", confPath),
 		policy.EgressProxyImage,
+		"squid", "-N", "-f", "/etc/squid/squid.conf",
 	)
 	if err != nil {
 		return fmt.Errorf("starting egress proxy: %w", err)
@@ -1121,6 +1137,19 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 
 	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(domains))
 	return nil
+}
+
+// buildEgressProxyImage builds the egress proxy Docker image locally from alpine + squid.
+func buildEgressProxyImage(ctx context.Context) error {
+	dir, err := os.MkdirTemp("", "conga-egress-build-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(policy.EgressProxyDockerfile()), 0644); err != nil {
+		return err
+	}
+	return buildImage(ctx, dir, policy.EgressProxyImage)
 }
 
 // stopAgentEgressProxy removes the per-agent egress proxy container.

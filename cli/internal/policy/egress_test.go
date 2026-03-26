@@ -114,43 +114,59 @@ func TestEgressProxyName(t *testing.T) {
 	}
 }
 
-func TestGenerateNginxConfAllowlist(t *testing.T) {
+func TestGenerateProxyConfAllowlist(t *testing.T) {
 	domains := []string{"api.anthropic.com", "*.slack.com", "github.com"}
-	result := GenerateNginxConf(domains)
+	result := GenerateProxyConf(domains)
 
-	if !strings.Contains(result, "api.anthropic.com api.anthropic.com:443") {
-		t.Error("expected exact domain mapping")
+	if !strings.Contains(result, "http_port 3128") {
+		t.Error("expected Squid http_port directive")
 	}
-	if !strings.Contains(result, `"~^.+\.slack\.com$"`) {
-		t.Error("expected wildcard regex pattern")
+	if !strings.Contains(result, "acl allowed_domains dstdomain") {
+		t.Error("expected Squid dstdomain ACL")
 	}
-	if !strings.Contains(result, `default "";`) {
-		t.Error("expected default reject in allowlist mode")
+	if !strings.Contains(result, " api.anthropic.com") {
+		t.Error("expected exact domain in ACL")
 	}
-	if !strings.Contains(result, "listen 3128") {
-		t.Error("expected HTTPS proxy listener")
+	if !strings.Contains(result, " .slack.com") {
+		t.Error("expected wildcard domain as .slack.com in ACL")
 	}
-	if !strings.Contains(result, "resolver 127.0.0.11") {
-		t.Error("expected Docker internal DNS resolver")
+	if !strings.Contains(result, " github.com") {
+		t.Error("expected github.com in ACL")
 	}
-	if strings.Contains(result, "listen 53") {
-		t.Error("DNS forwarder should not be present (DNS tunneling risk)")
+	if !strings.Contains(result, "http_access allow CONNECT allowed_domains SSL_ports") {
+		t.Error("expected CONNECT access rule")
 	}
-	if !strings.Contains(result, "access_log /dev/stdout") {
-		t.Error("expected access logging")
+	if !strings.Contains(result, "http_access deny all") {
+		t.Error("expected default deny in allowlist mode")
+	}
+	if !strings.Contains(result, "cache deny all") {
+		t.Error("expected cache disabled")
+	}
+	if !strings.Contains(result, "access_log stdio:/dev/stdout") {
+		t.Error("expected access logging to stdout")
 	}
 }
 
-func TestGenerateNginxConfPassthrough(t *testing.T) {
-	result := GenerateNginxConf(nil)
-	if !strings.Contains(result, "default $ssl_preread_server_name:443") {
+func TestGenerateProxyConfPassthrough(t *testing.T) {
+	result := GenerateProxyConf(nil)
+	if !strings.Contains(result, "http_access allow all") {
 		t.Error("expected passthrough mode with nil domains")
 	}
 }
 
-func TestGenerateNginxConfEmptySlice(t *testing.T) {
-	result := GenerateNginxConf([]string{})
-	if !strings.Contains(result, "default $ssl_preread_server_name:443") {
+func TestGenerateProxyConfEmptySlice(t *testing.T) {
+	result := GenerateProxyConf([]string{})
+	if !strings.Contains(result, "http_access allow all") {
 		t.Error("expected passthrough mode with empty domains")
+	}
+}
+
+func TestEgressProxyDockerfile(t *testing.T) {
+	df := EgressProxyDockerfile()
+	if !strings.Contains(df, "FROM alpine:3.21") {
+		t.Error("expected alpine base image")
+	}
+	if !strings.Contains(df, "apk add") && !strings.Contains(df, "squid") {
+		t.Error("expected squid installation")
 	}
 }

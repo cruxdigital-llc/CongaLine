@@ -44,9 +44,8 @@ func networkName(agentName string) string {
 // createNetwork creates a Docker bridge network for agent isolation.
 // Each agent gets its own network to prevent inter-container communication.
 // Note: We don't use --internal because it prevents -p port publishing for the
-// gateway web UI. As a result, containers can still reach the internet directly.
-// Full egress restriction requires explicit proxy wiring (HTTPS_PROXY/--dns)
-// or iptables rules — tracked as a deferred item in ROADMAP.md.
+// gateway web UI. Egress restriction is enforced via per-agent Squid proxy
+// wired through HTTPS_PROXY/HTTP_PROXY env vars (see startAgentEgressProxy).
 func createNetwork(ctx context.Context, name string) error {
 	_, err := dockerRun(ctx, "network", "create", name, "--driver", "bridge")
 	return err

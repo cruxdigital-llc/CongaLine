@@ -239,8 +239,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	if egressEnforce {
 		domains := policy.EffectiveAllowedDomains(egressPolicy)
 		if err := p.startAgentEgressProxy(ctx, cfg.Name, domains); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to start egress proxy: %v\n", err)
-			egressEnforce = false
+			return fmt.Errorf("failed to start egress proxy: %w", err)
 		}
 	}
 
@@ -281,12 +280,12 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 9. Restart router if Slack configured so it picks up updated routing.json
+	// 10. Restart router if Slack configured so it picks up updated routing.json
 	if shared.HasSlack() {
 		p.restartRouter(ctx)
 	}
 
-	// 10. Save config hash baseline
+	// 11. Save config hash baseline
 	p.saveConfigBaseline(cfg.Name)
 
 	return nil
@@ -316,10 +315,11 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 
 	// Remove remote config files
-	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s %s %s",
+	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s %s %s %s",
 		shellQuote(posixpath.Join(p.remoteAgentsDir(), name+".json")),
 		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".env")),
 		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".sha256")),
+		shellQuote(posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.conf", name))),
 	))
 
 	if deleteSecrets {
@@ -862,10 +862,21 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 	// Stop existing proxy if any
 	p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName)))
 
-	// Generate and upload nginx config
-	conf := policy.GenerateNginxConf(domains)
+	// Build proxy image if not present on remote
+	exists, _ := p.ssh.Run(ctx, fmt.Sprintf("docker image inspect %s >/dev/null 2>&1 && echo yes || echo no", policy.EgressProxyImage))
+	if strings.TrimSpace(exists) != "yes" {
+		fmt.Printf("  Building egress proxy image on remote...\n")
+		buildCmd := fmt.Sprintf("mkdir -p /tmp/conga-egress-build && echo '%s' > /tmp/conga-egress-build/Dockerfile && docker build -t %s /tmp/conga-egress-build && rm -rf /tmp/conga-egress-build",
+			policy.EgressProxyDockerfile(), policy.EgressProxyImage)
+		if _, err := p.ssh.Run(ctx, buildCmd); err != nil {
+			return fmt.Errorf("building egress proxy image: %w", err)
+		}
+	}
+
+	// Generate and upload Squid config
+	conf := policy.GenerateProxyConf(domains)
 	confPath := posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.conf", agentName))
-	if err := p.ssh.Upload(confPath, []byte(conf), 0644); err != nil {
+	if err := p.ssh.Upload(confPath, []byte(conf), 0400); err != nil {
 		return fmt.Errorf("uploading egress config: %w", err)
 	}
 
@@ -876,13 +887,15 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 		}
 	}
 
-	// Pull pinned nginx image if needed
-	p.ssh.Run(ctx, fmt.Sprintf("docker pull %s 2>/dev/null || true", policy.EgressProxyImage))
-
-	// Start proxy on agent's network
+	// Start Squid proxy on agent's network.
+	// Runs as squid user (uid 31) so no SETUID/SETGID capabilities needed.
+	// tmpfs mounts provide writable directories for Squid's pid/log files
+	// while keeping the root filesystem read-only.
 	cmd := fmt.Sprintf("docker run -d --name %s --network %s "+
-		"--cap-drop ALL --security-opt no-new-privileges --memory 64m --read-only "+
-		"-v %s:/etc/nginx/nginx.conf:ro %s",
+		"--cap-drop ALL --security-opt no-new-privileges --memory 128m --read-only "+
+		"--user squid:squid "+
+		"--tmpfs /var/run:rw,noexec,nosuid,uid=31,gid=31 --tmpfs /var/log/squid:rw,noexec,nosuid,uid=31,gid=31 --tmpfs /var/spool/squid:rw,noexec,nosuid,uid=31,gid=31 "+
+		"-v %s:/etc/squid/squid.conf:ro %s squid -N -f /etc/squid/squid.conf",
 		shellQuote(proxyName), shellQuote(netName), shellQuote(confPath), policy.EgressProxyImage)
 
 	if _, err := p.ssh.Run(ctx, cmd); err != nil {
