@@ -46,7 +46,7 @@ When a policy defines a security control, each provider enforces it with the bes
 
 | Control | Local (Dev) | Remote (Staging) | Enterprise (Prod) |
 |---|---|---|---|
-| **Egress filtering** | Configurable: validate (warns only) or enforce (egress proxy with domain allowlist) | iptables OUTPUT rules (IP-based, best-effort) | Squid forward proxy with domain allowlist. Blocked requests logged and alerted. |
+| **Egress filtering** | Configurable: validate (warns only) or enforce (per-agent nginx proxy with SNI domain allowlist) | Per-agent nginx proxy with SNI domain allowlist (same mechanism as local) | Per-agent nginx proxy with SNI domain allowlist. Blocked attempts logged. |
 | **Host access** | N/A (user's machine) | SSH key-only auth. Gateway via SSH tunnel. | Zero ingress. No SSH. SSM-only. Gateway via SSM tunnel. |
 | **Secrets backend** | File, mode 0400. User owns disk encryption. | File, mode 0400 on remote. | AWS Secrets Manager. Encrypted at rest. IAM-scoped. |
 | **IAM / RBAC** | N/A (single user) | Admin: SSH. End users: CLI-only, scoped to assigned agent. | AWS SSO + IAM roles with explicit deny. Per-user permission sets (planned). |

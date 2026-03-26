@@ -441,6 +441,29 @@ setup_agent_common() {
   # Docker network
   docker network create --driver bridge "conga-$AGENT_NAME" || true
 
+  # Per-agent egress proxy (when policy-generated config exists)
+  EGRESS_CONF="/opt/conga/config/egress-$AGENT_NAME.conf"
+  EGRESS_PROXY="conga-egress-$AGENT_NAME"
+  EGRESS_DOCKER_ARGS=""
+  if [ -f "$EGRESS_CONF" ]; then
+    log "Starting egress proxy for $AGENT_NAME..."
+    docker rm -f "$EGRESS_PROXY" 2>/dev/null || true
+    docker run -d \
+      --name "$EGRESS_PROXY" \
+      --network "conga-$AGENT_NAME" \
+      --cap-drop ALL \
+      --security-opt no-new-privileges \
+      --memory 64m \
+      --read-only \
+      -v "$EGRESS_CONF:/etc/nginx/nginx.conf:ro" \
+      nginx:alpine
+    PROXY_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$EGRESS_PROXY" 2>/dev/null)
+    if [ -n "$PROXY_IP" ]; then
+      EGRESS_DOCKER_ARGS="-e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1 --dns $PROXY_IP"
+    fi
+    log "Egress proxy started for $AGENT_NAME"
+  fi
+
   # Build -e flags from env file keys
   ENV_FLAGS=""
   while IFS="=" read -r key value; do
@@ -459,7 +482,7 @@ Type=simple
 EnvironmentFile=/opt/conga/config/$AGENT_NAME.env
 ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region ${aws_region} 2>/dev/null || true; /opt/conga/bin/deploy-behavior.sh $AGENT_NAME \$(cat /opt/conga/config/$AGENT_NAME.type 2>/dev/null || echo user) 2>/dev/null || true; chown -R 1000:1000 /opt/conga/data/$AGENT_NAME/data/workspace 2>/dev/null || true'
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
-ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="--max-old-space-size=1536" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $ENV_FLAGS $CONGA_IMAGE
+ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="--max-old-space-size=1536" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
 StandardOutput=append:/var/log/conga-$AGENT_NAME.log

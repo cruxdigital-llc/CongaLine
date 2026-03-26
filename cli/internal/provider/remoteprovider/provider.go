@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
+	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
 )
@@ -215,7 +216,17 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		image = "ghcr.io/openclaw/openclaw:latest"
 	}
 
-	// 5. Create Docker network
+	// 5. Load egress policy
+	egressPolicy, policyErr := policy.LoadEgressPolicy(p.remoteDir, cfg.Name)
+	if policyErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy: %v\n", policyErr)
+	}
+	egressEnforce := false
+	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
+		egressEnforce = true // Remote always enforces when domains defined
+	}
+
+	// 6. Create Docker network
 	netName := networkName(cfg.Name)
 	if !p.networkExists(ctx, netName) {
 		fmt.Printf("Creating network %s...\n", netName)
@@ -224,12 +235,21 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		}
 	}
 
-	// 6. Connect egress proxy
+	// 7. Start per-agent egress proxy (when policy defines domains)
+	if egressEnforce {
+		domains := policy.EffectiveAllowedDomains(egressPolicy)
+		if err := p.startAgentEgressProxy(ctx, cfg.Name, domains); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to start egress proxy: %v\n", err)
+			egressEnforce = false
+		}
+	}
+
+	// Connect shared egress proxy if running (legacy / passthrough)
 	if p.containerExists(ctx, egressProxyContainer) {
 		p.connectNetwork(ctx, netName, egressProxyContainer)
 	}
 
-	// 7. Start container
+	// 8. Start container
 	cName := containerName(cfg.Name)
 	if p.containerExists(ctx, cName) {
 		p.removeContainer(ctx, cName)
@@ -243,18 +263,20 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 
 	fmt.Printf("Starting container %s...\n", cName)
 	if err := p.runAgentContainer(ctx, agentContainerOpts{
-		Name:        cName,
-		AgentName:   cfg.Name,
-		Network:     netName,
-		EnvFile:     envPath,
-		DataDir:     dataDir,
-		GatewayPort: cfg.GatewayPort,
-		Image:       image,
+		Name:            cName,
+		AgentName:       cfg.Name,
+		Network:         netName,
+		EnvFile:         envPath,
+		DataDir:         dataDir,
+		GatewayPort:     cfg.GatewayPort,
+		Image:           image,
+		EgressEnforce:   egressEnforce,
+		EgressProxyName: policy.EgressProxyName(cfg.Name),
 	}); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
 
-	// 8. Update routing.json
+	// 9. Update routing.json
 	if err := p.regenerateRouting(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
@@ -278,6 +300,9 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 		p.stopContainer(ctx, cName)
 		p.removeContainer(ctx, cName)
 	}
+
+	// Stop per-agent egress proxy
+	p.stopAgentEgressProxy(ctx, name)
 
 	if p.containerExists(ctx, routerContainer) {
 		p.disconnectNetwork(ctx, netName, routerContainer)
@@ -466,11 +491,24 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		return err
 	}
 
+	// Load egress policy
+	egressPolicy, policyErr := policy.LoadEgressPolicy(p.remoteDir, agentName)
+	if policyErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy: %v\n", policyErr)
+	}
+	egressEnforce := false
+	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
+		egressEnforce = true
+	}
+
 	cName := containerName(agentName)
 	if p.containerExists(ctx, cName) {
 		p.stopContainer(ctx, cName)
 		p.removeContainer(ctx, cName)
 	}
+
+	// Stop old egress proxy
+	p.stopAgentEgressProxy(ctx, agentName)
 
 	image := p.getConfigValue("image")
 	if image == "" {
@@ -482,19 +520,30 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		p.createNetwork(ctx, netName)
 	}
 
+	// Start per-agent egress proxy (when policy defines domains)
+	if egressEnforce {
+		domains := policy.EffectiveAllowedDomains(egressPolicy)
+		if err := p.startAgentEgressProxy(ctx, agentName, domains); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to start egress proxy: %v\n", err)
+			egressEnforce = false
+		}
+	}
+
 	// Ensure all files are owned by the container user before starting.
 	if _, err := p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir))); err != nil {
 		return fmt.Errorf("failed to chown data directory: %w", err)
 	}
 
 	if err := p.runAgentContainer(ctx, agentContainerOpts{
-		Name:        cName,
-		AgentName:   agentName,
-		Network:     netName,
-		EnvFile:     envPath,
-		DataDir:     dataDir,
-		GatewayPort: cfg.GatewayPort,
-		Image:       image,
+		Name:            cName,
+		AgentName:       agentName,
+		Network:         netName,
+		EnvFile:         envPath,
+		DataDir:         dataDir,
+		GatewayPort:     cfg.GatewayPort,
+		Image:           image,
+		EgressEnforce:   egressEnforce,
+		EgressProxyName: policy.EgressProxyName(agentName),
 	}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
 	}
@@ -804,6 +853,51 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 	}
 
 	fmt.Println("  Egress proxy started.")
+}
+
+// startAgentEgressProxy starts a per-agent nginx proxy for egress domain filtering on the remote host.
+func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string) error {
+	proxyName := policy.EgressProxyName(agentName)
+	netName := networkName(agentName)
+
+	// Stop existing proxy if any
+	p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName)))
+
+	// Generate and upload nginx config
+	conf := policy.GenerateNginxConf(domains)
+	confPath := posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.conf", agentName))
+	if err := p.ssh.Upload(confPath, []byte(conf), 0644); err != nil {
+		return fmt.Errorf("uploading egress config: %w", err)
+	}
+
+	// Ensure network exists
+	if !p.networkExists(ctx, netName) {
+		if err := p.createNetwork(ctx, netName); err != nil {
+			return fmt.Errorf("creating network: %w", err)
+		}
+	}
+
+	// Pull nginx:alpine if needed
+	p.ssh.Run(ctx, "docker pull nginx:alpine 2>/dev/null || true")
+
+	// Start proxy on agent's network
+	cmd := fmt.Sprintf("docker run -d --name %s --network %s "+
+		"--cap-drop ALL --security-opt no-new-privileges --memory 64m --read-only "+
+		"-v %s:/etc/nginx/nginx.conf:ro nginx:alpine",
+		shellQuote(proxyName), shellQuote(netName), shellQuote(confPath))
+
+	if _, err := p.ssh.Run(ctx, cmd); err != nil {
+		return fmt.Errorf("starting egress proxy: %w", err)
+	}
+
+	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(domains))
+	return nil
+}
+
+// stopAgentEgressProxy removes the per-agent egress proxy container on the remote host.
+func (p *RemoteProvider) stopAgentEgressProxy(ctx context.Context, agentName string) {
+	proxyName := policy.EgressProxyName(agentName)
+	p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName)))
 }
 
 // --- file helpers ---
