@@ -286,11 +286,7 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 				}
 			}
 
-			if item.isSecret {
-				value, err = ui.SecretPrompt(fmt.Sprintf("  Enter %s", item.name))
-			} else {
-				value, err = ui.TextPrompt(fmt.Sprintf("  Enter %s", item.name))
-			}
+			value, err = ui.SecretPrompt(fmt.Sprintf("  Enter %s", item.name))
 			if err != nil {
 				return err
 			}

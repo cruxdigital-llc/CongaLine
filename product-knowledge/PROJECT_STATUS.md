@@ -89,6 +89,7 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 ### 14. Channel Abstraction — Verified Complete
 *See `specs/2026-03-26_feature_channel-abstraction/` for full trace*
 
+
 ### 15. MCP Policy Tools — Implementation Complete, Ready for Verification
 *Lead: Architect + QA*
 *See `specs/2026-03-26_feature_mcp-policy-tools/` for full trace*
