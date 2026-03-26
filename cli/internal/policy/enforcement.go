@@ -1,5 +1,7 @@
 package policy
 
+import "fmt"
+
 // EnforcementLevel describes how a provider handles a policy rule.
 type EnforcementLevel string
 
@@ -56,6 +58,9 @@ func egressReport(e *EgressPolicy, providerName string) []RuleReport {
 				level = ValidateOnly
 				detail = "Warnings only; use mode: enforce to activate egress proxy"
 			}
+		default:
+			level = NotApplicable
+			detail = fmt.Sprintf("Unknown provider %q", providerName)
 		}
 		reports = append(reports, RuleReport{
 			Section: "egress",
@@ -134,6 +139,9 @@ func postureReport(p *PostureDeclarations, providerName string) []RuleReport {
 				level = ValidateOnly
 				detail = "Only standard isolation available on local"
 			}
+		default:
+			level = NotApplicable
+			detail = fmt.Sprintf("Unknown provider %q", providerName)
 		}
 		reports = append(reports, RuleReport{
 			Section: "posture",
@@ -183,6 +191,9 @@ func postureReport(p *PostureDeclarations, providerName string) []RuleReport {
 				level = ValidateOnly
 				detail = "Proxy-based credential injection (future spec)"
 			}
+		default:
+			level = NotApplicable
+			detail = fmt.Sprintf("Unknown provider %q", providerName)
 		}
 		reports = append(reports, RuleReport{
 			Section: "posture",
@@ -224,6 +235,9 @@ func postureReport(p *PostureDeclarations, providerName string) []RuleReport {
 				level = ValidateOnly
 				detail = "Only basic monitoring available on local"
 			}
+		default:
+			level = NotApplicable
+			detail = fmt.Sprintf("Unknown provider %q", providerName)
 		}
 		reports = append(reports, RuleReport{
 			Section: "posture",

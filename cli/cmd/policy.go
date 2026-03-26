@@ -36,19 +36,26 @@ provider can enforce. The report shows enforcement levels:
 	rootCmd.AddCommand(policyCmd)
 }
 
-func defaultPolicyPath() string {
-	cfg, _ := provpkg.LoadConfig(provpkg.DefaultConfigPath())
+func defaultPolicyPath() (string, error) {
+	cfg, err := provpkg.LoadConfig(provpkg.DefaultConfigPath())
+	if err != nil {
+		return "", fmt.Errorf("failed to load config: %w", err)
+	}
 	dataDir := cfg.DataDir
 	if dataDir == "" {
 		dataDir = provpkg.DefaultDataDir()
 	}
-	return filepath.Join(dataDir, "conga-policy.yaml")
+	return filepath.Join(dataDir, "conga-policy.yaml"), nil
 }
 
 func policyValidateRun(cmd *cobra.Command, args []string) error {
 	path := policyFilePath
 	if path == "" {
-		path = defaultPolicyPath()
+		var err error
+		path, err = defaultPolicyPath()
+		if err != nil {
+			return err
+		}
 	}
 
 	pf, err := policy.Load(path)
@@ -78,6 +85,9 @@ func policyValidateRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("policy validation failed: %w", err)
 	}
 
+	if prov == nil {
+		return fmt.Errorf("no provider configured; use --provider or run conga admin setup")
+	}
 	providerName := prov.Name()
 
 	agentName := flagAgent

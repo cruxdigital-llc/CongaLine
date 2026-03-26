@@ -281,6 +281,65 @@ func TestEnforcementReportRemote(t *testing.T) {
 	}
 }
 
+func TestMergeForAgentDeepCopy(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress: &EgressPolicy{
+			AllowedDomains: []string{"api.anthropic.com"},
+			Mode:           "validate",
+		},
+		Agents: map[string]*AgentOverride{
+			"myagent": {
+				Egress: &EgressPolicy{
+					AllowedDomains: []string{"api.anthropic.com", "*.trello.com"},
+				},
+			},
+		},
+	}
+
+	merged := pf.MergeForAgent("myagent")
+	merged.Egress.AllowedDomains = append(merged.Egress.AllowedDomains, "evil.com")
+
+	// Original agent override must not be affected
+	if len(pf.Agents["myagent"].Egress.AllowedDomains) != 2 {
+		t.Errorf("mutation leaked to original: got %d domains, want 2", len(pf.Agents["myagent"].Egress.AllowedDomains))
+	}
+
+	// Merge without override — mutating merged must not affect global
+	merged2 := pf.MergeForAgent("other")
+	merged2.Egress.AllowedDomains = append(merged2.Egress.AllowedDomains, "evil.com")
+	if len(pf.Egress.AllowedDomains) != 1 {
+		t.Errorf("mutation leaked to global egress: got %d domains, want 1", len(pf.Egress.AllowedDomains))
+	}
+}
+
+func TestValidateDomainOverlap(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress: &EgressPolicy{
+			AllowedDomains: []string{"api.anthropic.com", "evil.com"},
+			BlockedDomains: []string{"evil.com"},
+		},
+	}
+	if err := pf.Validate(); err == nil {
+		t.Fatal("expected error for domain in both allowed and blocked lists")
+	}
+}
+
+func TestEnforcementReportUnknownProvider(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}},
+		Posture:    &PostureDeclarations{IsolationLevel: "standard", SecretsBackend: "file", Monitoring: "basic"},
+	}
+	reports := pf.EnforcementReport("unknown")
+	for _, r := range reports {
+		if r.Level != NotApplicable {
+			t.Errorf("unknown provider rule %s.%s: expected not-applicable, got %s", r.Section, r.Rule, r.Level)
+		}
+	}
+}
+
 func TestValidatePostureInvalidValues(t *testing.T) {
 	tests := []struct {
 		name    string

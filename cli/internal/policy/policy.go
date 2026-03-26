@@ -158,6 +158,18 @@ func validateEgress(e *EgressPolicy) error {
 			return fmt.Errorf("blocked_domains: %w", err)
 		}
 	}
+	// Warn about domains appearing in both lists (blocked takes precedence at enforcement time).
+	if len(e.AllowedDomains) > 0 && len(e.BlockedDomains) > 0 {
+		allowed := make(map[string]bool, len(e.AllowedDomains))
+		for _, d := range e.AllowedDomains {
+			allowed[strings.ToLower(d)] = true
+		}
+		for _, d := range e.BlockedDomains {
+			if allowed[strings.ToLower(d)] {
+				return fmt.Errorf("domain %q appears in both allowed_domains and blocked_domains", d)
+			}
+		}
+	}
 	return nil
 }
 
@@ -214,12 +226,13 @@ func validateDomain(d string) error {
 
 // MergeForAgent returns an effective policy for a specific agent.
 // Per-agent overrides shallow-replace entire sections (egress, routing, posture).
+// The returned policy is a deep copy — safe to mutate without affecting the original.
 func (pf *PolicyFile) MergeForAgent(agentName string) *PolicyFile {
 	merged := &PolicyFile{
 		APIVersion: pf.APIVersion,
-		Egress:     pf.Egress,
-		Routing:    pf.Routing,
-		Posture:    pf.Posture,
+		Egress:     copyEgress(pf.Egress),
+		Routing:    copyRouting(pf.Routing),
+		Posture:    copyPosture(pf.Posture),
 	}
 
 	override, exists := pf.Agents[agentName]
@@ -228,16 +241,62 @@ func (pf *PolicyFile) MergeForAgent(agentName string) *PolicyFile {
 	}
 
 	if override.Egress != nil {
-		merged.Egress = override.Egress
+		merged.Egress = copyEgress(override.Egress)
 	}
 	if override.Routing != nil {
-		merged.Routing = override.Routing
+		merged.Routing = copyRouting(override.Routing)
 	}
 	if override.Posture != nil {
-		merged.Posture = override.Posture
+		merged.Posture = copyPosture(override.Posture)
 	}
 
 	return merged
+}
+
+func copyEgress(e *EgressPolicy) *EgressPolicy {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	cp.AllowedDomains = append([]string(nil), e.AllowedDomains...)
+	cp.BlockedDomains = append([]string(nil), e.BlockedDomains...)
+	return &cp
+}
+
+func copyRouting(r *RoutingPolicy) *RoutingPolicy {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	cp.FallbackChain = append([]string(nil), r.FallbackChain...)
+	if r.Models != nil {
+		cp.Models = make(map[string]*ModelDef, len(r.Models))
+		for k, v := range r.Models {
+			m := *v
+			cp.Models[k] = &m
+		}
+	}
+	if r.CostLimits != nil {
+		cl := *r.CostLimits
+		cp.CostLimits = &cl
+	}
+	if r.TaskRules != nil {
+		cp.TaskRules = make(map[string]*TaskRule, len(r.TaskRules))
+		for k, v := range r.TaskRules {
+			tr := *v
+			cp.TaskRules[k] = &tr
+		}
+	}
+	return &cp
+}
+
+func copyPosture(p *PostureDeclarations) *PostureDeclarations {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.ComplianceFrameworks = append([]string(nil), p.ComplianceFrameworks...)
+	return &cp
 }
 
 // MatchDomain checks whether a domain matches a pattern.

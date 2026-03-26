@@ -1,7 +1,7 @@
 # Conga Line Deployment Policy
 # Copy to ~/.conga/conga-policy.yaml and customize.
 # All sections are optional. When absent, no policy is enforced.
-# See: portable-policy.md for full documentation.
+# See: specs/2026-03-25_feature_policy-schema/spec.md for schema details.
 
 apiVersion: conga.dev/v1alpha1
 
