@@ -5,6 +5,8 @@ package provider
 import (
 	"context"
 	"time"
+
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 )
 
 // AgentType distinguishes user (DM-only) from team (channel-based) agents.
@@ -17,13 +19,22 @@ const (
 
 // AgentConfig is the provider-agnostic representation of an agent.
 type AgentConfig struct {
-	Name          string    `json:"name"`
-	Type          AgentType `json:"type"`
-	SlackMemberID string    `json:"slack_member_id,omitempty"`
-	SlackChannel  string    `json:"slack_channel,omitempty"`
-	GatewayPort   int       `json:"gateway_port"`
-	IAMIdentity   string    `json:"iam_identity,omitempty"`
-	Paused        bool      `json:"paused,omitempty"`
+	Name        string                   `json:"name"`
+	Type        AgentType                `json:"type"`
+	Channels    []channels.ChannelBinding `json:"channels,omitempty"`
+	GatewayPort int                      `json:"gateway_port"`
+	IAMIdentity string                   `json:"iam_identity,omitempty"`
+	Paused      bool                     `json:"paused,omitempty"`
+}
+
+// ChannelBinding returns the first binding for the given platform, or nil.
+func (a *AgentConfig) ChannelBinding(platform string) *channels.ChannelBinding {
+	for i := range a.Channels {
+		if a.Channels[i].Platform == platform {
+			return &a.Channels[i]
+		}
+	}
+	return nil
 }
 
 // AgentStatus is returned by GetStatus.

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -280,8 +281,8 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 10. Restart router if Slack configured so it picks up updated routing.json
-	if shared.HasSlack() {
+	// 10. Restart router if any channel has credentials so it picks up updated routing.json
+	if hasAnyChannel(shared) {
 		p.restartRouter(ctx)
 	}
 
@@ -331,7 +332,7 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 	// Restart router to pick up removed agent from routing.json
 	shared, _ := p.readSharedSecrets()
-	if shared.HasSlack() {
+	if hasAnyChannel(shared) {
 		p.restartRouter(ctx)
 	}
 	return nil
@@ -564,7 +565,7 @@ func (p *RemoteProvider) RefreshAll(ctx context.Context) error {
 
 	// Regenerate routing.json before restarting the router
 	shared, _ := p.readSharedSecrets()
-	if shared.HasSlack() {
+	if hasAnyChannel(shared) {
 		if err := p.regenerateRouting(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to regenerate routing: %v\n", err)
 		}
@@ -1034,4 +1035,14 @@ func generateToken() (string, error) {
 		return "", fmt.Errorf("failed to generate token: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hasAnyChannel returns true if any registered channel has its required credentials.
+func hasAnyChannel(shared common.SharedSecrets) bool {
+	for _, ch := range channels.All() {
+		if ch.HasCredentials(shared.Values) {
+			return true
+		}
+	}
+	return false
 }

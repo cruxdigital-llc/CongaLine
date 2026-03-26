@@ -45,6 +45,8 @@ New config files should default to JSON unless they are primarily hand-authored 
 
 | Package | Owns | Does NOT Own |
 |---|---|---|
+| `cli/internal/channels/` | Channel interface, registry, shared types (`ChannelBinding`, `SecretDef`, `RoutingEntry`) | Channel-specific implementation |
+| `cli/internal/channels/{name}/` | Platform-specific implementation for one channel (validation, config, routing, secrets) | Cross-channel logic |
 | `cli/internal/provider/` | Provider interface, registry, shared types (`AgentConfig`, `AgentStatus`) | Provider-specific implementation |
 | `cli/internal/provider/{name}provider/` | Transport-specific code for one provider | Shared logic, cross-provider behavior |
 | `cli/internal/common/` | Config generation, routing, behavior composition, validation | Policy, provider interface, CLI commands |
@@ -57,15 +59,16 @@ New packages are preferred over growing existing ones when the domain is distinc
 
 ### Current State
 
-Slack is deeply coupled into the codebase:
-- `AgentConfig` has `SlackMemberID` and `SlackChannel` fields
-- `GenerateOpenClawConfig()` hardcodes Slack plugin config and `/slack/events` webhook path
-- Router (`router/src/index.js`) is 100% Slack-specific (Socket Mode, Slack event parsing, Slack signature verification)
-- Routing config assumes Slack's two-tier model (channel IDs → URLs, member IDs → URLs)
-- ID validation is Slack-format-specific (`^U[A-Z0-9]{10}$`, `^C[A-Z0-9]{10}$`)
-- Shared secrets are Slack-named (`SlackBotToken`, `SlackSigningSecret`, `SlackAppToken`)
-
-However, gateway-only mode already proves agents don't require Slack — the `HasSlack()` check allows agents to run with only the web UI.
+Slack is decoupled from the core via the `Channel` interface (`cli/internal/channels/`):
+- `AgentConfig` has `Channels []channels.ChannelBinding` — platform-agnostic bindings
+- `GenerateOpenClawConfig()` delegates to `ch.OpenClawChannelConfig()` per binding
+- `GenerateRoutingJSON()` delegates to `ch.RoutingEntries()` per binding
+- `GenerateEnvFile()` delegates to `ch.AgentEnvVars()` per binding
+- Validation delegated to `ch.ValidateBinding()` — each channel owns its ID format
+- Secrets declared via `ch.SharedSecrets()` — each channel owns its secret names
+- `SharedSecrets.Values map[string]string` keyed by secret name, not Slack-specific fields
+- Router (`router/src/index.js`) remains Slack-specific (Socket Mode, event parsing)
+- Gateway-only mode works with zero channel bindings (no `channels` section in openclaw.json)
 
 ### Standard: New Code Must Not Deepen Slack Coupling
 
@@ -73,7 +76,7 @@ However, gateway-only mode already proves agents don't require Slack — the `Ha
 
 New features must not introduce additional Slack-specific logic outside of the existing Slack integration points. Specifically:
 
-1. **Agent identity must not depend on Slack IDs.** Agent name is the primary key. Slack IDs are optional channel bindings, not identity. New features that need to identify agents must use agent name, not `SlackMemberID` or `SlackChannel`.
+1. **Agent identity must not depend on channel IDs.** Agent name is the primary key. Channel bindings are optional. New features that need to identify agents must use agent name, not platform-specific IDs.
 
 2. **Policy must remain channel-agnostic.** The `conga-policy.yaml` schema must not contain Slack-specific fields. Egress rules, routing, and posture declarations apply regardless of messaging platform.
 
@@ -81,13 +84,15 @@ New features must not introduce additional Slack-specific logic outside of the e
 
 4. **Security controls must not depend on Slack constructs.** Channel allowlists are a security boundary, but the enforcement mechanism (which channels an agent responds to) should be expressible for any platform, not just Slack channel IDs.
 
-### Package Structure: `channels/`
+### Package Structure: `cli/internal/channels/`
 
-Channel integrations live in a dedicated root-level `channels/` directory, one subdirectory per platform:
+Channel integrations live in `cli/internal/channels/`, one subdirectory per platform:
 
 ```
-channels/
-  slack/       — Slack Socket Mode router, event parsing, signature verification
+cli/internal/channels/
+  channels.go  — Channel interface + shared types (ChannelBinding, SecretDef, RoutingEntry)
+  registry.go  — Register/Get/All + ParseBinding("platform:id")
+  slack/       — Slack Channel implementation (validation, config, routing, secrets)
   telegram/    — (future) Telegram bot integration
   discord/     — (future) Discord bot integration
 ```
@@ -139,16 +144,17 @@ Platform API
 
 **Per-agent containers use HTTP webhook mode** (`mode: "http"` in `openclaw.json`) — they never connect to the platform directly. The proxy forwards events with signed HTTP requests to each container's webhook endpoint (`http://conga-{name}:{port}/{platform}/events`).
 
-### Future Direction: Multi-Channel Support
+### Adding a New Channel
 
-When adding a second messaging platform (e.g., Telegram), the architecture should evolve toward:
+To add a second messaging platform (e.g., Telegram):
 
-- **Platform bindings on AgentConfig** — Replace `SlackMemberID`/`SlackChannel` with a `Channels` map (e.g., `map[string]ChannelBinding` where key is platform name). This is a breaking change to the agent config schema and should be its own spec.
-- **Protocol-aware fan-out** — Each `channels/{platform}/` package manages its own connection and normalizes events for delivery to agent containers via platform-specific webhook paths (`/slack/events`, `/telegram/events`).
-- **Platform-specific validation** — `ValidateMemberID()` moves from `common/` into `channels/slack/`. Each platform owns its own ID validation.
-- **Plugin config generation** — `GenerateOpenClawConfig()` conditionally enables Slack, Telegram, etc. based on which platform bindings exist on the agent.
+1. Create `cli/internal/channels/telegram/telegram.go` implementing the `Channel` interface
+2. Register via `init()` — `channels.Register(&Telegram{})`
+3. Add `_ "...channels/telegram"` import to `cmd/root.go`
+4. Add a connection proxy container (if the platform needs one) analogous to the Slack router
+5. No changes needed to `common/`, `provider/`, or `cmd/` — the interface handles everything
 
-This refactor is not required now. The standard exists to prevent new code from making the eventual refactor harder.
+The `Channel` interface covers: validation, secrets, OpenClaw config generation, plugin config, routing entries, agent/router env vars, webhook paths, and behavior template vars. All delegated per-platform.
 
 ## Testing Conventions
 

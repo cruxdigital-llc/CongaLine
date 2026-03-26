@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 )
 
@@ -59,15 +60,19 @@ func ComposeBehaviorFiles(behaviorDir string, agent provider.AgentConfig) (Behav
 	} else {
 		tmplPath := filepath.Join(behaviorDir, agentType, "USER.md.tmpl")
 		if data, err := os.ReadFile(tmplPath); err == nil {
-			// Simple template substitution matching deploy-behavior.sh.tmpl
 			content := string(data)
 			content = strings.ReplaceAll(content, "{{AGENT_NAME}}", agent.Name)
 
-			slackID := agent.SlackMemberID
-			if agent.Type == provider.AgentTypeTeam {
-				slackID = agent.SlackChannel
+			// Gather template vars from all channel bindings
+			for _, binding := range agent.Channels {
+				ch, ok := channels.Get(binding.Platform)
+				if !ok {
+					continue
+				}
+				for k, v := range ch.BehaviorTemplateVars(string(agent.Type), binding) {
+					content = strings.ReplaceAll(content, "{{"+k+"}}", v)
+				}
 			}
-			content = strings.ReplaceAll(content, "{{SLACK_ID}}", slackID)
 
 			files["USER.md"] = []byte(content)
 		}

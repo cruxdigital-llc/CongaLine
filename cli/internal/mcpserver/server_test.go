@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/cruxdigital-llc/conga-line/cli/internal/channels/slack"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/mcpserver"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -277,10 +278,10 @@ func TestToolsViaStdio(t *testing.T) {
 
 	t.Run("conga_provision_agent", func(t *testing.T) {
 		result := callTool(t, client, "conga_provision_agent", map[string]any{
-			"agent_name":      "newagent",
-			"type":            "user",
-			"slack_member_id": "U123",
-			"gateway_port":    18800,
+			"agent_name":   "newagent",
+			"type":         "user",
+			"channel":      "slack:U0123456789",
+			"gateway_port": 18800,
 		})
 		if result.IsError {
 			t.Fatalf("unexpected error: %s", textContent(t, result))
@@ -291,8 +292,8 @@ func TestToolsViaStdio(t *testing.T) {
 		if mock.lastProvisionCfg.Type != provider.AgentTypeUser {
 			t.Errorf("got type %q, want %q", mock.lastProvisionCfg.Type, provider.AgentTypeUser)
 		}
-		if mock.lastProvisionCfg.SlackMemberID != "U123" {
-			t.Errorf("got slack_member_id %q, want %q", mock.lastProvisionCfg.SlackMemberID, "U123")
+		if len(mock.lastProvisionCfg.Channels) != 1 || mock.lastProvisionCfg.Channels[0].ID != "U0123456789" {
+			t.Errorf("got channels %v, want [{slack U0123456789}]", mock.lastProvisionCfg.Channels)
 		}
 		if mock.lastProvisionCfg.GatewayPort != 18800 {
 			t.Errorf("got gateway_port %d, want %d", mock.lastProvisionCfg.GatewayPort, 18800)
@@ -452,7 +453,7 @@ func TestToolsViaStdio(t *testing.T) {
 	t.Run("conga_setup", func(t *testing.T) {
 		result := callTool(t, client, "conga_setup", map[string]any{
 			"image":           "ghcr.io/openclaw/openclaw:latest",
-			"slack_bot_token": "xoxb-test",
+			"slack-bot-token": "xoxb-test",
 		})
 		if result.IsError {
 			t.Fatalf("unexpected error: %s", textContent(t, result))
@@ -460,8 +461,8 @@ func TestToolsViaStdio(t *testing.T) {
 		if mock.lastSetupCfg.Image != "ghcr.io/openclaw/openclaw:latest" {
 			t.Errorf("got image %q", mock.lastSetupCfg.Image)
 		}
-		if mock.lastSetupCfg.SlackBotToken != "xoxb-test" {
-			t.Errorf("got slack_bot_token %q", mock.lastSetupCfg.SlackBotToken)
+		if mock.lastSetupCfg.SecretValue("slack-bot-token") != "xoxb-test" {
+			t.Errorf("got slack-bot-token %q", mock.lastSetupCfg.SecretValue("slack-bot-token"))
 		}
 	})
 

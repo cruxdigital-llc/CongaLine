@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	awsutil "github.com/cruxdigital-llc/conga-line/cli/internal/aws"
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/discovery"
 )
 
@@ -96,17 +97,17 @@ func (m *mockSSM) PutParameter(ctx context.Context, params *ssm.PutParameterInpu
 
 func TestSetAgentPaused_PreservesUnknownFields(t *testing.T) {
 	// SSM contains fields that aren't in the AgentConfig struct
-	original := `{"type":"user","slack_member_id":"U123","gateway_port":18790,"custom_field":"preserve_me","nested":{"key":"value"}}`
+	original := `{"type":"user","channels":[{"platform":"slack","id":"U123"}],"gateway_port":18790,"custom_field":"preserve_me","nested":{"key":"value"}}`
 
 	mock := &mockSSM{stored: map[string]string{
 		"/conga/agents/testuser": original,
 	}}
 	p := &AWSProvider{clients: &awsutil.Clients{SSM: mock}}
 	agent := &discovery.AgentConfig{
-		Name:          "testuser",
-		Type:          "user",
-		SlackMemberID: "U123",
-		GatewayPort:   18790,
+		Name:        "testuser",
+		Type:        "user",
+		Channels:    []channels.ChannelBinding{{Platform: "slack", ID: "U123"}},
+		GatewayPort: 18790,
 	}
 
 	// Pause: should add "paused":true and keep unknown fields

@@ -8,16 +8,16 @@ import (
 	"strings"
 
 	awsutil "github.com/cruxdigital-llc/conga-line/cli/internal/aws"
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 )
 
 type AgentConfig struct {
-	Name          string
-	Type          string `json:"type"`
-	SlackMemberID string `json:"slack_member_id,omitempty"`
-	SlackChannel  string `json:"slack_channel,omitempty"`
-	GatewayPort   int    `json:"gateway_port"`
-	IAMIdentity   string `json:"iam_identity,omitempty"`
-	Paused        bool   `json:"paused,omitempty"`
+	Name        string
+	Type        string                    `json:"type"`
+	Channels    []channels.ChannelBinding `json:"channels,omitempty"`
+	GatewayPort int                       `json:"gateway_port"`
+	IAMIdentity string                    `json:"iam_identity,omitempty"`
+	Paused      bool                      `json:"paused,omitempty"`
 }
 
 // parseAgentConfig parses an agent config from its SSM parameter name and JSON value.

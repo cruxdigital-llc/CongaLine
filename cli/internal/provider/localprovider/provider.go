@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -250,8 +251,9 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 10. Ensure router is running and connected (only if Slack configured)
-	if shared.HasSlack() {
+	// 10. Ensure router is running and connected (only if a channel has credentials)
+	slackCh, hasSlack := channels.Get("slack")
+	if hasSlack && slackCh.HasCredentials(shared.Values) {
 		p.ensureRouter(ctx)
 		if containerExists(ctx, routerContainer) {
 			connectNetwork(ctx, netName, routerContainer)
@@ -714,20 +716,30 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		changed++
 	}
 
-	// --- Shared secrets (all optional — Slack not required for gateway-only mode) ---
-	secretItems := []struct {
+	// --- Shared secrets (all optional — channels not required for gateway-only mode) ---
+	type secretItem struct {
 		name, description string
 		isSecret          bool
-		group             string // "slack" or "google"
-	}{
-		{"slack-bot-token", "Slack bot token (xoxb-...)", true, "slack"},
-		{"slack-signing-secret", "Slack signing secret", true, "slack"},
-		{"slack-app-token", "Slack app token (xapp-...)", true, "slack"},
-		{"google-client-id", "Google OAuth client ID", false, "google"},
-		{"google-client-secret", "Google OAuth client secret", true, "google"},
 	}
+	var secretItems []secretItem
 
-	fmt.Println("\nSlack integration is optional. Skip all Slack tokens to run in gateway-only mode (web UI).")
+	// Collect secrets from all registered channels
+	for _, ch := range channels.All() {
+		for _, def := range ch.SharedSecrets() {
+			secretItems = append(secretItems, secretItem{
+				name:        def.Name,
+				description: def.Prompt,
+				isSecret:    true,
+			})
+		}
+	}
+	// Non-channel shared secrets
+	secretItems = append(secretItems,
+		secretItem{"google-client-id", "Google OAuth client ID", false},
+		secretItem{"google-client-secret", "Google OAuth client secret", true},
+	)
+
+	fmt.Println("\nChannel integration is optional. Skip all tokens to run in gateway-only mode (web UI).")
 
 	for _, item := range secretItems {
 		path := filepath.Join(p.sharedSecretsDir(), item.name)
@@ -841,17 +853,22 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 	// --- Start egress proxy ---
 	p.ensureEgressProxy(ctx)
 
-	// --- Router (only if Slack is configured) ---
+	// --- Router (only if a channel with credentials is configured) ---
 	shared, _ := p.readSharedSecrets()
-	if shared.HasSlack() {
+	slackCh, hasSlack := channels.Get("slack")
+	if hasSlack && slackCh.HasCredentials(shared.Values) {
 		routerEnvPath := filepath.Join(p.configDir(), "router.env")
-		routerEnv := fmt.Sprintf("SLACK_APP_TOKEN=%s\nSLACK_SIGNING_SECRET=%s\n", shared.SlackAppToken, shared.SlackSigningSecret)
+		routerEnvVars := slackCh.RouterEnvVars(shared.Values)
+		var routerEnv string
+		for k, v := range routerEnvVars {
+			routerEnv += fmt.Sprintf("%s=%s\n", k, v)
+		}
 		if err := os.WriteFile(routerEnvPath, []byte(routerEnv), 0400); err != nil {
 			return fmt.Errorf("failed to write router env file: %w", err)
 		}
 		p.ensureRouter(ctx)
 	} else {
-		fmt.Println("\nSlack not configured — router skipped. Agents will run in gateway-only mode (web UI).")
+		fmt.Println("\nNo channel credentials configured — router skipped. Agents will run in gateway-only mode (web UI).")
 	}
 
 	// --- Save provider config ---
@@ -869,8 +886,8 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		fmt.Println("\nAll values already configured.")
 	}
 	fmt.Println("\nLocal deployment ready! Next steps:")
-	fmt.Println("  conga admin add-user <name> [slack_member_id]    # Slack ID optional for gateway-only mode")
-	fmt.Println("  conga admin add-team <name> [slack_channel]      # Slack channel optional for gateway-only mode")
+	fmt.Println("  conga admin add-user <name> [--channel slack:U0123456789]    # channel optional for gateway-only mode")
+	fmt.Println("  conga admin add-team <name> [--channel slack:C0123456789]    # channel optional for gateway-only mode")
 	return nil
 }
 

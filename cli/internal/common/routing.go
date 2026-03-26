@@ -2,8 +2,8 @@ package common
 
 import (
 	"encoding/json"
-	"fmt"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 )
 
@@ -14,7 +14,7 @@ type RoutingConfig struct {
 }
 
 // GenerateRoutingJSON builds routing.json from a list of agents.
-// Container URLs use the format http://conga-{name}:{port}/slack/events.
+// Delegates to each agent's channel implementations for routing entries.
 func GenerateRoutingJSON(agents []provider.AgentConfig) ([]byte, error) {
 	cfg := RoutingConfig{
 		Channels: make(map[string]string),
@@ -25,15 +25,18 @@ func GenerateRoutingJSON(agents []provider.AgentConfig) ([]byte, error) {
 		if a.Paused {
 			continue
 		}
-		url := fmt.Sprintf("http://conga-%s:%d/slack/events", a.Name, a.GatewayPort)
-		switch a.Type {
-		case provider.AgentTypeUser:
-			if a.SlackMemberID != "" {
-				cfg.Members[a.SlackMemberID] = url
+		for _, binding := range a.Channels {
+			ch, ok := channels.Get(binding.Platform)
+			if !ok {
+				continue
 			}
-		case provider.AgentTypeTeam:
-			if a.SlackChannel != "" {
-				cfg.Channels[a.SlackChannel] = url
+			for _, entry := range ch.RoutingEntries(string(a.Type), binding, a.Name, a.GatewayPort) {
+				switch entry.Section {
+				case "channels":
+					cfg.Channels[entry.Key] = entry.URL
+				case "members":
+					cfg.Members[entry.Key] = entry.URL
+				}
 			}
 		}
 	}

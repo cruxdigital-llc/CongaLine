@@ -216,11 +216,7 @@ var commandSchemas = map[string]CommandSchema{
 			"ssh_key_path":         {Type: "string", Description: "SSH key path — remote provider only (auto-detect if omitted)"},
 			"repo_path":            {Type: "string", Description: "Conga Line repo root — local and remote providers"},
 			"image":                {Type: "string", Description: "Docker image to deploy — all providers"},
-			"slack_bot_token":      {Type: "string", Description: "Slack bot token (xoxb-...) — all providers, optional"},
-			"slack_signing_secret": {Type: "string", Description: "Slack signing secret — all providers, optional"},
-			"slack_app_token":      {Type: "string", Description: "Slack app token (xapp-...) — all providers, optional"},
-			"google_client_id":     {Type: "string", Description: "Google OAuth client ID — all providers, optional"},
-			"google_client_secret": {Type: "string", Description: "Google OAuth client secret — all providers, optional"},
+			"secrets":              {Type: "object", Description: "Shared secrets map (keys: slack-bot-token, slack-signing-secret, slack-app-token, google-client-id, google-client-secret)"},
 			"install_docker":       {Type: "boolean", Description: "Auto-install Docker — remote provider only"},
 		}},
 		Output: &SchemaSection{Fields: map[string]FieldSchema{
@@ -232,9 +228,9 @@ var commandSchemas = map[string]CommandSchema{
 		Command:     "admin add-user <name>",
 		Description: "Provision a user agent (name is a positional arg)",
 		Input: &SchemaSection{Fields: map[string]FieldSchema{
-			"slack_member_id": {Type: "string", Description: "Slack member ID (optional, for Slack integration)"},
-			"gateway_port":    {Type: "integer", Description: "Gateway port (auto-assigned if omitted)"},
-			"iam_identity":    {Type: "string", Description: "IAM identity / SSO username (AWS provider only)"},
+			"channel":      {Type: "string", Description: "Channel binding (platform:id, e.g., slack:U0123456789)"},
+			"gateway_port": {Type: "integer", Description: "Gateway port (auto-assigned if omitted)"},
+			"iam_identity": {Type: "string", Description: "IAM identity / SSO username (AWS provider only)"},
 		}},
 		Output: &SchemaSection{Fields: map[string]FieldSchema{
 			"agent":        {Type: "string", Description: "Agent name"},
@@ -247,8 +243,8 @@ var commandSchemas = map[string]CommandSchema{
 		Command:     "admin add-team <name>",
 		Description: "Provision a team agent (name is a positional arg)",
 		Input: &SchemaSection{Fields: map[string]FieldSchema{
-			"slack_channel": {Type: "string", Description: "Slack channel ID (optional, for Slack integration)"},
-			"gateway_port":  {Type: "integer", Description: "Gateway port (auto-assigned if omitted)"},
+			"channel":      {Type: "string", Description: "Channel binding (platform:id, e.g., slack:C0123456789)"},
+			"gateway_port": {Type: "integer", Description: "Gateway port (auto-assigned if omitted)"},
 		}},
 		Output: &SchemaSection{Fields: map[string]FieldSchema{
 			"agent":        {Type: "string", Description: "Agent name"},
@@ -261,12 +257,11 @@ var commandSchemas = map[string]CommandSchema{
 		Command:     "admin list-agents",
 		Description: "List all provisioned agents",
 		Output: &SchemaSection{IsArray: true, Fields: map[string]FieldSchema{
-			"name":            {Type: "string", Description: "Agent name"},
-			"type":            {Type: "string", Description: "Agent type: user, team"},
-			"slack_member_id": {Type: "string", Description: "Slack member ID (user agents)"},
-			"slack_channel":   {Type: "string", Description: "Slack channel (team agents)"},
-			"gateway_port":    {Type: "integer", Description: "Gateway port"},
-			"paused":          {Type: "boolean", Description: "Whether the agent is paused"},
+			"name":         {Type: "string", Description: "Agent name"},
+			"type":         {Type: "string", Description: "Agent type: user, team"},
+			"channels":     {Type: "array", Description: "Channel bindings [{platform, id, label}]"},
+			"gateway_port": {Type: "integer", Description: "Gateway port"},
+			"paused":       {Type: "boolean", Description: "Whether the agent is paused"},
 		}},
 	},
 	"admin.remove-agent": {

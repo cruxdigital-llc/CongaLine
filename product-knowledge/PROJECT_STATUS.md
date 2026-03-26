@@ -86,14 +86,8 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 ### 13. Egress Domain Allowlisting — ✅ Verified and Complete
 *See `specs/2026-03-25_feature_egress-allowlist/` for full trace*
 
-### 14. Channel Abstraction — Specified, Ready for Implementation
+### 14. Channel Abstraction — Verified Complete
 *See `specs/2026-03-26_feature_channel-abstraction/` for full trace*
-- [x] Requirements defined
-- [x] Plan defined (7 phases)
-- [x] Spec defined (11 sections: data models, interface, Slack impl, modified functions, CLI, MCP, providers, import graph, edge cases, migration, file summary)
-- [x] Persona review passed (Architect + QA + PM; QA recommends migration warning — non-blocking)
-- [x] Standards gate passed (14 standards, 0 violations)
-- [ ] Implementation: 5 new files, ~15 modified, ~5 test files
 
 ### 11. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
@@ -108,6 +102,7 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - Behavior files (`behavior/base/SOUL.md`, `AGENTS.md`) are manually maintained copies of OpenClaw's defaults — will drift on image upgrades and need periodic reconciliation
 
 ## Recent Changes
+- 2026-03-26: Channel Abstraction — extracted all Slack-specific logic from core CLI into `cli/internal/channels/` behind a `Channel` interface. `AgentConfig.Channels []ChannelBinding` replaces `SlackMemberID`/`SlackChannel`. `SharedSecrets.Values map[string]string` replaces Slack-named fields. `--channel slack:ID` CLI flag replaces positional Slack ID args. Slack is the sole implementation in `channels/slack/`. All providers, CLI commands, MCP tools, routing, config generation, and behavior templates delegate to the channel interface. 5 new files, ~25 modified, 17 new test cases. Breaking change to agent JSON, SetupConfig JSON, and CLI args. AWS bootstrap scripts deferred. See `specs/2026-03-26_feature_channel-abstraction/`.
 - 2026-03-26: Egress Domain Allowlisting — per-agent Squid proxy for domain-based CONNECT filtering across all three providers. Unified enforcement mechanism. Policy-driven via `conga-policy.yaml` egress section. Local: validate (warn) or enforce (proxy) modes. Remote/AWS: always enforce when domains defined. Squid handles HTTP CONNECT natively (nginx stream ssl_preread was incompatible with HTTPS_PROXY). Image built locally from `alpine:3.21` + squid. See `specs/2026-03-25_feature_egress-allowlist/`.
 - 2026-03-25: Portable Policy Schema — `conga-policy.yaml` schema for declaring security and routing policy as a portable artifact. New `cli/internal/policy/` package with YAML parsing (`gopkg.in/yaml.v3`), validation (enum checks, domain format, unknown field rejection), per-agent override merging, and per-provider enforcement reporting. `conga policy validate` CLI command with `--file`, `--agent`, `--output json` support. 5 new files, 19 unit tests. See `specs/2026-03-25_feature_policy-schema/`.
 - 2026-03-24: SSH Auto-Reconnect — MCP server's SSH connection now transparently recovers from stale/dead connections instead of requiring a Claude Code restart. Added `reconnect()`, `session()`, `sftpClient()` methods to `SSHClient` with single-retry semantics. 4 new tests with in-process SSH server. See `specs/2026-03-24_bugfix_ssh-reconnect/`.

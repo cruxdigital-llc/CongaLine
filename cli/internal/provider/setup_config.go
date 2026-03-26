@@ -20,12 +20,8 @@ type SetupConfig struct {
 	RepoPath string `json:"repo_path,omitempty"`
 	Image    string `json:"image,omitempty"`
 
-	// Shared secrets
-	SlackBotToken      string `json:"slack_bot_token,omitempty"`
-	SlackSigningSecret string `json:"slack_signing_secret,omitempty"`
-	SlackAppToken      string `json:"slack_app_token,omitempty"`
-	GoogleClientID     string `json:"google_client_id,omitempty"`
-	GoogleClientSecret string `json:"google_client_secret,omitempty"`
+	// Shared secrets — generic map. Keys are secret names: "slack-bot-token", "google-client-id", etc.
+	Secrets map[string]string `json:"secrets,omitempty"`
 
 	// InstallDocker skips the Docker install confirmation prompt.
 	InstallDocker bool `json:"install_docker,omitempty"`
@@ -33,23 +29,10 @@ type SetupConfig struct {
 
 // SecretValue returns the config value for a given secret name, or empty string.
 func (c *SetupConfig) SecretValue(name string) string {
-	if c == nil {
+	if c == nil || c.Secrets == nil {
 		return ""
 	}
-	switch name {
-	case "slack-bot-token":
-		return c.SlackBotToken
-	case "slack-signing-secret":
-		return c.SlackSigningSecret
-	case "slack-app-token":
-		return c.SlackAppToken
-	case "google-client-id":
-		return c.GoogleClientID
-	case "google-client-secret":
-		return c.GoogleClientSecret
-	default:
-		return ""
-	}
+	return c.Secrets[name]
 }
 
 // ParseSetupConfig parses a JSON string or reads a JSON file.

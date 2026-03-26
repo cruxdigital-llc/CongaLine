@@ -63,7 +63,7 @@ func TestResolveIdentity_AssumedRoleWithSession(t *testing.T) {
 				Parameters: []ssmtypes.Parameter{
 					{
 						Name:  aws.String("/conga/agents/myagent"),
-						Value: aws.String(`{"type":"user","slack_member_id":"U0123456789","gateway_port":18789,"iam_identity":"user@example.com"}`),
+						Value: aws.String(`{"type":"user","channels":[{"platform":"slack","id":"U0123456789"}],"gateway_port":18789,"iam_identity":"user@example.com"}`),
 					},
 				},
 			}, nil

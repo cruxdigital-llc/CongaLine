@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 )
@@ -79,16 +80,25 @@ func readSecret(path string) (string, error) {
 // readSharedSecrets loads all shared secrets into a SharedSecrets struct.
 func (p *LocalProvider) readSharedSecrets() (common.SharedSecrets, error) {
 	dir := p.sharedSecretsDir()
-	var s common.SharedSecrets
+	s := common.SharedSecrets{
+		Values: make(map[string]string),
+	}
 
 	read := func(name string) string {
 		val, _ := readSecret(filepath.Join(dir, name))
 		return val
 	}
 
-	s.SlackBotToken = read("slack-bot-token")
-	s.SlackSigningSecret = read("slack-signing-secret")
-	s.SlackAppToken = read("slack-app-token")
+	// Read channel-defined secrets into the Values map
+	for _, ch := range channels.All() {
+		for _, def := range ch.SharedSecrets() {
+			if v := read(def.Name); v != "" {
+				s.Values[def.Name] = v
+			}
+		}
+	}
+
+	// Non-channel shared secrets
 	s.GoogleClientID = read("google-client-id")
 	s.GoogleClientSecret = read("google-client-secret")
 
