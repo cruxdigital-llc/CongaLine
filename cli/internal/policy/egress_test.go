@@ -118,49 +118,62 @@ func TestGenerateProxyConfAllowlist(t *testing.T) {
 	domains := []string{"api.anthropic.com", "*.slack.com", "github.com"}
 	result := GenerateProxyConf(domains)
 
-	if !strings.Contains(result, "Port 3128") {
-		t.Error("expected tinyproxy Port directive")
+	if !strings.Contains(result, "http_port 3128") {
+		t.Error("expected squid http_port directive")
 	}
-	if !strings.Contains(result, "FilterDefaultDeny Yes") {
-		t.Error("expected default deny in allowlist mode")
+	if !strings.Contains(result, "acl allowed_domains dstdomain") {
+		t.Error("expected dstdomain ACL in allowlist mode")
 	}
-	if !strings.Contains(result, "FilterType fnmatch") {
-		t.Error("expected fnmatch filter type")
+	// *.slack.com should become .slack.com for squid
+	if !strings.Contains(result, " .slack.com") {
+		t.Error("expected .slack.com (squid wildcard format)")
 	}
-	if !strings.Contains(result, "ConnectPort 443") {
-		t.Error("expected CONNECT port restriction")
+	if !strings.Contains(result, " api.anthropic.com") {
+		t.Error("expected exact domain in ACL")
+	}
+	if !strings.Contains(result, "http_access deny all") {
+		t.Error("expected default deny")
+	}
+	if !strings.Contains(result, "cache_mem 8 MB") {
+		t.Error("expected memory constraint")
+	}
+}
+
+func TestGenerateProxyConfWildcardDedup(t *testing.T) {
+	// Squid 6 rejects both "slack.com" and ".slack.com" in the same ACL.
+	// When *.slack.com is present, bare slack.com should be omitted.
+	domains := []string{"api.anthropic.com", "slack.com", "*.slack.com"}
+	result := GenerateProxyConf(domains)
+
+	if !strings.Contains(result, " .slack.com") {
+		t.Error("expected .slack.com wildcard entry")
+	}
+	// Count occurrences — should appear exactly once (as .slack.com, not also as slack.com)
+	if strings.Count(result, "slack.com") != 1 {
+		t.Errorf("expected slack.com to appear exactly once, got:\n%s", result)
+	}
+	if !strings.Contains(result, " api.anthropic.com") {
+		t.Error("expected non-overlapping domain to remain")
 	}
 }
 
 func TestGenerateProxyConfPassthrough(t *testing.T) {
 	result := GenerateProxyConf(nil)
-	if strings.Contains(result, "Filter") {
-		t.Error("expected no filter in passthrough mode")
+	if strings.Contains(result, "dstdomain") {
+		t.Error("expected no domain ACL in passthrough mode")
 	}
-	if !strings.Contains(result, "Port 3128") {
+	if !strings.Contains(result, "http_port 3128") {
 		t.Error("expected port directive in passthrough mode")
+	}
+	if !strings.Contains(result, "http_access allow all") {
+		t.Error("expected allow all in passthrough mode")
 	}
 }
 
 func TestGenerateProxyConfEmptySlice(t *testing.T) {
 	result := GenerateProxyConf([]string{})
-	if strings.Contains(result, "Filter") {
-		t.Error("expected no filter with empty domains")
-	}
-}
-
-func TestGenerateProxyFilter(t *testing.T) {
-	domains := []string{"api.anthropic.com", "*.slack.com", "GitHub.Com"}
-	result := GenerateProxyFilter(domains)
-
-	if !strings.Contains(result, "api.anthropic.com\n") {
-		t.Error("expected exact domain in filter")
-	}
-	if !strings.Contains(result, "*.slack.com\n") {
-		t.Error("expected wildcard domain in filter")
-	}
-	if !strings.Contains(result, "github.com\n") {
-		t.Error("expected lowercased domain in filter")
+	if strings.Contains(result, "dstdomain") {
+		t.Error("expected no domain ACL with empty domains")
 	}
 }
 
@@ -169,7 +182,7 @@ func TestEgressProxyDockerfile(t *testing.T) {
 	if !strings.Contains(df, "FROM alpine:3.21") {
 		t.Error("expected alpine base image")
 	}
-	if !strings.Contains(df, "tinyproxy") {
-		t.Error("expected tinyproxy installation")
+	if !strings.Contains(df, "squid") {
+		t.Error("expected squid installation")
 	}
 }

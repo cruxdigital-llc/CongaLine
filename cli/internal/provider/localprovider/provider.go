@@ -208,10 +208,15 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	}
 
 	// 7. Start per-agent egress proxy (enforce mode only)
+	var proxyDNS string
 	if egressEnforce {
 		domains := policy.EffectiveAllowedDomains(egressPolicy)
 		if err := p.startAgentEgressProxy(ctx, cfg.Name, domains); err != nil {
 			return fmt.Errorf("failed to start egress proxy: %w", err)
+		}
+		proxyDNS, err = containerIPOnNetwork(ctx, policy.EgressProxyName(cfg.Name), netName)
+		if err != nil {
+			return fmt.Errorf("failed to get proxy DNS IP: %w", err)
 		}
 	}
 
@@ -231,17 +236,28 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to chown data directory: %w", err)
 	}
 
+	// Write proxy bootstrap script for Node.js CONNECT tunneling
+	var bootstrapPath string
+	if egressEnforce {
+		bootstrapPath = filepath.Join(p.configDir(), "proxy-bootstrap.js")
+		if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
+			return fmt.Errorf("failed to write proxy bootstrap: %w", err)
+		}
+	}
+
 	fmt.Printf("Starting container %s...\n", cName)
 	if err := runAgentContainer(ctx, agentContainerOpts{
-		Name:            cName,
-		AgentName:       cfg.Name,
-		Network:         netName,
-		EnvFile:         envPath,
-		DataDir:         dataDir,
-		GatewayPort:     cfg.GatewayPort,
-		Image:           image,
-		EgressEnforce:   egressEnforce,
-		EgressProxyName: policy.EgressProxyName(cfg.Name),
+		Name:               cName,
+		AgentName:          cfg.Name,
+		Network:            netName,
+		EnvFile:            envPath,
+		DataDir:            dataDir,
+		GatewayPort:        cfg.GatewayPort,
+		Image:              image,
+		EgressEnforce:      egressEnforce,
+		EgressProxyName:    policy.EgressProxyName(cfg.Name),
+		ProxyBootstrapPath: bootstrapPath,
+		ProxyDNS:           proxyDNS,
 	}); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
@@ -519,15 +535,33 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		if containerExists(ctx, egressProxyContainer) {
 			disconnectNetwork(ctx, netName, egressProxyContainer)
 		}
-		removeNetwork(ctx, netName)
+		if err := removeNetwork(ctx, netName); err != nil {
+			return fmt.Errorf("failed to remove network %s: %w", netName, err)
+		}
 	}
-	createNetwork(ctx, netName, egressEnforce)
+	if err := createNetwork(ctx, netName, egressEnforce); err != nil {
+		return fmt.Errorf("failed to create network %s: %w", netName, err)
+	}
 
 	// Start per-agent egress proxy (enforce mode only)
+	var proxyDNS string
 	if egressEnforce {
 		domains := policy.EffectiveAllowedDomains(egressPolicy)
 		if err := p.startAgentEgressProxy(ctx, agentName, domains); err != nil {
 			return fmt.Errorf("failed to start egress proxy: %w", err)
+		}
+		proxyDNS, err = containerIPOnNetwork(ctx, policy.EgressProxyName(agentName), netName)
+		if err != nil {
+			return fmt.Errorf("failed to get proxy DNS IP: %w", err)
+		}
+	}
+
+	// Write proxy bootstrap script for Node.js CONNECT tunneling
+	var bootstrapPath string
+	if egressEnforce {
+		bootstrapPath = filepath.Join(p.configDir(), "proxy-bootstrap.js")
+		if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
+			return fmt.Errorf("failed to write proxy bootstrap: %w", err)
 		}
 	}
 
@@ -537,15 +571,17 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	}
 
 	if err := runAgentContainer(ctx, agentContainerOpts{
-		Name:            cName,
-		AgentName:       agentName,
-		Network:         netName,
-		EnvFile:         envPath,
-		DataDir:         dataDir,
-		GatewayPort:     cfg.GatewayPort,
-		Image:           image,
-		EgressEnforce:   egressEnforce,
-		EgressProxyName: policy.EgressProxyName(agentName),
+		Name:               cName,
+		AgentName:          agentName,
+		Network:            netName,
+		EnvFile:            envPath,
+		DataDir:            dataDir,
+		GatewayPort:        cfg.GatewayPort,
+		Image:              image,
+		EgressEnforce:      egressEnforce,
+		EgressProxyName:    policy.EgressProxyName(agentName),
+		ProxyBootstrapPath: bootstrapPath,
+		ProxyDNS:           proxyDNS,
 	}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
 	}
@@ -1137,31 +1173,22 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		removeContainer(ctx, proxyName)
 	}
 
-	// Build proxy image if not present or stale (e.g. old nginx-based image from pre-tinyproxy era)
-	if !imageExists(ctx, policy.EgressProxyImage) || !imageHasBinary(ctx, policy.EgressProxyImage, "tinyproxy") {
+	// Build proxy image if not present or missing required binaries (envoy + socat).
+	if !imageExists(ctx, policy.EgressProxyImage) || !imageHasBinary(ctx, policy.EgressProxyImage, "envoy") || !imageHasBinary(ctx, policy.EgressProxyImage, "socat") {
 		fmt.Printf("  Building egress proxy image...\n")
 		if err := buildEgressProxyImage(ctx); err != nil {
 			return fmt.Errorf("building egress proxy image: %w", err)
 		}
 	}
 
-	// Generate tinyproxy config
+	// Generate Envoy config
 	conf := policy.GenerateProxyConf(domains)
-	confPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.conf", agentName))
+	confPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", agentName))
 	if err := os.MkdirAll(filepath.Dir(confPath), 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 	if err := os.WriteFile(confPath, []byte(conf), 0444); err != nil {
 		return fmt.Errorf("writing egress config: %w", err)
-	}
-
-	// Write filter file (domain allowlist)
-	filterPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.filter", agentName))
-	if len(domains) > 0 {
-		filter := policy.GenerateProxyFilter(domains)
-		if err := os.WriteFile(filterPath, []byte(filter), 0444); err != nil {
-			return fmt.Errorf("writing egress filter: %w", err)
-		}
 	}
 
 	// Ensure agent network exists (caller should have created it, but be safe)
@@ -1178,24 +1205,27 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		}
 	}
 
-	// Start tinyproxy on agent's network.
-	// Runs as nobody — tinyproxy drops privileges internally.
-	// tmpfs for /run provides writable PID file location.
+	// Write entrypoint script (starts socat DNS forwarder + Envoy)
+	entrypointPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", agentName))
+	if err := os.WriteFile(entrypointPath, []byte(policy.GenerateProxyEntrypoint()), 0555); err != nil {
+		return fmt.Errorf("writing entrypoint: %w", err)
+	}
+
+	// Start proxy on agent's network with DNS forwarding.
+	// NET_BIND_SERVICE allows socat to bind DNS port 53.
+	// --entrypoint overrides the default Envoy entrypoint which tries to chown /dev/stdout.
 	args := []string{"run", "-d",
 		"--name", proxyName,
 		"--network", netName,
 		"--cap-drop", "ALL",
+		"--cap-add", "NET_BIND_SERVICE",
 		"--security-opt", "no-new-privileges",
-		"--memory", "64m",
-		"--read-only",
-		"--tmpfs", "/run:rw,noexec,nosuid",
-		"--tmpfs", "/var/log/tinyproxy:rw,noexec,nosuid",
-		"-v", fmt.Sprintf("%s:/etc/tinyproxy/tinyproxy.conf:ro", confPath),
+		"--memory", "128m",
+		"--entrypoint", "",
+		"-v", fmt.Sprintf("%s:/etc/envoy/envoy.yaml:ro", confPath),
+		"-v", fmt.Sprintf("%s:/opt/entrypoint.sh:ro", entrypointPath),
 	}
-	if len(domains) > 0 {
-		args = append(args, "-v", fmt.Sprintf("%s:/etc/tinyproxy/filter:ro", filterPath))
-	}
-	args = append(args, policy.EgressProxyImage, "tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf")
+	args = append(args, policy.EgressProxyImage, "sh", "/opt/entrypoint.sh")
 
 	_, err := dockerRun(ctx, args...)
 	if err != nil {
@@ -1211,7 +1241,7 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 	return nil
 }
 
-// buildEgressProxyImage builds the egress proxy Docker image locally from alpine + tinyproxy.
+// buildEgressProxyImage builds the egress proxy Docker image locally from alpine + squid.
 func buildEgressProxyImage(ctx context.Context) error {
 	dir, err := os.MkdirTemp("", "conga-egress-build-*")
 	if err != nil {

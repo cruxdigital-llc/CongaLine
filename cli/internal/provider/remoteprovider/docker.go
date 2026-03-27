@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // dockerRun executes a docker command on the remote host via SSH.
@@ -64,15 +65,16 @@ func (p *RemoteProvider) disconnectNetwork(ctx context.Context, network, contain
 
 // agentContainerOpts holds options for starting an agent container.
 type agentContainerOpts struct {
-	Name            string
-	AgentName       string
-	Network         string
-	EnvFile         string
-	DataDir         string
-	GatewayPort     int
-	Image           string
-	EgressEnforce   bool
-	EgressProxyName string
+	Name               string
+	AgentName          string
+	Network            string
+	EnvFile            string
+	DataDir            string
+	GatewayPort        int
+	Image              string
+	EgressEnforce      bool
+	EgressProxyName    string
+	ProxyBootstrapPath string // Host path to proxy-bootstrap.js (mounted read-only)
 }
 
 // runAgentContainer starts an agent container with full isolation on the remote host.
@@ -87,16 +89,12 @@ func (p *RemoteProvider) runAgentContainer(ctx context.Context, opts agentContai
 		"--memory", "2g",
 		"--cpus", "0.75",
 		"--pids-limit", "256",
-		"-e", "NODE_OPTIONS=--max-old-space-size=1536",
 		"-v", fmt.Sprintf("%s:/home/node/.openclaw:rw", opts.DataDir),
 	}
 
-	// When egress is enforced, the network is --internal and -p doesn't work.
-	// Gateway access is provided by socat on the host instead (see startPortForwarder).
-	if !opts.EgressEnforce {
-		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", opts.GatewayPort, opts.GatewayPort))
-	}
+	args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", opts.GatewayPort, opts.GatewayPort))
 
+	nodeOpts := "--max-old-space-size=1536"
 	if opts.EgressEnforce && opts.EgressProxyName != "" {
 		// Proxy is on the same Docker network — Docker DNS resolves the container name.
 		args = append(args,
@@ -104,7 +102,14 @@ func (p *RemoteProvider) runAgentContainer(ctx context.Context, opts agentContai
 			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:3128", opts.EgressProxyName),
 			"-e", "NO_PROXY=localhost,127.0.0.1",
 		)
+		// Mount the proxy bootstrap script and inject via --require so Node.js
+		// routes all HTTP(S) traffic through the CONNECT tunnel proxy.
+		if opts.ProxyBootstrapPath != "" {
+			args = append(args, "-v", fmt.Sprintf("%s:/opt/proxy-bootstrap.js:ro", opts.ProxyBootstrapPath))
+			nodeOpts += " --require /opt/proxy-bootstrap.js"
+		}
 	}
+	args = append(args, "-e", "NODE_OPTIONS="+nodeOpts)
 
 	args = append(args, opts.Image)
 
@@ -238,6 +243,24 @@ func (p *RemoteProvider) buildImage(ctx context.Context, dir, tag string) error 
 func (p *RemoteProvider) imageExists(ctx context.Context, image string) bool {
 	_, err := p.dockerRun(ctx, "image", "inspect", image)
 	return err == nil
+}
+
+// containerIPOnNetwork returns the IP address of a container on a specific Docker network.
+// Retries briefly to handle the race between container start and IP assignment.
+func (p *RemoteProvider) containerIPOnNetwork(ctx context.Context, container, network string) (string, error) {
+	tpl := fmt.Sprintf("{{(index .NetworkSettings.Networks %q).IPAddress}}", network)
+	for attempt := 0; attempt < 10; attempt++ {
+		output, err := p.dockerRun(ctx, "inspect", "-f", tpl, container)
+		if err != nil {
+			return "", fmt.Errorf("inspecting %s on network %s: %w", container, network, err)
+		}
+		ip := strings.TrimSpace(output)
+		if ip != "" {
+			return ip, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", fmt.Errorf("no IP found for %s on network %s after retries", container, network)
 }
 
 // portForwarderPidFile returns the PID file path for an agent's socat port forwarder.

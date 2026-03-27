@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 )
@@ -87,7 +88,6 @@ func runAgentContainer(ctx context.Context, opts agentContainerOpts) error {
 		"--memory", "2g",
 		"--cpus", "0.75",
 		"--pids-limit", "256",
-		"-e", "NODE_OPTIONS=--max-old-space-size=1536",
 		"-v", fmt.Sprintf("%s:/home/node/.openclaw:rw", opts.DataDir),
 	}
 
@@ -97,6 +97,12 @@ func runAgentContainer(ctx context.Context, opts agentContainerOpts) error {
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", opts.GatewayPort, opts.GatewayPort))
 	}
 
+	// Point DNS at the proxy container's socat DNS forwarder on --internal networks.
+	if opts.ProxyDNS != "" {
+		args = append(args, "--dns", opts.ProxyDNS)
+	}
+
+	nodeOpts := "--max-old-space-size=1536"
 	if opts.EgressEnforce && opts.EgressProxyName != "" {
 		// Proxy is on the same Docker network — Docker DNS resolves the container name.
 		args = append(args,
@@ -104,7 +110,14 @@ func runAgentContainer(ctx context.Context, opts agentContainerOpts) error {
 			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:3128", opts.EgressProxyName),
 			"-e", "NO_PROXY=localhost,127.0.0.1",
 		)
+		// Mount the proxy bootstrap script and inject via --require so Node.js
+		// routes all HTTP(S) traffic through the CONNECT tunnel proxy.
+		if opts.ProxyBootstrapPath != "" {
+			args = append(args, "-v", fmt.Sprintf("%s:/opt/proxy-bootstrap.js:ro", opts.ProxyBootstrapPath))
+			nodeOpts += " --require /opt/proxy-bootstrap.js"
+		}
 	}
+	args = append(args, "-e", "NODE_OPTIONS="+nodeOpts)
 
 	args = append(args, opts.Image)
 
@@ -113,15 +126,17 @@ func runAgentContainer(ctx context.Context, opts agentContainerOpts) error {
 }
 
 type agentContainerOpts struct {
-	Name            string
-	AgentName       string
-	Network         string
-	EnvFile         string
-	DataDir         string
-	GatewayPort     int
-	Image           string
-	EgressEnforce   bool
-	EgressProxyName string
+	Name               string
+	AgentName          string
+	Network            string
+	EnvFile            string
+	DataDir            string
+	GatewayPort        int
+	Image              string
+	EgressEnforce      bool
+	EgressProxyName    string
+	ProxyBootstrapPath string // Host path to proxy-bootstrap.js (mounted read-only)
+	ProxyDNS           string // IP of proxy container for DNS resolution on --internal networks
 }
 
 // runRouterContainer starts the router container.
@@ -255,6 +270,25 @@ func imageExists(ctx context.Context, image string) bool {
 func imageHasBinary(ctx context.Context, image string, binary string) bool {
 	_, err := dockerRun(ctx, "run", "--rm", image, "which", binary)
 	return err == nil
+}
+
+// containerIPOnNetwork returns the IP address of a container on a specific Docker network.
+// containerIPOnNetwork returns the IP address of a container on a specific Docker network.
+// Retries briefly to handle the race between container start and IP assignment.
+func containerIPOnNetwork(ctx context.Context, container, network string) (string, error) {
+	format := fmt.Sprintf("{{(index .NetworkSettings.Networks %q).IPAddress}}", network)
+	for attempt := 0; attempt < 10; attempt++ {
+		output, err := dockerRun(ctx, "inspect", "--format", format, container)
+		if err != nil {
+			return "", fmt.Errorf("inspecting %s on network %s: %w", container, network, err)
+		}
+		ip := strings.TrimSpace(output)
+		if ip != "" {
+			return ip, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", fmt.Errorf("no IP found for %s on network %s after retries", container, network)
 }
 
 // forwarderName returns the Docker container name for a gateway port forwarder.
