@@ -12,8 +12,9 @@ Self-host a fleet of isolated [OpenClaw](https://github.com/openclaw/openclaw) A
 > **CongaLine** *n.* A single-file procession of spiny lobsters that travel in physical contact during seasonal migration, reducing hydrodynamic drag and offering collective protection from predators.
 ## Key Features
 
-- **Three deployment modes** — local Docker, remote (any SSH host), or hardened AWS
+- **Promotion pipeline** — develop locally, validate on a remote host, enforce in production. Same config at every tier.
 - **Per-agent isolation** — separate Docker containers, networks, secrets, and config
+- **Portable deployment policy** — define egress rules, model routing, and security posture in a single `conga-policy.yaml`. Each provider enforces what it can and reports the gap.
 - **Slack optional** — use via web UI (gateway) only, or connect to Slack for team chat
 - **Two agent types** — user agents (DM-only) for individuals, team agents (channel-based) for groups
 - **CLI for everything** — operators and end users manage agents, secrets, and infrastructure through the `conga` CLI
@@ -316,6 +317,7 @@ conga connect --agent myagent
 | `conga refresh` | Restart container with fresh secrets |
 | `conga status` | Show container status and resource usage |
 | `conga logs` | Tail container logs |
+| `conga policy validate` | Validate policy file and show per-provider enforcement report |
 | `conga version` | Show CLI version |
 
 ### Admin Commands
@@ -385,6 +387,44 @@ All state lives under `~/.conga/`:
 - **Container operations**: Docker CLI (`docker run`, `docker logs`, etc.)
 - **Network isolation**: Per-agent Docker bridge networks, localhost-only port binding
 - **Slack routing**: Router container auto-started when Slack tokens are configured
+
+## Deployment Policy
+
+CongaLine's three providers form a **promotion pipeline**: define your agent configuration locally, validate it on a remote host, then promote to hardened AWS infrastructure. The same configuration works at every tier — what changes is the enforcement level.
+
+The `conga-policy.yaml` file is the portable policy artifact that travels with your deployment. It defines three categories of policy:
+
+| Section | What it controls | Example |
+|---------|-----------------|---------|
+| **Egress** | Which external domains agents can reach | `allowed_domains: [api.anthropic.com, "*.slack.com"]` |
+| **Routing** | Model selection, fallback chains, cost limits | `default_model: claude-sonnet-4-6` |
+| **Posture** | Security property declarations | `isolation_level: standard`, `secrets_backend: file` |
+
+Each provider enforces what it can and transparently reports the gap:
+
+```bash
+$ conga policy validate --file conga-policy.yaml
+Policy: conga-policy.yaml
+Provider: local
+
+SECTION  RULE              LEVEL          DETAIL
+egress   domain_allowlist  validate-only  Warnings only; use mode: enforce to activate egress proxy
+routing  default_model     validate-only  Model selection validated; enforcement requires Bifrost
+posture  isolation_level   enforced       Docker cap-drop ALL, no-new-privileges, isolated networks
+posture  secrets_backend   enforced       File-based secrets (mode 0400)
+posture  monitoring        enforced       Config integrity monitoring + container logs
+```
+
+The same policy on AWS would show `enforced` for egress (Squid forward proxy) and `enforced` for standard monitoring (CloudWatch + VPC flow logs).
+
+To get started, copy the example file and customize:
+
+```bash
+cp conga-policy.yaml.example ~/.conga/conga-policy.yaml
+conga policy validate
+```
+
+Per-agent overrides are supported — see [`conga-policy.yaml.example`](conga-policy.yaml.example) for all fields and options.
 
 ## MCP Server (AI Agent Integration)
 
@@ -485,6 +525,7 @@ cli/
 │   ├── common/                 # Shared logic (config gen, routing, validation)
 │   ├── discovery/              # Agent & identity resolution (AWS)
 │   ├── mcpserver/              # MCP server (AI agent integration)
+│   ├── policy/                 # Portable policy schema, validation, enforcement reporting
 │   ├── provider/               # Provider interface & registry
 │   │   ├── awsprovider/        # AWS provider implementation
 │   │   ├── remoteprovider/    # Remote (SSH) provider implementation
