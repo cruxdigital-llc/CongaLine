@@ -118,71 +118,67 @@ func TestGenerateProxyConfAllowlist(t *testing.T) {
 	domains := []string{"api.anthropic.com", "*.slack.com", "github.com"}
 	result := GenerateProxyConf(domains)
 
-	if !strings.Contains(result, "http_port 3128") {
-		t.Error("expected squid http_port directive")
+	if !strings.Contains(result, "port_value: 3128") {
+		t.Error("expected envoy listener on port 3128")
 	}
-	if !strings.Contains(result, "acl allowed_domains dstdomain") {
-		t.Error("expected dstdomain ACL in allowlist mode")
+	if !strings.Contains(result, "envoy.filters.http.lua") {
+		t.Error("expected Lua filter in allowlist mode")
 	}
-	// *.slack.com should become .slack.com for squid
-	if !strings.Contains(result, " .slack.com") {
-		t.Error("expected .slack.com (squid wildcard format)")
+	// *.slack.com should become .slack.com suffix in Lua SUFFIXES table
+	if !strings.Contains(result, `".slack.com"`) {
+		t.Error("expected .slack.com in Lua SUFFIXES table")
 	}
-	if !strings.Contains(result, " api.anthropic.com") {
-		t.Error("expected exact domain in ACL")
+	if !strings.Contains(result, `"api.anthropic.com"`) {
+		t.Error("expected exact domain in Lua EXACT table")
 	}
-	if !strings.Contains(result, "http_access deny all") {
-		t.Error("expected default deny")
+	if !strings.Contains(result, `":status"] = "403"`) {
+		t.Error("expected 403 deny response in Lua filter")
 	}
-	if !strings.Contains(result, "cache_mem 8 MB") {
-		t.Error("expected memory constraint")
+	if !strings.Contains(result, "dynamic_forward_proxy") {
+		t.Error("expected dynamic forward proxy cluster")
 	}
 }
 
 func TestGenerateProxyConfWildcardDedup(t *testing.T) {
-	// Squid 6 rejects both "slack.com" and ".slack.com" in the same ACL.
-	// When *.slack.com is present, bare slack.com should be omitted.
+	// When *.slack.com is present, the Lua filter puts .slack.com in SUFFIXES
+	// and slack.com in EXACT. Both appear because Envoy Lua handles them separately.
 	domains := []string{"api.anthropic.com", "slack.com", "*.slack.com"}
 	result := GenerateProxyConf(domains)
 
-	if !strings.Contains(result, " .slack.com") {
-		t.Error("expected .slack.com wildcard entry")
+	if !strings.Contains(result, `".slack.com"`) {
+		t.Error("expected .slack.com in SUFFIXES table")
 	}
-	// Count occurrences — should appear exactly once (as .slack.com, not also as slack.com)
-	if strings.Count(result, "slack.com") != 1 {
-		t.Errorf("expected slack.com to appear exactly once, got:\n%s", result)
+	if !strings.Contains(result, `"slack.com"`) {
+		t.Error("expected slack.com in EXACT table")
 	}
-	if !strings.Contains(result, " api.anthropic.com") {
+	if !strings.Contains(result, `"api.anthropic.com"`) {
 		t.Error("expected non-overlapping domain to remain")
 	}
 }
 
 func TestGenerateProxyConfPassthrough(t *testing.T) {
 	result := GenerateProxyConf(nil)
-	if strings.Contains(result, "dstdomain") {
-		t.Error("expected no domain ACL in passthrough mode")
+	if strings.Contains(result, "envoy.filters.http.lua") {
+		t.Error("expected no Lua filter in passthrough mode")
 	}
-	if !strings.Contains(result, "http_port 3128") {
+	if !strings.Contains(result, "port_value: 3128") {
 		t.Error("expected port directive in passthrough mode")
 	}
-	if !strings.Contains(result, "http_access allow all") {
-		t.Error("expected allow all in passthrough mode")
+	if !strings.Contains(result, "dynamic_forward_proxy") {
+		t.Error("expected dynamic forward proxy cluster in passthrough mode")
 	}
 }
 
 func TestGenerateProxyConfEmptySlice(t *testing.T) {
 	result := GenerateProxyConf([]string{})
-	if strings.Contains(result, "dstdomain") {
-		t.Error("expected no domain ACL with empty domains")
+	if strings.Contains(result, "envoy.filters.http.lua") {
+		t.Error("expected no Lua filter with empty domains")
 	}
 }
 
 func TestEgressProxyDockerfile(t *testing.T) {
 	df := EgressProxyDockerfile()
-	if !strings.Contains(df, "FROM alpine:3.21") {
-		t.Error("expected alpine base image")
-	}
-	if !strings.Contains(df, "squid") {
-		t.Error("expected squid installation")
+	if !strings.Contains(df, "FROM "+EgressProxyBaseImage) {
+		t.Errorf("expected envoy base image, got: %s", df)
 	}
 }

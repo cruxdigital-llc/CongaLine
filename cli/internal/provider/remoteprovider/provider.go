@@ -239,11 +239,11 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		egressEnforce = true // Remote always enforces when domains defined
 	}
 
-	// 6. Create Docker network (--internal when egress enforced)
+	// 6. Create Docker network
 	netName := networkName(cfg.Name)
 	if !p.networkExists(ctx, netName) {
 		fmt.Printf("Creating network %s...\n", netName)
-		if err := p.createNetwork(ctx, netName, false); err != nil {
+		if err := p.createNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to create network: %w", err)
 		}
 	}
@@ -585,7 +585,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		image = "ghcr.io/openclaw/openclaw:latest"
 	}
 
-	// Recreate network (standard bridge, not --internal).
+	// Recreate network.
 	if p.networkExists(ctx, netName) {
 		if p.containerExists(ctx, routerContainer) {
 			p.disconnectNetwork(ctx, netName, routerContainer)
@@ -597,7 +597,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
 	}
-	if err := p.createNetwork(ctx, netName, false); err != nil {
+	if err := p.createNetwork(ctx, netName); err != nil {
 		return fmt.Errorf("failed to create network %s: %w", netName, err)
 	}
 
@@ -855,11 +855,6 @@ func (p *RemoteProvider) cleanupDockerByPrefix(ctx context.Context) {
 		fmt.Printf("Removing network %s...\n", egressNetwork)
 		p.removeNetwork(ctx, egressNetwork)
 	}
-	// (EgressExtNetwork removed — no longer needed with standard bridge networks)
-
-	// Kill any orphaned socat port forwarders
-	p.ssh.Run(ctx, "pkill -f 'socat.*conga' 2>/dev/null || true")
-	p.ssh.Run(ctx, "rm -f /run/conga-fwd-conga-*.pid")
 }
 
 // --- infrastructure helpers ---
@@ -977,7 +972,7 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 	fmt.Println("  Egress proxy started.")
 }
 
-// startAgentEgressProxy starts a per-agent Squid proxy for egress domain filtering on the remote host.
+// startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering on the remote host.
 func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string) error {
 	proxyName := policy.EgressProxyName(agentName)
 	netName := networkName(agentName)
@@ -985,12 +980,10 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 	// Stop existing proxy if any
 	p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName)))
 
-	// Build proxy image if not present or missing required binaries (envoy + socat).
-	// The image may be stale from a previous era (e.g. squid-based, tinyproxy-based).
+	// Build proxy image if not present or missing Envoy.
 	exists, _ := p.ssh.Run(ctx, fmt.Sprintf("docker image inspect %s >/dev/null 2>&1 && echo yes || echo no", policy.EgressProxyImage))
 	hasEnvoy, _ := p.ssh.Run(ctx, fmt.Sprintf("docker run --rm %s which envoy >/dev/null 2>&1 && echo yes || echo no", policy.EgressProxyImage))
-	hasSocat, _ := p.ssh.Run(ctx, fmt.Sprintf("docker run --rm %s which socat >/dev/null 2>&1 && echo yes || echo no", policy.EgressProxyImage))
-	if strings.TrimSpace(exists) != "yes" || strings.TrimSpace(hasEnvoy) != "yes" || strings.TrimSpace(hasSocat) != "yes" {
+	if strings.TrimSpace(exists) != "yes" || strings.TrimSpace(hasEnvoy) != "yes" {
 		fmt.Printf("  Building egress proxy image on remote...\n")
 		buildCmd := fmt.Sprintf("mkdir -p /tmp/conga-egress-build && echo '%s' > /tmp/conga-egress-build/Dockerfile && docker build -t %s /tmp/conga-egress-build && rm -rf /tmp/conga-egress-build",
 			policy.EgressProxyDockerfile(), policy.EgressProxyImage)
@@ -1008,7 +1001,7 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 
 	// Ensure agent network exists (caller should have created it, but be safe)
 	if !p.networkExists(ctx, netName) {
-		if err := p.createNetwork(ctx, netName, true); err != nil {
+		if err := p.createNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("creating network: %w", err)
 		}
 	}

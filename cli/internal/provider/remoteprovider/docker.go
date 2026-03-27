@@ -34,15 +34,10 @@ func networkName(agentName string) string {
 }
 
 // createNetwork creates a Docker bridge network on the remote host.
-// When internal is true, the network is created with --internal which removes
-// the default gateway and blocks all traffic to/from external networks.
-// Containers on an internal network can only communicate with each other.
-func (p *RemoteProvider) createNetwork(ctx context.Context, name string, internal bool) error {
-	cmd := "docker network create " + shellQuote(name) + " --driver bridge"
-	if internal {
-		cmd += " --internal"
-	}
-	_, err := p.ssh.Run(ctx, cmd)
+// Egress restriction is enforced via per-agent Envoy proxy (HTTPS_PROXY env vars)
+// and iptables DROP rules in the DOCKER-USER chain.
+func (p *RemoteProvider) createNetwork(ctx context.Context, name string) error {
+	_, err := p.ssh.Run(ctx, "docker network create "+shellQuote(name)+" --driver bridge")
 	return err
 }
 

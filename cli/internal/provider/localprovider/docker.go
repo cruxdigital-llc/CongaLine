@@ -45,15 +45,10 @@ func networkName(agentName string) string {
 
 // createNetwork creates a Docker bridge network for agent isolation.
 // Each agent gets its own network to prevent inter-container communication.
-// When internal is true, the network is created with --internal which removes
-// the default gateway and blocks all traffic to/from external networks.
-// Gateway access is provided by a forwarder container (see startPortForwarder).
-func createNetwork(ctx context.Context, name string, internal bool) error {
-	args := []string{"network", "create", name, "--driver", "bridge"}
-	if internal {
-		args = append(args, "--internal")
-	}
-	_, err := dockerRun(ctx, args...)
+// Egress restriction is enforced via per-agent Envoy proxy (HTTPS_PROXY env vars)
+// and iptables DROP rules in the DOCKER-USER chain.
+func createNetwork(ctx context.Context, name string) error {
+	_, err := dockerRun(ctx, "network", "create", name, "--driver", "bridge")
 	return err
 }
 
@@ -300,7 +295,7 @@ func iptablesRun(ctx context.Context, iptablesCmd string) error {
 	if runtime.GOOS == "darwin" {
 		_, err := dockerRun(ctx, "run", "--rm", "--privileged",
 			"--pid=host", "--network=host",
-			"alpine:latest",
+			"alpine:3.21",
 			"nsenter", "-t", "1", "-m", "-u", "-n", "-i",
 			"sh", "-c", iptablesCmd)
 		return err

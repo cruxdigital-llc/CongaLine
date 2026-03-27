@@ -112,8 +112,8 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [x] Spec defined: `specs/2026-03-26_feature_network-level-egress-enforcement/spec.md`
 - [x] Persona review passed (Architect + QA)
 - [x] Standards gate passed (10/10 checks clear, resolves "cooperative proxy" residual risk)
-- [x] Phase 1: Remote provider — `--internal` networks, dual-homed proxy, socat port forwarding
-- [x] Phase 2: Local provider — forwarder container for macOS Docker Desktop
+- [x] Phase 1: Remote provider — Envoy proxy + iptables DROP rules
+- [x] Phase 2: Local provider — Envoy proxy + iptables DROP rules (nsenter on macOS)
 - [ ] Phase 3: AWS provider — bootstrap script + systemd integration (deferred)
 
 ### 11. Backlog / Upcoming
@@ -124,13 +124,13 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - CLI has zero test coverage — addressed by CLI Hardening spec (Phase 4)
 - CLI `admin.go` is 549 lines with 6 commands — addressed by CLI Hardening spec (Phase 5)
 - Per-user API keys: each employee brings their own credentials and plugins
-- Egress proxy enforcement is advisory (HTTPS_PROXY env vars) — agents can bypass. Addressed by Network-Level Egress Enforcement spec (Feature 16)
+- Egress proxy enforcement uses HTTPS_PROXY env vars + iptables DROP rules to prevent bypass. See Network-Level Egress Enforcement spec (Feature 16)
 - Open question: which OpenClaw skills/plugins to enable and sandbox requirements
 - Behavior files (`behavior/base/SOUL.md`, `AGENTS.md`) are manually maintained copies of OpenClaw's defaults — will drift on image upgrades and need periodic reconciliation
 
 ## Recent Changes
 - 2026-03-26: Channel Abstraction — extracted all Slack-specific logic from core CLI into `cli/internal/channels/` behind a `Channel` interface. `AgentConfig.Channels []ChannelBinding` replaces `SlackMemberID`/`SlackChannel`. `SharedSecrets.Values map[string]string` replaces Slack-named fields. `--channel slack:ID` CLI flag replaces positional Slack ID args. Slack is the sole implementation in `channels/slack/`. All providers, CLI commands, MCP tools, routing, config generation, and behavior templates delegate to the channel interface. 5 new files, ~25 modified, 17 new test cases. Breaking change to agent JSON, SetupConfig JSON, and CLI args. AWS bootstrap scripts deferred. See `specs/2026-03-26_feature_channel-abstraction/`.
-- 2026-03-26: Egress Domain Allowlisting — per-agent Squid proxy for domain-based CONNECT filtering across all three providers. Unified enforcement mechanism. Policy-driven via `conga-policy.yaml` egress section. Local: validate (warn) or enforce (proxy) modes. Remote/AWS: always enforce when domains defined. Squid handles HTTP CONNECT natively (nginx stream ssl_preread was incompatible with HTTPS_PROXY). Image built locally from `alpine:3.21` + squid. See `specs/2026-03-25_feature_egress-allowlist/`.
+- 2026-03-26: Egress Domain Allowlisting — per-agent Envoy proxy for domain-based CONNECT filtering across all three providers. Unified enforcement mechanism with iptables DROP rules for network-level isolation. Policy-driven via `conga-policy.yaml` egress section. Local: validate (warn) or enforce (proxy + iptables) modes. Remote/AWS: always enforce when domains defined. Envoy handles HTTP CONNECT tunneling with Lua-based domain filtering. See `specs/2026-03-25_feature_egress-allowlist/`.
 - 2026-03-25: Portable Policy Schema — `conga-policy.yaml` schema for declaring security and routing policy as a portable artifact. New `cli/internal/policy/` package with YAML parsing (`gopkg.in/yaml.v3`), validation (enum checks, domain format, unknown field rejection), per-agent override merging, and per-provider enforcement reporting. `conga policy validate` CLI command with `--file`, `--agent`, `--output json` support. 5 new files, 19 unit tests. See `specs/2026-03-25_feature_policy-schema/`.
 - 2026-03-24: SSH Auto-Reconnect — MCP server's SSH connection now transparently recovers from stale/dead connections instead of requiring a Claude Code restart. Added `reconnect()`, `session()`, `sftpClient()` methods to `SSHClient` with single-retry semantics. 4 new tests with in-process SSH server. See `specs/2026-03-24_bugfix_ssh-reconnect/`.
 - 2026-03-23: CLI JSON Input — `--json` and `--output json` flags for LLM/agent-driven CLI automation. All 20 commands support structured JSON input (replacing interactive prompts) and JSON output (replacing human-formatted text). Schema discovery via `conga json-schema <command>`. 4 new files, 18 modified, 25 unit tests. `SetupConfig` struct enables non-interactive `admin setup` across all providers. See `specs/2026-03-23_feature_cli-json-input/`.

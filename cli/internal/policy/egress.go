@@ -173,7 +173,7 @@ exec envoy -c /etc/envoy/envoy.yaml --log-level warn
 // ProxyBootstrapJS returns a Node.js script that patches fetch() and https.globalAgent
 // to route all HTTP(S) traffic through the egress proxy. Without this, Node.js ignores
 // the HTTPS_PROXY env var — fetch() doesn't honor it, and axios's built-in proxy
-// support uses regular HTTP requests instead of CONNECT tunneling (which breaks tinyproxy).
+// support uses regular HTTP requests instead of CONNECT tunneling.
 //
 // The bootstrap script:
 //  1. Sets undici's EnvHttpProxyAgent as the global fetch dispatcher

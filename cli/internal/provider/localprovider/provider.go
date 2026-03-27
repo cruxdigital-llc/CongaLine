@@ -198,11 +198,11 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		}
 	}
 
-	// 6. Create Docker network (--internal when egress enforced)
+	// 6. Create Docker network
 	netName := networkName(cfg.Name)
 	if !networkExists(ctx, netName) {
 		fmt.Printf("Creating network %s...\n", netName)
-		if err := createNetwork(ctx, netName, false); err != nil {
+		if err := createNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to create network: %w", err)
 		}
 	}
@@ -551,7 +551,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		image = "ghcr.io/openclaw/openclaw:latest"
 	}
 
-	// Recreate network (standard bridge, not --internal).
+	// Recreate network.
 	if networkExists(ctx, netName) {
 		if containerExists(ctx, routerContainer) {
 			disconnectNetwork(ctx, netName, routerContainer)
@@ -563,7 +563,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
 	}
-	if err := createNetwork(ctx, netName, false); err != nil {
+	if err := createNetwork(ctx, netName); err != nil {
 		return fmt.Errorf("failed to create network %s: %w", netName, err)
 	}
 
@@ -1084,12 +1084,11 @@ func (p *LocalProvider) cleanupDockerByPrefix(ctx context.Context) {
 		}
 	}
 
-	// Also clean the egress networks
+	// Also clean the egress network
 	if networkExists(ctx, egressNetwork) {
 		fmt.Printf("Removing network %s...\n", egressNetwork)
 		removeNetwork(ctx, egressNetwork)
 	}
-	// (EgressExtNetwork removed — no longer needed with standard bridge networks)
 }
 
 // --- infrastructure helpers ---
@@ -1187,7 +1186,7 @@ func (p *LocalProvider) ensureEgressProxy(ctx context.Context) {
 	fmt.Println("  Egress proxy started.")
 }
 
-// startAgentEgressProxy starts a per-agent nginx proxy for egress domain filtering.
+// startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering.
 func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string) error {
 	proxyName := policy.EgressProxyName(agentName)
 	netName := networkName(agentName)
@@ -1197,8 +1196,8 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		removeContainer(ctx, proxyName)
 	}
 
-	// Build proxy image if not present or missing required binaries (envoy + socat).
-	if !imageExists(ctx, policy.EgressProxyImage) || !imageHasBinary(ctx, policy.EgressProxyImage, "envoy") || !imageHasBinary(ctx, policy.EgressProxyImage, "socat") {
+	// Build proxy image if not present or missing Envoy.
+	if !imageExists(ctx, policy.EgressProxyImage) || !imageHasBinary(ctx, policy.EgressProxyImage, "envoy") {
 		fmt.Printf("  Building egress proxy image...\n")
 		if err := buildEgressProxyImage(ctx); err != nil {
 			return fmt.Errorf("building egress proxy image: %w", err)
@@ -1217,27 +1216,23 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 
 	// Ensure agent network exists (caller should have created it, but be safe)
 	if !networkExists(ctx, netName) {
-		if err := createNetwork(ctx, netName, true); err != nil {
+		if err := createNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("creating network: %w", err)
 		}
 	}
 
-	// (EgressExtNetwork removed — proxy reaches internet via standard bridge)
-
-	// Write entrypoint script (starts socat DNS forwarder + Envoy)
+	// Write entrypoint script for Envoy
 	entrypointPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", agentName))
 	if err := os.WriteFile(entrypointPath, []byte(policy.GenerateProxyEntrypoint()), 0555); err != nil {
 		return fmt.Errorf("writing entrypoint: %w", err)
 	}
 
-	// Start proxy on agent's network with DNS forwarding.
-	// NET_BIND_SERVICE allows socat to bind DNS port 53.
+	// Start Envoy proxy on agent's network.
 	// --entrypoint overrides the default Envoy entrypoint which tries to chown /dev/stdout.
 	args := []string{"run", "-d",
 		"--name", proxyName,
 		"--network", netName,
 		"--cap-drop", "ALL",
-		"--cap-add", "NET_BIND_SERVICE",
 		"--security-opt", "no-new-privileges",
 		"--memory", "128m",
 		"--entrypoint", "",
@@ -1251,13 +1246,11 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		return fmt.Errorf("starting egress proxy: %w", err)
 	}
 
-	// No ext network needed — proxy reaches internet via standard bridge.
-
 	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(domains))
 	return nil
 }
 
-// buildEgressProxyImage builds the egress proxy Docker image locally from alpine + squid.
+// buildEgressProxyImage builds the egress proxy Docker image locally from Envoy.
 func buildEgressProxyImage(ctx context.Context) error {
 	dir, err := os.MkdirTemp("", "conga-egress-build-*")
 	if err != nil {
