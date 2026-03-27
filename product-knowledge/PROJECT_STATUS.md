@@ -116,6 +116,20 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [x] Phase 2: Local provider — Envoy proxy + iptables DROP rules (nsenter on macOS)
 - [ ] Phase 3: AWS provider — bootstrap script + systemd integration (deferred)
 
+### 17. Channel Management CLI — Specified, Ready for Implementation
+*Lead: Architect + QA*
+*See `specs/2026-03-27_feature_channel-management-cli/` for full trace*
+- [x] Requirements defined: `specs/2026-03-27_feature_channel-management-cli/requirements.md`
+- [x] Plan defined: `specs/2026-03-27_feature_channel-management-cli/plan.md`
+- [x] Spec defined: `specs/2026-03-27_feature_channel-management-cli/spec.md`
+- [x] Persona review passed (Architect + QA)
+- [x] Standards gate passed (10 checks, 1 warning: MCP Slack-specific params — accepted)
+- [ ] Phase 1: Provider interface extension (5 new methods + ChannelStatus type)
+- [ ] Phase 2: Setup flow simplification (remove Slack prompts from admin setup)
+- [ ] Phase 3: CLI commands (channels add/remove/list/bind/unbind)
+- [ ] Phase 4: MCP tool wrappers (5 tools)
+- [ ] Phase 5: Tests + demo update
+
 ### 11. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
