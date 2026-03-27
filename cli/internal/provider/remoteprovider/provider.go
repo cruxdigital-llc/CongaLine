@@ -387,6 +387,12 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 
 // --- Container Operations ---
 
+// GetStatus returns the current status of an agent.
+//
+// SIDE EFFECT: When the container is running, this calls ensureEgressIptables
+// which may modify host iptables rules to re-apply egress enforcement lost
+// after a reboot or container IP change. This is intentional — status checks
+// double as a self-healing mechanism for egress security.
 func (p *RemoteProvider) GetStatus(ctx context.Context, agentName string) (*provider.AgentStatus, error) {
 	cName := containerName(agentName)
 	status := &provider.AgentStatus{
@@ -425,6 +431,10 @@ func (p *RemoteProvider) GetStatus(ctx context.Context, agentName string) (*prov
 
 // ensureEgressIptables checks if iptables egress rules are in place for a running
 // container and re-applies them if missing. Handles IP changes after container restart.
+//
+// Unlike the local provider, this does NOT check egressPolicy.Mode because the remote
+// provider always enforces iptables when allowed_domains are defined. The "validate" vs
+// "enforce" mode distinction only applies to the local provider.
 func (p *RemoteProvider) ensureEgressIptables(ctx context.Context, agentName string) {
 	egressPolicy, err := policy.LoadEgressPolicy(p.dataDir, agentName)
 	if err != nil || egressPolicy == nil || len(egressPolicy.AllowedDomains) == 0 {
@@ -1039,9 +1049,10 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 
 	// Start Envoy proxy on agent's network.
 	// --entrypoint overrides the default Envoy entrypoint which tries to chown /dev/stdout.
+	// --user 101:101 runs as the envoy user (non-root) for reduced blast radius.
 	cmd := fmt.Sprintf("docker run -d --name %s --network %s "+
 		"--cap-drop ALL --security-opt no-new-privileges --memory 128m "+
-		"--read-only --tmpfs /tmp:rw,noexec,nosuid "+
+		"--read-only --user 101:101 --tmpfs /tmp:rw,noexec,nosuid "+
 		"--entrypoint '' "+
 		"-v %s:/etc/envoy/envoy.yaml:ro ",
 		shellQuote(proxyName), shellQuote(netName), shellQuote(confPath))

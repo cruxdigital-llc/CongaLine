@@ -311,26 +311,25 @@ func iptablesRun(ctx context.Context, iptablesCmd string) error {
 	return nil
 }
 
+// iptablesExec returns an iptables.ExecFunc that runs commands on the Docker host.
+func iptablesExec(ctx context.Context) iptables.ExecFunc {
+	return func(cmd string) error {
+		return iptablesRun(ctx, cmd)
+	}
+}
+
 // addEgressIptablesRules adds iptables DROP rules to DOCKER-USER that restrict
 // outbound traffic from the container to only the bridge subnet.
 func addEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) error {
-	cmds, err := iptables.AddRulesCmd(containerIP, subnetCIDR)
-	if err != nil {
-		return err
-	}
-	return iptablesRun(ctx, cmds)
+	return iptables.AddRules(containerIP, subnetCIDR, iptablesExec(ctx))
 }
 
 // removeEgressIptablesRules removes iptables egress rules for a container IP.
 func removeEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) {
-	cmds := iptables.RemoveRulesCmd(containerIP, subnetCIDR)
-	if cmds == "" {
-		return
-	}
-	iptablesRun(ctx, cmds)
+	iptables.RemoveRules(containerIP, subnetCIDR, iptablesExec(ctx))
 }
 
 // checkEgressIptablesRules checks whether all egress iptables rules exist for a container IP.
 func checkEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) bool {
-	return iptablesRun(ctx, iptables.CheckRulesCmd(containerIP, subnetCIDR)) == nil
+	return iptables.CheckRules(containerIP, subnetCIDR, iptablesExec(ctx))
 }

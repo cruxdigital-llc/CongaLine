@@ -339,6 +339,12 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 
 // --- Container Operations ---
 
+// GetStatus returns the current status of an agent.
+//
+// SIDE EFFECT: When the container is running, this calls ensureEgressIptables
+// which may modify host iptables rules to re-apply egress enforcement lost
+// after a reboot or container IP change. This is intentional — status checks
+// double as a self-healing mechanism for egress security.
 func (p *LocalProvider) GetStatus(ctx context.Context, agentName string) (*provider.AgentStatus, error) {
 	cName := containerName(agentName)
 	status := &provider.AgentStatus{
@@ -582,7 +588,9 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		image = "ghcr.io/openclaw/openclaw:latest"
 	}
 
-	// Recreate network.
+	// Recreate network. TODO: consider keeping the network if egress policy
+	// hasn't changed — currently we always recreate for a clean slate, which
+	// causes brief connectivity loss during refresh.
 	if networkExists(ctx, netName) {
 		if containerExists(ctx, routerContainer) {
 			disconnectNetwork(ctx, netName, routerContainer)
@@ -1269,6 +1277,7 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 
 	// Start Envoy proxy on agent's network.
 	// --entrypoint overrides the default Envoy entrypoint which tries to chown /dev/stdout.
+	// --user 101:101 runs as the envoy user (non-root) for reduced blast radius.
 	args := []string{"run", "-d",
 		"--name", proxyName,
 		"--network", netName,
@@ -1276,6 +1285,7 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		"--security-opt", "no-new-privileges",
 		"--memory", "128m",
 		"--read-only",
+		"--user", "101:101",
 		"--tmpfs", "/tmp:rw,noexec,nosuid",
 		"--entrypoint", "",
 		"-v", fmt.Sprintf("%s:/etc/envoy/envoy.yaml:ro", confPath),

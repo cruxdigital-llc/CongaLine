@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/mcpserver"
@@ -407,7 +408,7 @@ func TestPolicyDeployNoFile(t *testing.T) {
 		t.Fatal("expected error when no policy file exists")
 	}
 	text := textContent(t, result)
-	if !contains(text, "no policy file found") {
+	if !strings.Contains(text, "no policy file found") {
 		t.Errorf("error = %q, want it to mention missing policy file", text)
 	}
 }
@@ -493,16 +494,3 @@ egress:
 	}
 }
 
-// contains is a simple substring check helper.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
-}
-
-func containsSubstr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

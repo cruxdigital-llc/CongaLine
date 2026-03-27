@@ -273,33 +273,32 @@ func (p *RemoteProvider) networkSubnetCIDR(ctx context.Context, network string) 
 	return cidr, nil
 }
 
+// sshIptablesExec returns an iptables.ExecFunc that runs commands on the remote host via SSH.
+func (p *RemoteProvider) sshIptablesExec(ctx context.Context) iptables.ExecFunc {
+	return func(cmd string) error {
+		_, err := p.ssh.Run(ctx, cmd)
+		if err != nil {
+			return fmt.Errorf("iptables via SSH: %w", err)
+		}
+		return nil
+	}
+}
+
 // addEgressIptablesRules adds iptables DROP rules to DOCKER-USER that restrict
 // outbound traffic from the container to only the bridge subnet (where the proxy
 // and Docker DNS live). Uses DROP (not REJECT) so the app sees ETIMEDOUT instead
 // of ENETUNREACH which would crash Node.js.
 func (p *RemoteProvider) addEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) error {
-	cmds, err := iptables.AddRulesCmd(containerIP, subnetCIDR)
-	if err != nil {
-		return err
-	}
-	if _, err := p.ssh.Run(ctx, cmds); err != nil {
-		return fmt.Errorf("adding iptables egress rules for %s: %w", containerIP, err)
-	}
-	return nil
+	return iptables.AddRules(containerIP, subnetCIDR, p.sshIptablesExec(ctx))
 }
 
 // removeEgressIptablesRules removes iptables egress rules for a container IP.
 // Idempotent — ignores errors from missing rules.
 func (p *RemoteProvider) removeEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) {
-	cmds := iptables.RemoveRulesCmd(containerIP, subnetCIDR)
-	if cmds == "" {
-		return
-	}
-	p.ssh.Run(ctx, cmds)
+	iptables.RemoveRules(containerIP, subnetCIDR, p.sshIptablesExec(ctx))
 }
 
 // checkEgressIptablesRules checks whether all egress iptables rules exist for a container IP.
 func (p *RemoteProvider) checkEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) bool {
-	_, err := p.ssh.Run(ctx, iptables.CheckRulesCmd(containerIP, subnetCIDR))
-	return err == nil
+	return iptables.CheckRules(containerIP, subnetCIDR, p.sshIptablesExec(ctx))
 }

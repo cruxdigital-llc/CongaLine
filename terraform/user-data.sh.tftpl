@@ -422,9 +422,16 @@ OCCONFIG
 # Generate Envoy egress conf from conga-policy.yaml for a given agent.
 # Reads global allowed_domains and agent-specific overrides.
 # Output: /opt/conga/config/egress-$AGENT_NAME.yaml
+#
+# WARNING: This bootstrap does NOT apply iptables DROP rules for egress enforcement.
+# The Go CLI providers (local/remote) add iptables rules to DOCKER-USER that DROP all
+# traffic from agent containers except to the bridge subnet (where the proxy lives).
+# This bash bootstrap relies solely on the Envoy proxy for egress filtering — a
+# container that bypasses the HTTPS_PROXY env vars can reach the internet directly.
+# This is a known gap tracked for future work (see Feature 16 Phase 3).
 generate_egress_conf() {
-  # NOTE: This function generates the same Envoy config format as policy.GenerateProxyConf() in Go
-  # (cli/internal/policy/egress.go) — keep both implementations in sync when modifying.
+  # NOTE: This function generates the same Envoy config format as the template
+  # in cli/internal/policy/templates/envoy-config.yaml.tmpl — keep both in sync.
   local AGENT_NAME="$1"
   local POLICY_FILE="/opt/conga/conga-policy.yaml"
   local CONF_OUT="/opt/conga/config/egress-$AGENT_NAME.yaml"
@@ -725,6 +732,7 @@ PROXYDF
       --cap-drop ALL \
       --security-opt no-new-privileges \
       --memory 128m \
+      --user 101:101 \
       --entrypoint '' \
       -v "$EGRESS_CONF:/etc/envoy/envoy.yaml:ro" \
       conga-egress-proxy \
