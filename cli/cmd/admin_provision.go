@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
@@ -19,17 +20,10 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Slack member ID is optional (gateway-only mode without it)
-	var slackMemberID string
-	if len(args) >= 2 {
-		slackMemberID = args[1]
-	} else if s, ok := ui.GetString("slack_member_id"); ok {
-		slackMemberID = s
-	}
-	if slackMemberID != "" {
-		if err := validateMemberID(slackMemberID); err != nil {
-			return err
-		}
+	// Channel binding: flag > JSON > none (gateway-only)
+	bindings, err := resolveChannelBinding("user")
+	if err != nil {
+		return err
 	}
 
 	// Gateway port: flag > JSON > auto-assign
@@ -63,11 +57,11 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := provider.AgentConfig{
-		Name:          agentName,
-		Type:          provider.AgentTypeUser,
-		SlackMemberID: slackMemberID,
-		GatewayPort:   gatewayPort,
-		IAMIdentity:   iamIdentity,
+		Name:        agentName,
+		Type:        provider.AgentTypeUser,
+		Channels:    bindings,
+		GatewayPort: gatewayPort,
+		IAMIdentity: iamIdentity,
 	}
 
 	if err := prov.ProvisionAgent(ctx, cfg); err != nil {
@@ -106,17 +100,10 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Slack channel is optional (gateway-only mode without it)
-	var slackChannel string
-	if len(args) >= 2 {
-		slackChannel = args[1]
-	} else if s, ok := ui.GetString("slack_channel"); ok {
-		slackChannel = s
-	}
-	if slackChannel != "" {
-		if err := validateChannelID(slackChannel); err != nil {
-			return err
-		}
+	// Channel binding: flag > JSON > none (gateway-only)
+	bindings, err := resolveChannelBinding("team")
+	if err != nil {
+		return err
 	}
 
 	// Gateway port: flag > JSON > auto-assign
@@ -131,10 +118,10 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := provider.AgentConfig{
-		Name:         agentName,
-		Type:         provider.AgentTypeTeam,
-		SlackChannel: slackChannel,
-		GatewayPort:  gatewayPort,
+		Name:        agentName,
+		Type:        provider.AgentTypeTeam,
+		Channels:    bindings,
+		GatewayPort: gatewayPort,
 	}
 
 	if err := prov.ProvisionAgent(ctx, cfg); err != nil {
@@ -157,13 +144,39 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nTeam agent %s provisioned successfully!\n", agentName)
-	if slackChannel != "" {
-		fmt.Printf("Channel: %s\n", slackChannel)
+	if len(bindings) > 0 {
+		fmt.Printf("Channel: %s:%s\n", bindings[0].Platform, bindings[0].ID)
 	} else {
-		fmt.Println("Mode: gateway-only (no Slack)")
+		fmt.Println("Mode: gateway-only (no channel)")
 	}
 	fmt.Printf("Gateway port: %d\n", gatewayPort)
 	return nil
+}
+
+// resolveChannelBinding parses the --channel flag or JSON input into a binding slice.
+func resolveChannelBinding(agentType string) ([]channels.ChannelBinding, error) {
+	chStr := adminChannel
+	if chStr == "" {
+		if s, ok := ui.GetString("channel"); ok {
+			chStr = s
+		}
+	}
+	if chStr == "" {
+		return nil, nil // gateway-only
+	}
+
+	binding, err := channels.ParseBinding(chStr)
+	if err != nil {
+		return nil, err
+	}
+	ch, ok := channels.Get(binding.Platform)
+	if !ok {
+		return nil, fmt.Errorf("unknown channel platform %q", binding.Platform)
+	}
+	if err := ch.ValidateBinding(agentType, binding.ID); err != nil {
+		return nil, err
+	}
+	return []channels.ChannelBinding{binding}, nil
 }
 
 func resolveGatewayPort(ctx context.Context) (int, error) {

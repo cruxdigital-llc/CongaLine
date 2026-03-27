@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -280,8 +281,8 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 10. Restart router if Slack configured so it picks up updated routing.json
-	if shared.HasSlack() {
+	// 10. Restart router if any channel has credentials so it picks up updated routing.json
+	if hasAnyChannel(shared) {
 		p.restartRouter(ctx)
 	}
 
@@ -331,7 +332,7 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 	// Restart router to pick up removed agent from routing.json
 	shared, _ := p.readSharedSecrets()
-	if shared.HasSlack() {
+	if hasAnyChannel(shared) {
 		p.restartRouter(ctx)
 	}
 	return nil
@@ -564,7 +565,7 @@ func (p *RemoteProvider) RefreshAll(ctx context.Context) error {
 
 	// Regenerate routing.json before restarting the router
 	shared, _ := p.readSharedSecrets()
-	if shared.HasSlack() {
+	if hasAnyChannel(shared) {
 		if err := p.regenerateRouting(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to regenerate routing: %v\n", err)
 		}
@@ -690,8 +691,9 @@ func (p *RemoteProvider) Teardown(ctx context.Context) error {
 	fmt.Printf("Removing %s...\n", p.remoteDir)
 	p.ssh.Run(ctx, fmt.Sprintf("rm -rf %s", shellQuote(p.remoteDir)))
 
-	// Clear local remote config
+	// Clear local remote config and policy
 	os.Remove(filepath.Join(p.dataDir, "remote-config.json"))
+	os.Remove(filepath.Join(p.dataDir, "conga-policy.yaml"))
 
 	fmt.Println("Remote deployment torn down.")
 	return nil
@@ -854,7 +856,7 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 	fmt.Println("  Egress proxy started.")
 }
 
-// startAgentEgressProxy starts a per-agent nginx proxy for egress domain filtering on the remote host.
+// startAgentEgressProxy starts a per-agent tinyproxy for egress domain filtering on the remote host.
 func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string) error {
 	proxyName := policy.EgressProxyName(agentName)
 	netName := networkName(agentName)
@@ -862,9 +864,10 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 	// Stop existing proxy if any
 	p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName)))
 
-	// Build proxy image if not present on remote
+	// Build proxy image if not present or stale (e.g. old nginx-based image from pre-tinyproxy era)
 	exists, _ := p.ssh.Run(ctx, fmt.Sprintf("docker image inspect %s >/dev/null 2>&1 && echo yes || echo no", policy.EgressProxyImage))
-	if strings.TrimSpace(exists) != "yes" {
+	hasTinyproxy, _ := p.ssh.Run(ctx, fmt.Sprintf("docker run --rm %s which tinyproxy >/dev/null 2>&1 && echo yes || echo no", policy.EgressProxyImage))
+	if strings.TrimSpace(exists) != "yes" || strings.TrimSpace(hasTinyproxy) != "yes" {
 		fmt.Printf("  Building egress proxy image on remote...\n")
 		buildCmd := fmt.Sprintf("mkdir -p /tmp/conga-egress-build && echo '%s' > /tmp/conga-egress-build/Dockerfile && docker build -t %s /tmp/conga-egress-build && rm -rf /tmp/conga-egress-build",
 			policy.EgressProxyDockerfile(), policy.EgressProxyImage)
@@ -873,11 +876,20 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 		}
 	}
 
-	// Generate and upload Squid config
+	// Generate and upload tinyproxy config
 	conf := policy.GenerateProxyConf(domains)
 	confPath := posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.conf", agentName))
-	if err := p.ssh.Upload(confPath, []byte(conf), 0400); err != nil {
+	if err := p.ssh.Upload(confPath, []byte(conf), 0444); err != nil {
 		return fmt.Errorf("uploading egress config: %w", err)
+	}
+
+	// Upload filter file (domain allowlist)
+	filterPath := posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.filter", agentName))
+	if len(domains) > 0 {
+		filter := policy.GenerateProxyFilter(domains)
+		if err := p.ssh.Upload(filterPath, []byte(filter), 0444); err != nil {
+			return fmt.Errorf("uploading egress filter: %w", err)
+		}
 	}
 
 	// Ensure network exists
@@ -887,16 +899,18 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 		}
 	}
 
-	// Start Squid proxy on agent's network.
-	// Runs as squid user (uid 31) so no SETUID/SETGID capabilities needed.
-	// tmpfs mounts provide writable directories for Squid's pid/log files
-	// while keeping the root filesystem read-only.
+	// Start tinyproxy on agent's network.
+	// Runs as nobody (uid 65534) — tinyproxy drops privileges internally.
+	// tmpfs for /run provides writable PID file location.
 	cmd := fmt.Sprintf("docker run -d --name %s --network %s "+
-		"--cap-drop ALL --security-opt no-new-privileges --memory 128m --read-only "+
-		"--user squid:squid "+
-		"--tmpfs /var/run:rw,noexec,nosuid,uid=31,gid=31 --tmpfs /var/log/squid:rw,noexec,nosuid,uid=31,gid=31 --tmpfs /var/spool/squid:rw,noexec,nosuid,uid=31,gid=31 "+
-		"-v %s:/etc/squid/squid.conf:ro %s squid -N -f /etc/squid/squid.conf",
-		shellQuote(proxyName), shellQuote(netName), shellQuote(confPath), policy.EgressProxyImage)
+		"--cap-drop ALL --security-opt no-new-privileges --memory 64m --read-only "+
+		"--tmpfs /run:rw,noexec,nosuid --tmpfs /var/log/tinyproxy:rw,noexec,nosuid "+
+		"-v %s:/etc/tinyproxy/tinyproxy.conf:ro ",
+		shellQuote(proxyName), shellQuote(netName), shellQuote(confPath))
+	if len(domains) > 0 {
+		cmd += fmt.Sprintf("-v %s:/etc/tinyproxy/filter:ro ", shellQuote(filterPath))
+	}
+	cmd += fmt.Sprintf("%s tinyproxy -d -c /etc/tinyproxy/tinyproxy.conf", policy.EgressProxyImage)
 
 	if _, err := p.ssh.Run(ctx, cmd); err != nil {
 		return fmt.Errorf("starting egress proxy: %w", err)
@@ -1034,4 +1048,14 @@ func generateToken() (string, error) {
 		return "", fmt.Errorf("failed to generate token: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hasAnyChannel returns true if any registered channel has its required credentials.
+func hasAnyChannel(shared common.SharedSecrets) bool {
+	for _, ch := range channels.All() {
+		if ch.HasCredentials(shared.Values) {
+			return true
+		}
+	}
+	return false
 }

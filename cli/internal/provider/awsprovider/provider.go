@@ -119,11 +119,10 @@ func (p *AWSProvider) ResolveAgentByIdentity(ctx context.Context) (*provider.Age
 
 func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConfig) error {
 	agentConfigJSON, err := json.Marshal(map[string]interface{}{
-		"type":            string(cfg.Type),
-		"slack_member_id": cfg.SlackMemberID,
-		"slack_channel":   cfg.SlackChannel,
-		"gateway_port":    cfg.GatewayPort,
-		"iam_identity":    cfg.IAMIdentity,
+		"type":         string(cfg.Type),
+		"channels":     cfg.Channels,
+		"gateway_port": cfg.GatewayPort,
+		"iam_identity": cfg.IAMIdentity,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to serialize agent config: %w", err)
@@ -145,6 +144,13 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 		return err
 	}
 
+	// Extract the Slack binding ID (if any) for the shell provisioning scripts.
+	slackBinding := cfg.ChannelBinding("slack")
+	slackID := ""
+	if slackBinding != nil {
+		slackID = slackBinding.ID
+	}
+
 	var scriptTemplate string
 	var templateData interface{}
 	switch cfg.Type {
@@ -153,13 +159,13 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 		templateData = struct {
 			AgentName, SlackMemberID, AWSRegion, StateBucket string
 			GatewayPort                                      int
-		}{cfg.Name, cfg.SlackMemberID, p.region, stateBucket, cfg.GatewayPort}
+		}{cfg.Name, slackID, p.region, stateBucket, cfg.GatewayPort}
 	case provider.AgentTypeTeam:
 		scriptTemplate = scripts.AddTeamScript
 		templateData = struct {
 			AgentName, SlackChannel, AWSRegion, StateBucket string
 			GatewayPort                                     int
-		}{cfg.Name, cfg.SlackChannel, p.region, stateBucket, cfg.GatewayPort}
+		}{cfg.Name, slackID, p.region, stateBucket, cfg.GatewayPort}
 	default:
 		return fmt.Errorf("unknown agent type: %s", cfg.Type)
 	}
@@ -740,9 +746,12 @@ func (p *AWSProvider) renderAgentScript(tmplStr, tmplName, agentName string, age
 		return "", fmt.Errorf("failed to parse %s template: %w", tmplName, err)
 	}
 
-	slackID := agent.SlackMemberID
-	if agent.Type == "team" {
-		slackID = agent.SlackChannel
+	slackID := ""
+	for _, ch := range agent.Channels {
+		if ch.Platform == "slack" {
+			slackID = ch.ID
+			break
+		}
 	}
 
 	var buf bytes.Buffer
@@ -785,13 +794,12 @@ func (p *AWSProvider) setAgentPaused(ctx context.Context, name string, agent *di
 
 func convertAgent(a discovery.AgentConfig) provider.AgentConfig {
 	return provider.AgentConfig{
-		Name:          a.Name,
-		Type:          provider.AgentType(a.Type),
-		SlackMemberID: a.SlackMemberID,
-		SlackChannel:  a.SlackChannel,
-		GatewayPort:   a.GatewayPort,
-		IAMIdentity:   a.IAMIdentity,
-		Paused:        a.Paused,
+		Name:        a.Name,
+		Type:        provider.AgentType(a.Type),
+		Channels:    a.Channels,
+		GatewayPort: a.GatewayPort,
+		IAMIdentity: a.IAMIdentity,
+		Paused:      a.Paused,
 	}
 }
 

@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
+	_ "github.com/cruxdigital-llc/conga-line/cli/internal/channels/slack"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 )
 
 func TestGenerateRoutingJSON(t *testing.T) {
 	agents := []provider.AgentConfig{
-		{Name: "myagent", Type: provider.AgentTypeUser, SlackMemberID: "U0123456789", GatewayPort: 18789},
-		{Name: "leadership", Type: provider.AgentTypeTeam, SlackChannel: "C9876543210", GatewayPort: 18790},
+		{Name: "myagent", Type: provider.AgentTypeUser, Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U0123456789"}}, GatewayPort: 18789},
+		{Name: "leadership", Type: provider.AgentTypeTeam, Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C9876543210"}}, GatewayPort: 18790},
 	}
 
 	data, err := GenerateRoutingJSON(agents)
@@ -33,10 +35,10 @@ func TestGenerateRoutingJSON(t *testing.T) {
 
 func TestGenerateRoutingJSON_PausedExcluded(t *testing.T) {
 	agents := []provider.AgentConfig{
-		{Name: "myagent", Type: provider.AgentTypeUser, SlackMemberID: "U0123456789", GatewayPort: 18789},
-		{Name: "paused-user", Type: provider.AgentTypeUser, SlackMemberID: "U9999999999", Paused: true, GatewayPort: 18790},
-		{Name: "leadership", Type: provider.AgentTypeTeam, SlackChannel: "C9876543210", GatewayPort: 18791},
-		{Name: "paused-team", Type: provider.AgentTypeTeam, SlackChannel: "C0000000000", Paused: true, GatewayPort: 18792},
+		{Name: "myagent", Type: provider.AgentTypeUser, Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U0123456789"}}, GatewayPort: 18789},
+		{Name: "paused-user", Type: provider.AgentTypeUser, Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U9999999999"}}, Paused: true, GatewayPort: 18790},
+		{Name: "leadership", Type: provider.AgentTypeTeam, Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C9876543210"}}, GatewayPort: 18791},
+		{Name: "paused-team", Type: provider.AgentTypeTeam, Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C0000000000"}}, Paused: true, GatewayPort: 18792},
 	}
 
 	data, err := GenerateRoutingJSON(agents)
@@ -76,5 +78,25 @@ func TestGenerateRoutingJSON_Empty(t *testing.T) {
 
 	if len(cfg.Members) != 0 || len(cfg.Channels) != 0 {
 		t.Errorf("expected empty routing, got %d members, %d channels", len(cfg.Members), len(cfg.Channels))
+	}
+}
+
+func TestGenerateRoutingJSON_GatewayOnly(t *testing.T) {
+	agents := []provider.AgentConfig{
+		{Name: "myagent", Type: provider.AgentTypeUser, GatewayPort: 18789}, // no channels
+	}
+
+	data, err := GenerateRoutingJSON(agents)
+	if err != nil {
+		t.Fatalf("GenerateRoutingJSON() error: %v", err)
+	}
+
+	var cfg RoutingConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	if len(cfg.Members) != 0 || len(cfg.Channels) != 0 {
+		t.Errorf("expected empty routing for gateway-only agent, got %d members, %d channels", len(cfg.Members), len(cfg.Channels))
 	}
 }

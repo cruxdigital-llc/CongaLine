@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -14,7 +15,7 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{
 			Name:        "conga_provision_agent",
-			Description: "Create a new agent. Type must be 'user' (DM-only) or 'team' (channel-based). Slack IDs are optional — agents can run in gateway-only mode without Slack.",
+			Description: "Create a new agent. Type must be 'user' (DM-only) or 'team' (channel-based). Channel binding is optional — agents can run in gateway-only mode.",
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -27,13 +28,9 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 						"enum":        []string{"user", "team"},
 						"description": "Agent type: 'user' for DM-only, 'team' for channel-based",
 					},
-					"slack_member_id": map[string]any{
+					"channel": map[string]any{
 						"type":        "string",
-						"description": "Slack member ID (e.g. U0123456789) for user agents",
-					},
-					"slack_channel": map[string]any{
-						"type":        "string",
-						"description": "Slack channel ID (e.g. C0123456789) for team agents",
+						"description": "Channel binding (format: platform:id, e.g., slack:U0123456789). Omit for gateway-only mode.",
 					},
 					"gateway_port": map[string]any{
 						"type":        "integer",
@@ -70,12 +67,27 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 				gatewayPort = common.NextAvailablePort(agents)
 			}
 
+			var bindings []channels.ChannelBinding
+			if chStr := req.GetString("channel", ""); chStr != "" {
+				binding, err := channels.ParseBinding(chStr)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				ch, ok := channels.Get(binding.Platform)
+				if !ok {
+					return mcp.NewToolResultError(fmt.Sprintf("unknown channel platform %q", binding.Platform)), nil
+				}
+				if err := ch.ValidateBinding(agentType, binding.ID); err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				bindings = append(bindings, binding)
+			}
+
 			cfg := provider.AgentConfig{
-				Name:          agentName,
-				Type:          provider.AgentType(agentType),
-				SlackMemberID: req.GetString("slack_member_id", ""),
-				SlackChannel:  req.GetString("slack_channel", ""),
-				GatewayPort:   gatewayPort,
+				Name:        agentName,
+				Type:        provider.AgentType(agentType),
+				Channels:    bindings,
+				GatewayPort: gatewayPort,
 			}
 
 			if err := s.prov.ProvisionAgent(ctx, cfg); err != nil {

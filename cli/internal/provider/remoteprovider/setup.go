@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
@@ -202,20 +203,63 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 	}
 
 	// --- Shared secrets (all optional) ---
-	secretItems := []struct {
+	// Channel-specific secrets (Slack, Discord, etc.)
+	fmt.Println("\nChannel integrations are optional. Skip all tokens to run in gateway-only mode (web UI).")
+
+	for _, ch := range channels.All() {
+		for _, sec := range ch.SharedSecrets() {
+			remotePath := posixpath.Join(p.sharedSecretsDir(), sec.Name)
+			current := ""
+			if data, err := p.ssh.Download(remotePath); err == nil {
+				current = string(data)
+			}
+
+			cfgValue := cfg.SecretValue(sec.Name)
+			status := "set"
+			if current == "" && cfgValue == "" {
+				status = "not set"
+			}
+			fmt.Printf("\n[secret] %s — %s (optional) (%s)\n", sec.Name, sec.Prompt, status)
+
+			var value string
+			if cfgValue != "" {
+				value = cfgValue
+			} else if cfg != nil {
+				fmt.Println("  Skipped (not in config)")
+				continue
+			} else {
+				if current != "" {
+					if !ui.Confirm("  Update this value?") {
+						continue
+					}
+				}
+
+				value, err = ui.SecretPrompt(fmt.Sprintf("  Enter %s", sec.Name))
+				if err != nil {
+					return err
+				}
+				if value == "" {
+					fmt.Println("  Skipped (empty value)")
+					continue
+				}
+			}
+
+			if err := p.ssh.Upload(remotePath, []byte(value), 0400); err != nil {
+				return fmt.Errorf("failed to save %s: %w", sec.Name, err)
+			}
+			fmt.Printf("  Saved (%s).\n", common.MaskSecret(value))
+			changed++
+		}
+	}
+
+	// Google OAuth secrets (not channel-specific)
+	for _, item := range []struct {
 		name, description string
 		isSecret          bool
 	}{
-		{"slack-bot-token", "Slack bot token (xoxb-...)", true},
-		{"slack-signing-secret", "Slack signing secret", true},
-		{"slack-app-token", "Slack app token (xapp-...)", true},
 		{"google-client-id", "Google OAuth client ID", false},
 		{"google-client-secret", "Google OAuth client secret", true},
-	}
-
-	fmt.Println("\nSlack integration is optional. Skip all Slack tokens to run in gateway-only mode (web UI).")
-
-	for _, item := range secretItems {
+	} {
 		remotePath := posixpath.Join(p.sharedSecretsDir(), item.name)
 		current := ""
 		if data, err := p.ssh.Download(remotePath); err == nil {
@@ -229,12 +273,10 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		}
 		fmt.Printf("\n[secret] %s — %s (optional) (%s)\n", item.name, item.description, status)
 
-		// Check for config-provided value first
 		var value string
 		if cfgValue != "" {
 			value = cfgValue
 		} else if cfg != nil {
-			// Non-interactive mode with no value for this secret — skip
 			fmt.Println("  Skipped (not in config)")
 			continue
 		} else {
@@ -343,17 +385,24 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 	// --- Start egress proxy ---
 	p.ensureEgressProxy(ctx)
 
-	// --- Router (only if Slack configured) ---
+	// --- Router (only if any channel has credentials) ---
 	shared, _ := p.readSharedSecrets()
-	if shared.HasSlack() {
+	if hasAnyChannel(shared) {
 		routerEnvPath := posixpath.Join(p.remoteConfigDir(), "router.env")
-		routerEnv := fmt.Sprintf("SLACK_APP_TOKEN=%s\nSLACK_SIGNING_SECRET=%s\n", shared.SlackAppToken, shared.SlackSigningSecret)
-		if err := p.ssh.Upload(routerEnvPath, []byte(routerEnv), 0400); err != nil {
+		var routerEnvBuf strings.Builder
+		for _, ch := range channels.All() {
+			if ch.HasCredentials(shared.Values) {
+				for k, v := range ch.RouterEnvVars(shared.Values) {
+					fmt.Fprintf(&routerEnvBuf, "%s=%s\n", k, v)
+				}
+			}
+		}
+		if err := p.ssh.Upload(routerEnvPath, []byte(routerEnvBuf.String()), 0400); err != nil {
 			return fmt.Errorf("failed to write router env file: %w", err)
 		}
 		p.ensureRouter(ctx)
 	} else {
-		fmt.Println("\nSlack not configured — router skipped. Agents will run in gateway-only mode (web UI).")
+		fmt.Println("\nNo channel credentials configured — router skipped. Agents will run in gateway-only mode (web UI).")
 	}
 
 	// --- Save provider config ---

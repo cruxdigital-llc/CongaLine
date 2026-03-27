@@ -12,6 +12,9 @@ import (
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
 	"github.com/spf13/cobra"
 
+	// Register channels via init()
+	_ "github.com/cruxdigital-llc/conga-line/cli/internal/channels/slack"
+
 	// Register providers via init()
 	_ "github.com/cruxdigital-llc/conga-line/cli/internal/provider/awsprovider"
 	_ "github.com/cruxdigital-llc/conga-line/cli/internal/provider/localprovider"
@@ -160,6 +163,4 @@ func resolveProfile() (string, *awsutil.AWSProfileInfo) {
 }
 
 // Validation helpers delegate to common package.
-func validateMemberID(id string) error    { return common.ValidateMemberID(id) }
-func validateChannelID(id string) error   { return common.ValidateChannelID(id) }
 func validateAgentName(name string) error { return common.ValidateAgentName(name) }

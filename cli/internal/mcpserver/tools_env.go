@@ -71,19 +71,21 @@ func (s *Server) toolSetup() server.ServerTool {
 			},
 		},
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			secrets := map[string]string{}
+			for _, key := range []string{"slack-bot-token", "slack-signing-secret", "slack-app-token", "google-client-id", "google-client-secret"} {
+				if v := req.GetString(key, ""); v != "" {
+					secrets[key] = v
+				}
+			}
 			cfg := &provider.SetupConfig{
-				Image:              req.GetString("image", ""),
-				SlackBotToken:      req.GetString("slack_bot_token", ""),
-				SlackSigningSecret: req.GetString("slack_signing_secret", ""),
-				SlackAppToken:      req.GetString("slack_app_token", ""),
-				GoogleClientID:     req.GetString("google_client_id", ""),
-				GoogleClientSecret: req.GetString("google_client_secret", ""),
-				SSHHost:            req.GetString("ssh_host", ""),
-				SSHPort:            req.GetInt("ssh_port", 0),
-				SSHUser:            req.GetString("ssh_user", ""),
-				SSHKeyPath:         req.GetString("ssh_key_path", ""),
-				RepoPath:           req.GetString("repo_path", ""),
-				InstallDocker:      req.GetBool("install_docker", false),
+				Image:         req.GetString("image", ""),
+				Secrets:       secrets,
+				SSHHost:       req.GetString("ssh_host", ""),
+				SSHPort:       req.GetInt("ssh_port", 0),
+				SSHUser:       req.GetString("ssh_user", ""),
+				SSHKeyPath:    req.GetString("ssh_key_path", ""),
+				RepoPath:      req.GetString("repo_path", ""),
+				InstallDocker: req.GetBool("install_docker", false),
 			}
 
 			ctx, cancel := toolCtx(ctx)
