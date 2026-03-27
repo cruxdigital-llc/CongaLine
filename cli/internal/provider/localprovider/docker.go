@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cruxdigital-llc/conga-line/cli/internal/provider/iptables"
 )
 
 // dockerRun executes a docker command and returns stdout.
@@ -257,7 +259,6 @@ func imageHasBinary(ctx context.Context, image string, binary string) bool {
 }
 
 // containerIPOnNetwork returns the IP address of a container on a specific Docker network.
-// containerIPOnNetwork returns the IP address of a container on a specific Docker network.
 // Retries briefly to handle the race between container start and IP assignment.
 func containerIPOnNetwork(ctx context.Context, container, network string) (string, error) {
 	format := fmt.Sprintf("{{(index .NetworkSettings.Networks %q).IPAddress}}", network)
@@ -293,7 +294,8 @@ func networkSubnetCIDR(ctx context.Context, network string) (string, error) {
 // On Linux, it runs directly via sh.
 func iptablesRun(ctx context.Context, iptablesCmd string) error {
 	if runtime.GOOS == "darwin" {
-		_, err := dockerRun(ctx, "run", "--rm", "--privileged",
+		_, err := dockerRun(ctx, "run", "--rm",
+			"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
 			"--pid=host", "--network=host",
 			"alpine:3.21",
 			"nsenter", "-t", "1", "-m", "-u", "-n", "-i",
@@ -312,27 +314,23 @@ func iptablesRun(ctx context.Context, iptablesCmd string) error {
 // addEgressIptablesRules adds iptables DROP rules to DOCKER-USER that restrict
 // outbound traffic from the container to only the bridge subnet.
 func addEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) error {
-	cmds := fmt.Sprintf(
-		"iptables -C DOCKER-USER -s %s -j DROP 2>/dev/null || iptables -I DOCKER-USER -s %s -j DROP; "+
-			"iptables -C DOCKER-USER -s %s -d %s -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s %s -d %s -j RETURN; "+
-			"iptables -C DOCKER-USER -s %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN",
-		containerIP, containerIP,
-		containerIP, subnetCIDR, containerIP, subnetCIDR,
-		containerIP, containerIP)
+	cmds, err := iptables.AddRulesCmd(containerIP, subnetCIDR)
+	if err != nil {
+		return err
+	}
 	return iptablesRun(ctx, cmds)
 }
 
 // removeEgressIptablesRules removes iptables egress rules for a container IP.
 func removeEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) {
-	if containerIP == "" {
+	cmds := iptables.RemoveRulesCmd(containerIP, subnetCIDR)
+	if cmds == "" {
 		return
 	}
-	cmds := fmt.Sprintf(
-		"iptables -D DOCKER-USER -s %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; "+
-			"iptables -D DOCKER-USER -s %s -d %s -j RETURN 2>/dev/null || true; "+
-			"iptables -D DOCKER-USER -s %s -j DROP 2>/dev/null || true",
-		containerIP,
-		containerIP, subnetCIDR,
-		containerIP)
 	iptablesRun(ctx, cmds)
+}
+
+// checkEgressIptablesRules checks whether all egress iptables rules exist for a container IP.
+func checkEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) bool {
+	return iptablesRun(ctx, iptables.CheckRulesCmd(containerIP, subnetCIDR)) == nil
 }

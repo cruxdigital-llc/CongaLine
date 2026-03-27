@@ -639,7 +639,9 @@ $(echo -e "$EXACT_ENTRIES")                  }
 $(echo -e "$SUFFIX_ENTRIES")                  }
                   function envoy_on_request(h)
                     local a = h:headers():get(":authority") or ""
-                    local host = a:match("^([^:]+)"):lower()
+                    local m = a:match("^([^:]+)")
+                    if not m then h:respond({[":status"] = "403"}, "egress denied: missing host\n"); return end
+                    local host = m:lower()
                     if EXACT[host] then return end
                     for _, s in ipairs(SUFFIXES) do
                       if host == s:sub(2) or host:sub(-#s) == s then return end
@@ -651,7 +653,7 @@ $(echo -e "$SUFFIX_ENTRIES")                  }
               "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
               dns_cache_config:
                 name: dns_cache
-                dns_lookup_family: V4_ONLY
+                dns_lookup_family: AUTO
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -664,7 +666,7 @@ $(echo -e "$SUFFIX_ENTRIES")                  }
         "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
         dns_cache_config:
           name: dns_cache
-          dns_lookup_family: V4_ONLY
+          dns_lookup_family: AUTO
 ENVOY_CONF
 
   chmod 0400 "$CONF_OUT"

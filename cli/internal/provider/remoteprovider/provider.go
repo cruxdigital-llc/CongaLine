@@ -413,11 +413,42 @@ func (p *RemoteProvider) GetStatus(ctx context.Context, agentName string) (*prov
 		}
 		logs, _ := p.containerLogs(ctx, cName, 50)
 		status.ReadyPhase = detectReadyPhase(logs)
+
+		// Re-apply iptables egress rules if they were lost (e.g., after reboot or IP change).
+		p.ensureEgressIptables(ctx, agentName)
 	} else {
 		status.ReadyPhase = "stopped"
 	}
 
 	return status, nil
+}
+
+// ensureEgressIptables checks if iptables egress rules are in place for a running
+// container and re-applies them if missing. Handles IP changes after container restart.
+func (p *RemoteProvider) ensureEgressIptables(ctx context.Context, agentName string) {
+	egressPolicy, err := policy.LoadEgressPolicy(p.dataDir, agentName)
+	if err != nil || egressPolicy == nil || len(egressPolicy.AllowedDomains) == 0 {
+		return
+	}
+
+	cName := containerName(agentName)
+	netName := networkName(agentName)
+	if !p.networkExists(ctx, netName) {
+		return
+	}
+
+	ip, err := p.containerIPOnNetwork(ctx, cName, netName)
+	if err != nil {
+		return
+	}
+	cidr, err := p.networkSubnetCIDR(ctx, netName)
+	if err != nil {
+		return
+	}
+
+	if !p.checkEgressIptablesRules(ctx, ip, cidr) {
+		p.addEgressIptablesRules(ctx, ip, cidr)
+	}
 }
 
 func (p *RemoteProvider) GetLogs(ctx context.Context, agentName string, lines int) (string, error) {
@@ -1010,6 +1041,7 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 	// --entrypoint overrides the default Envoy entrypoint which tries to chown /dev/stdout.
 	cmd := fmt.Sprintf("docker run -d --name %s --network %s "+
 		"--cap-drop ALL --security-opt no-new-privileges --memory 128m "+
+		"--read-only --tmpfs /tmp:rw,noexec,nosuid "+
 		"--entrypoint '' "+
 		"-v %s:/etc/envoy/envoy.yaml:ro ",
 		shellQuote(proxyName), shellQuote(netName), shellQuote(confPath))

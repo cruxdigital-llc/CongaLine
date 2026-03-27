@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cruxdigital-llc/conga-line/cli/internal/provider/iptables"
 )
 
 // dockerRun executes a docker command on the remote host via SSH.
@@ -276,17 +278,10 @@ func (p *RemoteProvider) networkSubnetCIDR(ctx context.Context, network string) 
 // and Docker DNS live). Uses DROP (not REJECT) so the app sees ETIMEDOUT instead
 // of ENETUNREACH which would crash Node.js.
 func (p *RemoteProvider) addEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) error {
-	// Insert in reverse order (-I pushes to top) so final chain order is:
-	//   1. ESTABLISHED,RELATED → RETURN (allow response traffic)
-	//   2. dst=subnet → RETURN (allow proxy + intra-network)
-	//   3. DROP (block everything else)
-	cmds := fmt.Sprintf(
-		"iptables -C DOCKER-USER -s %s -j DROP 2>/dev/null || iptables -I DOCKER-USER -s %s -j DROP; "+
-			"iptables -C DOCKER-USER -s %s -d %s -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s %s -d %s -j RETURN; "+
-			"iptables -C DOCKER-USER -s %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN",
-		containerIP, containerIP,
-		containerIP, subnetCIDR, containerIP, subnetCIDR,
-		containerIP, containerIP)
+	cmds, err := iptables.AddRulesCmd(containerIP, subnetCIDR)
+	if err != nil {
+		return err
+	}
 	if _, err := p.ssh.Run(ctx, cmds); err != nil {
 		return fmt.Errorf("adding iptables egress rules for %s: %w", containerIP, err)
 	}
@@ -296,15 +291,15 @@ func (p *RemoteProvider) addEgressIptablesRules(ctx context.Context, containerIP
 // removeEgressIptablesRules removes iptables egress rules for a container IP.
 // Idempotent — ignores errors from missing rules.
 func (p *RemoteProvider) removeEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) {
-	if containerIP == "" {
+	cmds := iptables.RemoveRulesCmd(containerIP, subnetCIDR)
+	if cmds == "" {
 		return
 	}
-	cmds := fmt.Sprintf(
-		"iptables -D DOCKER-USER -s %s -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; "+
-			"iptables -D DOCKER-USER -s %s -d %s -j RETURN 2>/dev/null || true; "+
-			"iptables -D DOCKER-USER -s %s -j DROP 2>/dev/null || true",
-		containerIP,
-		containerIP, subnetCIDR,
-		containerIP)
 	p.ssh.Run(ctx, cmds)
+}
+
+// checkEgressIptablesRules checks whether all egress iptables rules exist for a container IP.
+func (p *RemoteProvider) checkEgressIptablesRules(ctx context.Context, containerIP, subnetCIDR string) bool {
+	_, err := p.ssh.Run(ctx, iptables.CheckRulesCmd(containerIP, subnetCIDR))
+	return err == nil
 }

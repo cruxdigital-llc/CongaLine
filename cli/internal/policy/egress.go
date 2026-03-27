@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+// luaEscapeString escapes characters that are special in Lua string literals.
+// Defense-in-depth: validateDomain should reject non-DNS characters, but this
+// prevents injection if validation is bypassed.
+func luaEscapeString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
+}
+
 // EgressProxyImage is the locally-built image used for egress proxy containers.
 // Built from EgressProxyBaseImage during first use (see EgressProxyDockerfile).
 const EgressProxyImage = "conga-egress-proxy"
@@ -119,18 +129,20 @@ func GenerateProxyConf(domains []string) string {
 			if base, ok := strings.CutPrefix(d, "*."); ok {
 				suffixes = append(suffixes, base)
 			} else {
-				b.WriteString(fmt.Sprintf("                    [\"%s\"] = true,\n", d))
+				b.WriteString(fmt.Sprintf("                    [\"%s\"] = true,\n", luaEscapeString(d)))
 			}
 		}
 		b.WriteString("                  }\n")
 		b.WriteString("                  local SUFFIXES = {\n")
 		for _, s := range suffixes {
-			b.WriteString(fmt.Sprintf("                    \".%s\",\n", s))
+			b.WriteString(fmt.Sprintf("                    \".%s\",\n", luaEscapeString(s)))
 		}
 		b.WriteString("                  }\n")
 		b.WriteString("                  function envoy_on_request(h)\n")
 		b.WriteString("                    local a = h:headers():get(\":authority\") or \"\"\n")
-		b.WriteString("                    local host = a:match(\"^([^:]+)\"):lower()\n")
+		b.WriteString("                    local m = a:match(\"^([^:]+)\")\n")
+		b.WriteString("                    if not m then h:respond({[\":status\"] = \"403\"}, \"egress denied: missing host\\n\"); return end\n")
+		b.WriteString("                    local host = m:lower()\n")
 		b.WriteString("                    if EXACT[host] then return end\n")
 		b.WriteString("                    for _, s in ipairs(SUFFIXES) do\n")
 		b.WriteString("                      if host == s:sub(2) or host:sub(-#s) == s then return end\n")
@@ -144,7 +156,7 @@ func GenerateProxyConf(domains []string) string {
 	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig\n")
 	b.WriteString("              dns_cache_config:\n")
 	b.WriteString("                name: dns_cache\n")
-	b.WriteString("                dns_lookup_family: V4_ONLY\n")
+	b.WriteString("                dns_lookup_family: AUTO\n")
 	b.WriteString("          - name: envoy.filters.http.router\n")
 	b.WriteString("            typed_config:\n")
 	b.WriteString("              \"@type\": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router\n")
@@ -158,7 +170,7 @@ func GenerateProxyConf(domains []string) string {
 	b.WriteString("        \"@type\": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig\n")
 	b.WriteString("        dns_cache_config:\n")
 	b.WriteString("          name: dns_cache\n")
-	b.WriteString("          dns_lookup_family: V4_ONLY\n")
+	b.WriteString("          dns_lookup_family: AUTO\n")
 
 	return b.String()
 }

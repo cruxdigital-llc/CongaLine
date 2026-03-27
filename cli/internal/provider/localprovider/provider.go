@@ -365,11 +365,42 @@ func (p *LocalProvider) GetStatus(ctx context.Context, agentName string) (*provi
 		}
 		logs, _ := containerLogs(ctx, cName, 50)
 		status.ReadyPhase = detectReadyPhase(logs)
+
+		// Re-apply iptables egress rules if they were lost (e.g., after reboot or IP change).
+		p.ensureEgressIptables(ctx, agentName)
 	} else {
 		status.ReadyPhase = "stopped"
 	}
 
 	return status, nil
+}
+
+// ensureEgressIptables checks if iptables egress rules are in place for a running
+// container and re-applies them if missing. Handles IP changes after container restart.
+func (p *LocalProvider) ensureEgressIptables(ctx context.Context, agentName string) {
+	egressPolicy, err := policy.LoadEgressPolicy(p.dataDir, agentName)
+	if err != nil || egressPolicy == nil || egressPolicy.Mode != "enforce" || len(egressPolicy.AllowedDomains) == 0 {
+		return
+	}
+
+	cName := containerName(agentName)
+	netName := networkName(agentName)
+	if !networkExists(ctx, netName) {
+		return
+	}
+
+	ip, err := containerIPOnNetwork(ctx, cName, netName)
+	if err != nil {
+		return
+	}
+	cidr, err := networkSubnetCIDR(ctx, netName)
+	if err != nil {
+		return
+	}
+
+	if !checkEgressIptablesRules(ctx, ip, cidr) {
+		addEgressIptablesRules(ctx, ip, cidr)
+	}
 }
 
 func (p *LocalProvider) GetLogs(ctx context.Context, agentName string, lines int) (string, error) {
@@ -528,20 +559,20 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	}
 
 	cName := containerName(agentName)
-	if containerExists(ctx, cName) {
-		stopContainer(ctx, cName)
-		removeContainer(ctx, cName)
-	}
-
 	netName := networkName(agentName)
 
-	// Remove old iptables egress rules before stopping container
+	// Remove old iptables egress rules before stopping container (need IP while running)
 	if containerExists(ctx, cName) && networkExists(ctx, netName) {
 		if ip, err := containerIPOnNetwork(ctx, cName, netName); err == nil {
 			if cidr, err := networkSubnetCIDR(ctx, netName); err == nil {
 				removeEgressIptablesRules(ctx, ip, cidr)
 			}
 		}
+	}
+
+	if containerExists(ctx, cName) {
+		stopContainer(ctx, cName)
+		removeContainer(ctx, cName)
 	}
 
 	p.stopAgentEgressProxy(ctx, agentName)
@@ -1043,14 +1074,23 @@ func (p *LocalProvider) Teardown(ctx context.Context) error {
 	return nil
 }
 
-// removeAgentDocker removes a single agent's container and network.
+// removeAgentDocker removes a single agent's container, iptables rules, proxy, and network.
 func (p *LocalProvider) removeAgentDocker(ctx context.Context, name string) {
 	cName := containerName(name)
 	netName := networkName(name)
+	// Remove iptables rules before stopping (need container IP while running)
+	if containerExists(ctx, cName) && networkExists(ctx, netName) {
+		if ip, err := containerIPOnNetwork(ctx, cName, netName); err == nil {
+			if cidr, err := networkSubnetCIDR(ctx, netName); err == nil {
+				removeEgressIptablesRules(ctx, ip, cidr)
+			}
+		}
+	}
 	if containerExists(ctx, cName) {
 		stopContainer(ctx, cName)
 		removeContainer(ctx, cName)
 	}
+	p.stopAgentEgressProxy(ctx, name)
 	if networkExists(ctx, netName) {
 		removeNetwork(ctx, netName)
 	}
@@ -1235,6 +1275,8 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
 		"--memory", "128m",
+		"--read-only",
+		"--tmpfs", "/tmp:rw,noexec,nosuid",
 		"--entrypoint", "",
 		"-v", fmt.Sprintf("%s:/etc/envoy/envoy.yaml:ro", confPath),
 		"-v", fmt.Sprintf("%s:/opt/entrypoint.sh:ro", entrypointPath),

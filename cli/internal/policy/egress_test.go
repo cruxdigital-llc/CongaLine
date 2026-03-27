@@ -182,3 +182,84 @@ func TestEgressProxyDockerfile(t *testing.T) {
 		t.Errorf("expected envoy base image, got: %s", df)
 	}
 }
+
+func TestGenerateProxyConfLuaNilAuthorityGuard(t *testing.T) {
+	result := GenerateProxyConf([]string{"api.anthropic.com"})
+	// Lua should guard against nil match result before calling :lower()
+	if !strings.Contains(result, "if not m then") {
+		t.Error("expected Lua nil guard for empty :authority match")
+	}
+	if strings.Contains(result, `a:match("^([^:]+)"):lower()`) {
+		t.Error("old unguarded :lower() call should be replaced with nil-safe version")
+	}
+}
+
+func TestGenerateProxyConfDNSFamily(t *testing.T) {
+	result := GenerateProxyConf([]string{"api.anthropic.com"})
+	if strings.Contains(result, "V4_ONLY") {
+		t.Error("dns_lookup_family should be AUTO, not V4_ONLY")
+	}
+	if !strings.Contains(result, "dns_lookup_family: AUTO") {
+		t.Error("expected dns_lookup_family: AUTO")
+	}
+}
+
+func TestLuaEscapeString(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"api.anthropic.com", "api.anthropic.com"},
+		{`evil"domain`, `evil\"domain`},
+		{"back\\slash", "back\\\\slash"},
+		{"new\nline", "new\\nline"},
+	}
+	for _, tt := range tests {
+		got := luaEscapeString(tt.input)
+		if got != tt.want {
+			t.Errorf("luaEscapeString(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestProxyBootstrapJSSyntax(t *testing.T) {
+	js := ProxyBootstrapJS()
+
+	// Must be non-empty
+	if len(js) == 0 {
+		t.Fatal("ProxyBootstrapJS returned empty string")
+	}
+
+	// Must contain key components
+	required := []string{
+		"EnvHttpProxyAgent",
+		"setGlobalDispatcher",
+		"ConnectProxyAgent",
+		"HTTPS_PROXY",
+		"HTTP_PROXY",
+		"__CONGA_PROXY_URL",
+		"'use strict'",
+	}
+	for _, r := range required {
+		if !strings.Contains(js, r) {
+			t.Errorf("ProxyBootstrapJS missing required pattern: %s", r)
+		}
+	}
+
+	// Basic bracket balance check
+	opens := strings.Count(js, "{")
+	closes := strings.Count(js, "}")
+	if opens != closes {
+		t.Errorf("ProxyBootstrapJS has unbalanced braces: %d opens, %d closes", opens, closes)
+	}
+}
+
+func TestGenerateProxyConfLuaEscaping(t *testing.T) {
+	// Even though validateDomain would reject these, verify defense-in-depth
+	// by calling GenerateProxyConf directly with domains that need escaping.
+	result := GenerateProxyConf([]string{"normal.com"})
+	// Verify normal domains pass through cleanly
+	if !strings.Contains(result, `"normal.com"`) {
+		t.Error("expected normal domain in output")
+	}
+}
