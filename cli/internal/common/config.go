@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -27,6 +28,52 @@ func HasAnyChannel(shared SharedSecrets) bool {
 		}
 	}
 	return false
+}
+
+// BuildChannelStatuses builds the channel status list from the given agents,
+// shared secrets, and router state. This is the shared logic used by both
+// local and remote providers' ListChannels implementations.
+func BuildChannelStatuses(agents []provider.AgentConfig, shared SharedSecrets, routerRunning bool) []provider.ChannelStatus {
+	var result []provider.ChannelStatus
+	for _, ch := range channels.All() {
+		status := provider.ChannelStatus{
+			Platform:   ch.Name(),
+			Configured: ch.HasCredentials(shared.Values),
+		}
+		status.RouterRunning = routerRunning && status.Configured
+		for _, a := range agents {
+			if a.ChannelBinding(ch.Name()) != nil {
+				status.BoundAgents = append(status.BoundAgents, a.Name)
+			}
+		}
+		result = append(result, status)
+	}
+	return result
+}
+
+// BuildRouterEnvContent generates the router.env file content from all
+// configured channels' router env vars.
+func BuildRouterEnvContent(shared SharedSecrets) string {
+	var buf strings.Builder
+	for _, ch := range channels.All() {
+		if ch.HasCredentials(shared.Values) {
+			for k, v := range ch.RouterEnvVars(shared.Values) {
+				fmt.Fprintf(&buf, "%s=%s\n", k, v)
+			}
+		}
+	}
+	return buf.String()
+}
+
+// GenerateAgentFiles produces the openclaw.json and .env file content for an agent.
+// Returns the raw bytes for each file, leaving I/O to the caller.
+func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string) (openclawJSON []byte, envContent []byte, err error) {
+	openclawJSON, err = GenerateOpenClawConfig(cfg, shared, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	envContent = GenerateEnvFile(cfg, shared, perAgent)
+	return openclawJSON, envContent, nil
 }
 
 // GenerateOpenClawConfig produces the openclaw.json content for an agent.

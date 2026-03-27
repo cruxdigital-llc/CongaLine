@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	posixpath "path"
-	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
@@ -139,21 +138,7 @@ func (p *RemoteProvider) ListChannels(ctx context.Context) ([]provider.ChannelSt
 		return nil, fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	var result []provider.ChannelStatus
-	for _, ch := range channels.All() {
-		status := provider.ChannelStatus{
-			Platform:   ch.Name(),
-			Configured: ch.HasCredentials(shared.Values),
-		}
-		status.RouterRunning = routerRunning && status.Configured
-		for _, a := range agents {
-			if a.ChannelBinding(ch.Name()) != nil {
-				status.BoundAgents = append(status.BoundAgents, a.Name)
-			}
-		}
-		result = append(result, status)
-	}
-	return result, nil
+	return common.BuildChannelStatuses(agents, shared, routerRunning), nil
 }
 
 // BindChannel adds a channel binding to an existing agent on the remote host.
@@ -278,18 +263,16 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 		return err
 	}
 
-	openClawJSON, err := common.GenerateOpenClawConfig(cfg, shared, "")
+	openClawJSON, envContent, err := common.GenerateAgentFiles(cfg, shared, perAgent)
 	if err != nil {
 		return err
 	}
+
 	dataDir := p.remoteDataSubDir(cfg.Name)
 	if err := p.ssh.Upload(posixpath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
 		return err
 	}
-
-	envContent := common.GenerateEnvFile(cfg, shared, perAgent)
-	envPath := posixpath.Join(p.remoteConfigDir(), cfg.Name+".env")
-	if err := p.ssh.Upload(envPath, envContent, 0400); err != nil {
+	if err := p.ssh.Upload(posixpath.Join(p.remoteConfigDir(), cfg.Name+".env"), envContent, 0400); err != nil {
 		return err
 	}
 
@@ -307,16 +290,7 @@ func (p *RemoteProvider) writeRouterEnv() error {
 		return err
 	}
 
-	var buf strings.Builder
-	for _, ch := range channels.All() {
-		if ch.HasCredentials(shared.Values) {
-			for k, v := range ch.RouterEnvVars(shared.Values) {
-				fmt.Fprintf(&buf, "%s=%s\n", k, v)
-			}
-		}
-	}
-
 	routerEnvPath := posixpath.Join(p.remoteConfigDir(), "router.env")
-	return p.ssh.Upload(routerEnvPath, []byte(buf.String()), 0400)
+	return p.ssh.Upload(routerEnvPath, []byte(common.BuildRouterEnvContent(shared)), 0400)
 }
 

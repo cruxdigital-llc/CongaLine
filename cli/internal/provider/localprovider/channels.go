@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
@@ -140,21 +139,7 @@ func (p *LocalProvider) ListChannels(ctx context.Context) ([]provider.ChannelSta
 		return nil, fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	var result []provider.ChannelStatus
-	for _, ch := range channels.All() {
-		status := provider.ChannelStatus{
-			Platform:   ch.Name(),
-			Configured: ch.HasCredentials(shared.Values),
-		}
-		status.RouterRunning = routerRunning && status.Configured
-		for _, a := range agents {
-			if a.ChannelBinding(ch.Name()) != nil {
-				status.BoundAgents = append(status.BoundAgents, a.Name)
-			}
-		}
-		result = append(result, status)
-	}
-	return result, nil
+	return common.BuildChannelStatuses(agents, shared, routerRunning), nil
 }
 
 // BindChannel adds a channel binding to an existing agent.
@@ -279,18 +264,16 @@ func (p *LocalProvider) regenerateAgentConfig(ctx context.Context, cfg provider.
 		return err
 	}
 
-	openClawJSON, err := common.GenerateOpenClawConfig(cfg, shared, "")
+	openClawJSON, envContent, err := common.GenerateAgentFiles(cfg, shared, perAgent)
 	if err != nil {
 		return err
 	}
+
 	dataDir := p.dataSubDir(cfg.Name)
 	if err := os.WriteFile(filepath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
 		return err
 	}
-
-	envContent := common.GenerateEnvFile(cfg, shared, perAgent)
-	envPath := filepath.Join(p.configDir(), cfg.Name+".env")
-	if err := os.WriteFile(envPath, envContent, 0400); err != nil {
+	if err := os.WriteFile(filepath.Join(p.configDir(), cfg.Name+".env"), envContent, 0400); err != nil {
 		return err
 	}
 
@@ -308,16 +291,7 @@ func (p *LocalProvider) writeRouterEnv() error {
 		return err
 	}
 
-	var buf strings.Builder
-	for _, ch := range channels.All() {
-		if ch.HasCredentials(shared.Values) {
-			for k, v := range ch.RouterEnvVars(shared.Values) {
-				fmt.Fprintf(&buf, "%s=%s\n", k, v)
-			}
-		}
-	}
-
 	routerEnvPath := filepath.Join(p.configDir(), "router.env")
-	return os.WriteFile(routerEnvPath, []byte(buf.String()), 0400)
+	return os.WriteFile(routerEnvPath, []byte(common.BuildRouterEnvContent(shared)), 0400)
 }
 
