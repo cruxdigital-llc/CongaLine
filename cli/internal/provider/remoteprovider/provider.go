@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -321,7 +320,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	}
 
 	// 10. Restart router if any channel has credentials so it picks up updated routing.json
-	if hasAnyChannel(shared) {
+	if common.HasAnyChannel(shared) {
 		p.restartRouter(ctx)
 	}
 
@@ -379,7 +378,7 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 	// Restart router to pick up removed agent from routing.json
 	shared, _ := p.readSharedSecrets()
-	if hasAnyChannel(shared) {
+	if common.HasAnyChannel(shared) {
 		p.restartRouter(ctx)
 	}
 	return nil
@@ -713,7 +712,7 @@ func (p *RemoteProvider) RefreshAll(ctx context.Context) error {
 
 	// Regenerate routing.json before restarting the router
 	shared, _ := p.readSharedSecrets()
-	if hasAnyChannel(shared) {
+	if common.HasAnyChannel(shared) {
 		if err := p.regenerateRouting(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to regenerate routing: %v\n", err)
 		}
@@ -810,7 +809,9 @@ func (p *RemoteProvider) CycleHost(ctx context.Context) error {
 	fmt.Println("Restarting...")
 
 	p.ensureEgressProxy(ctx)
-	p.ensureRouter(ctx)
+	if err := p.ensureRouter(ctx, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
+	}
 
 	for _, a := range agents {
 		if a.Paused {
@@ -904,18 +905,26 @@ func (p *RemoteProvider) cleanupDockerByPrefix(ctx context.Context) {
 // the latest routing.json (which is a read-only bind mount).
 func (p *RemoteProvider) restartRouter(ctx context.Context) {
 	if p.containerExists(ctx, routerContainer) {
-		p.removeContainer(ctx, routerContainer)
+		if err := p.removeContainer(ctx, routerContainer); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove router container: %v\n", err)
+		}
 	}
-	p.ensureRouter(ctx)
+	if err := p.ensureRouter(ctx, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
+	}
 }
 
-func (p *RemoteProvider) ensureRouter(ctx context.Context) {
+// ensureRouter starts or restarts the router container on the remote host.
+// If restart is true and the router is already running, it is replaced to pick up config changes.
+func (p *RemoteProvider) ensureRouter(ctx context.Context, restart bool) error {
 	if p.containerExists(ctx, routerContainer) {
 		state, err := p.inspectState(ctx, routerContainer)
-		if err == nil && state.Running {
-			return
+		if err == nil && state.Running && !restart {
+			return nil // already running, no restart requested
 		}
-		p.removeContainer(ctx, routerContainer)
+		if err := p.removeContainer(ctx, routerContainer); err != nil {
+			return fmt.Errorf("failed to remove existing router container: %w", err)
+		}
 	}
 
 	routerEnvPath := posixpath.Join(p.remoteConfigDir(), "router.env")
@@ -925,14 +934,12 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context) {
 	_, err := p.ssh.Run(ctx, fmt.Sprintf("test -f %s",
 		shellQuote(posixpath.Join(p.remoteRouterDir(), "src", "index.js"))))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: router source not found on remote host — router not started\n")
-		return
+		return fmt.Errorf("router source not found on remote host at %s", p.remoteRouterDir())
 	}
 	// Check router env exists
 	_, err = p.ssh.Run(ctx, fmt.Sprintf("test -f %s", shellQuote(routerEnvPath)))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: router.env not found — router not started\n")
-		return
+		return fmt.Errorf("router.env not found — run 'conga channels add' first")
 	}
 
 	// Install npm dependencies if node_modules is missing
@@ -942,8 +949,7 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context) {
 		installCmd := fmt.Sprintf("docker run --rm -v %s:/app -w /app node:22-alpine npm install --production 2>&1",
 			shellQuote(p.remoteRouterDir()))
 		if out, err := p.ssh.Run(ctx, installCmd); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: npm install failed: %v\n%s\n", err, out)
-			return
+			return fmt.Errorf("npm install failed: %v\n%s", err, out)
 		}
 	}
 
@@ -953,16 +959,21 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context) {
 		RouterDir:   p.remoteRouterDir(),
 		RoutingJSON: routingPath,
 	}); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to start router: %v\n", err)
-		return
+		return fmt.Errorf("failed to start router: %w", err)
 	}
 
-	agents, _ := p.ListAgents(ctx)
+	agents, err := p.ListAgents(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list agents for router network connections: %v\n", err)
+	}
 	for _, a := range agents {
-		p.connectNetwork(ctx, networkName(a.Name), routerContainer)
+		if err := p.connectNetwork(ctx, networkName(a.Name), routerContainer); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to connect router to %s network: %v\n", a.Name, err)
+		}
 	}
 
 	fmt.Println("  Router started.")
+	return nil
 }
 
 func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
@@ -1060,6 +1071,15 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 
 	if _, err := p.ssh.Run(ctx, cmd); err != nil {
 		return fmt.Errorf("starting egress proxy: %w", err)
+	}
+
+	// Connect proxy to the egress network so it can reach the internet.
+	// The proxy is started on the agent network (so the agent can reach it),
+	// but also needs external connectivity to forward traffic upstream.
+	if p.networkExists(ctx, egressNetwork) {
+		if err := p.connectNetwork(ctx, egressNetwork, proxyName); err != nil {
+			return fmt.Errorf("connecting egress proxy to egress network: %w", err)
+		}
 	}
 
 	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(domains))
@@ -1194,14 +1214,4 @@ func generateToken() (string, error) {
 		return "", fmt.Errorf("failed to generate token: %w", err)
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// hasAnyChannel returns true if any registered channel has its required credentials.
-func hasAnyChannel(shared common.SharedSecrets) bool {
-	for _, ch := range channels.All() {
-		if ch.HasCredentials(shared.Values) {
-			return true
-		}
-	}
-	return false
 }

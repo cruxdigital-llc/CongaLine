@@ -278,10 +278,14 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	}
 
 	// 10. Ensure router is running and connected (only if any channel has credentials)
-	if hasAnyChannel(shared) {
-		p.ensureRouter(ctx)
+	if common.HasAnyChannel(shared) {
+		if err := p.ensureRouter(ctx, false); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
+		}
 		if containerExists(ctx, routerContainer) {
-			connectNetwork(ctx, netName, routerContainer)
+			if err := connectNetwork(ctx, netName, routerContainer); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to connect router to agent network: %v\n", err)
+			}
 		}
 	}
 
@@ -845,30 +849,15 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		changed++
 	}
 
-	// --- Shared secrets (all optional — channels not required for gateway-only mode) ---
+	// --- Shared secrets (non-channel only — channel secrets are managed via `conga channels add`) ---
 	type secretItem struct {
 		name, description string
 		isSecret          bool
 	}
-	var secretItems []secretItem
-
-	// Collect secrets from all registered channels
-	for _, ch := range channels.All() {
-		for _, def := range ch.SharedSecrets() {
-			secretItems = append(secretItems, secretItem{
-				name:        def.Name,
-				description: def.Prompt,
-				isSecret:    true,
-			})
-		}
+	secretItems := []secretItem{
+		{"google-client-id", "Google OAuth client ID", false},
+		{"google-client-secret", "Google OAuth client secret", true},
 	}
-	// Non-channel shared secrets
-	secretItems = append(secretItems,
-		secretItem{"google-client-id", "Google OAuth client ID", false},
-		secretItem{"google-client-secret", "Google OAuth client secret", true},
-	)
-
-	fmt.Println("\nChannel integration is optional. Skip all tokens to run in gateway-only mode (web UI).")
 
 	for _, item := range secretItems {
 		path := filepath.Join(p.sharedSecretsDir(), item.name)
@@ -982,24 +971,27 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 	// --- Start egress proxy ---
 	p.ensureEgressProxy(ctx)
 
-	// --- Router (only if any channel has credentials) ---
-	shared, _ := p.readSharedSecrets()
-	if hasAnyChannel(shared) {
-		routerEnvPath := filepath.Join(p.configDir(), "router.env")
-		var routerEnvBuf strings.Builder
+	// --- Auto-configure channels if secrets were provided in SetupConfig (backwards compat) ---
+	if cfg != nil {
 		for _, ch := range channels.All() {
-			if ch.HasCredentials(shared.Values) {
-				for k, v := range ch.RouterEnvVars(shared.Values) {
-					fmt.Fprintf(&routerEnvBuf, "%s=%s\n", k, v)
+			channelSecrets := map[string]string{}
+			hasRequired := true
+			for _, def := range ch.SharedSecrets() {
+				val := cfg.SecretValue(def.Name)
+				if val != "" {
+					channelSecrets[def.Name] = val
+				} else if def.Required {
+					hasRequired = false
+					break
+				}
+			}
+			if hasRequired && len(channelSecrets) > 0 {
+				fmt.Printf("\nAuto-configuring %s channel from provided secrets...\n", ch.Name())
+				if err := p.AddChannel(ctx, ch.Name(), channelSecrets); err != nil {
+					return fmt.Errorf("auto-configure %s channel: %w", ch.Name(), err)
 				}
 			}
 		}
-		if err := os.WriteFile(routerEnvPath, []byte(routerEnvBuf.String()), 0400); err != nil {
-			return fmt.Errorf("failed to write router env file: %w", err)
-		}
-		p.ensureRouter(ctx)
-	} else {
-		fmt.Println("\nNo channel credentials configured — router skipped. Agents will run in gateway-only mode (web UI).")
 	}
 
 	// --- Save provider config ---
@@ -1017,8 +1009,9 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		fmt.Println("\nAll values already configured.")
 	}
 	fmt.Println("\nLocal deployment ready! Next steps:")
-	fmt.Println("  conga admin add-user <name> [--channel slack:U0123456789]    # channel optional for gateway-only mode")
-	fmt.Println("  conga admin add-team <name> [--channel slack:C0123456789]    # channel optional for gateway-only mode")
+	fmt.Println("  conga channels add slack                                     # optional: add Slack integration")
+	fmt.Println("  conga admin add-user <name>                                  # provision an agent")
+	fmt.Println("  conga channels bind <name> slack:<id>                        # optional: bind agent to Slack")
 	return nil
 }
 
@@ -1041,7 +1034,9 @@ func (p *LocalProvider) CycleHost(ctx context.Context) error {
 
 	// Restart infrastructure containers
 	p.ensureEgressProxy(ctx)
-	p.ensureRouter(ctx)
+	if err := p.ensureRouter(ctx, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
+	}
 
 	// Restart agents
 	for _, a := range agents {
@@ -1141,15 +1136,18 @@ func (p *LocalProvider) cleanupDockerByPrefix(ctx context.Context) {
 
 // --- infrastructure helpers ---
 
-// ensureRouter starts the router container if it's not already running.
-func (p *LocalProvider) ensureRouter(ctx context.Context) {
+// ensureRouter starts or restarts the router container.
+// If restart is true and the router is already running, it is replaced to pick up config changes.
+func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 	if containerExists(ctx, routerContainer) {
 		state, err := inspectState(ctx, routerContainer)
-		if err == nil && state.Running {
-			return // already running
+		if err == nil && state.Running && !restart {
+			return nil // already running, no restart requested
 		}
-		// Exists but not running — remove and recreate
-		removeContainer(ctx, routerContainer)
+		// Exists but not running (or restart requested) — remove and recreate
+		if err := removeContainer(ctx, routerContainer); err != nil {
+			return fmt.Errorf("failed to remove existing router container: %w", err)
+		}
 	}
 
 	routerEnvPath := filepath.Join(p.configDir(), "router.env")
@@ -1157,12 +1155,10 @@ func (p *LocalProvider) ensureRouter(ctx context.Context) {
 
 	// Check required files exist
 	if _, err := os.Stat(filepath.Join(p.routerDir(), "src", "index.js")); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: router source not found at %s — router not started\n", p.routerDir())
-		return
+		return fmt.Errorf("router source not found at %s", p.routerDir())
 	}
 	if _, err := os.Stat(routerEnvPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: router.env not found — router not started\n")
-		return
+		return fmt.Errorf("router.env not found — run 'conga channels add' first")
 	}
 
 	fmt.Println("Starting router...")
@@ -1171,17 +1167,22 @@ func (p *LocalProvider) ensureRouter(ctx context.Context) {
 		RouterDir:   p.routerDir(),
 		RoutingJSON: routingPath,
 	}); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to start router: %v\n", err)
-		return
+		return fmt.Errorf("failed to start router: %w", err)
 	}
 
 	// Connect router to all existing agent networks
-	agents, _ := p.ListAgents(ctx)
+	agents, err := p.ListAgents(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list agents for router network connections: %v\n", err)
+	}
 	for _, a := range agents {
-		connectNetwork(ctx, networkName(a.Name), routerContainer)
+		if err := connectNetwork(ctx, networkName(a.Name), routerContainer); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to connect router to %s network: %v\n", a.Name, err)
+		}
 	}
 
 	fmt.Println("  Router started.")
+	return nil
 }
 
 // ensureEgressProxy starts the egress proxy if not already running.
@@ -1296,6 +1297,15 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 	_, err := dockerRun(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("starting egress proxy: %w", err)
+	}
+
+	// Connect proxy to the egress network so it can reach the internet.
+	// The proxy is started on the agent network (so the agent can reach it),
+	// but also needs external connectivity to forward traffic upstream.
+	if networkExists(ctx, egressNetwork) {
+		if err := connectNetwork(ctx, egressNetwork, proxyName); err != nil {
+			return fmt.Errorf("connecting egress proxy to egress network: %w", err)
+		}
 	}
 
 	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(domains))
@@ -1497,14 +1507,4 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(dstPath, data, 0644)
 	})
-}
-
-// hasAnyChannel returns true if any registered channel has its required credentials.
-func hasAnyChannel(shared common.SharedSecrets) bool {
-	for _, ch := range channels.All() {
-		if ch.HasCredentials(shared.Values) {
-			return true
-		}
-	}
-	return false
 }
