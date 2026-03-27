@@ -493,4 +493,3 @@ egress:
 		t.Errorf("deployed len = %d, want 2", len(dr.Deployed))
 	}
 }
-
