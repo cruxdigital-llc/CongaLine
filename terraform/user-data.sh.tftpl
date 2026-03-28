@@ -826,7 +826,7 @@ for OLD_UNIT in /etc/systemd/system/conga-*.service; do
   echo "Stopping previous agent: $UNIT_NAME"
   # Clean up egress iptables rules before stopping (need container IP while running)
   AGENT_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$UNIT_NAME" 2>/dev/null || echo "")
-  AGENT_NET="${UNIT_NAME#conga-}"
+  AGENT_NET="$${UNIT_NAME#conga-}"
   NET_CIDR=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "conga-$AGENT_NET" 2>/dev/null || echo "")
   if [ -n "$AGENT_IP" ] && [ -n "$NET_CIDR" ]; then
     iptables -D DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
