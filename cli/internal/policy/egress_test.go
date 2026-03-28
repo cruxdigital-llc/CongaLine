@@ -51,6 +51,28 @@ agents:
 	}
 }
 
+func TestLoadEgressPolicyDefaultModeIsEnforce(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `
+apiVersion: conga.dev/v1alpha1
+egress:
+  allowed_domains:
+    - api.anthropic.com
+`
+	os.WriteFile(filepath.Join(dir, "conga-policy.yaml"), []byte(yaml), 0644)
+
+	ep, err := LoadEgressPolicy(dir, "agent1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ep == nil {
+		t.Fatal("expected non-nil egress policy")
+	}
+	if ep.Mode != "enforce" {
+		t.Errorf("expected default mode 'enforce' via LoadEgressPolicy, got %q", ep.Mode)
+	}
+}
+
 func TestLoadEgressPolicyNoEgressSection(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `apiVersion: conga.dev/v1alpha1`
@@ -305,6 +327,20 @@ func TestGenerateProxyConfValidateMode(t *testing.T) {
 	}
 	if !strings.Contains(result, `logWarn("egress-validate: would deny "`) {
 		t.Error("expected logWarn for would-be-denied requests in validate mode")
+	}
+}
+
+func TestGenerateProxyConfValidateModeLogsOnMissingHost(t *testing.T) {
+	domains := []string{"api.anthropic.com"}
+	result, err := GenerateProxyConf(domains, "validate")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, `logWarn("egress-validate: would deny (missing host)")`) {
+		t.Error("validate mode should log warning for missing host")
+	}
+	if strings.Contains(result, `if not m then return end`) {
+		t.Error("validate mode should not silently return on missing host")
 	}
 }
 

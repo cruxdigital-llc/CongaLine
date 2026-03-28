@@ -50,36 +50,50 @@ func getStringSlice(req mcp.CallToolRequest, key string) ([]string, error) {
 		return nil, fmt.Errorf("%s must be an array, got %T", key, raw)
 	}
 	result := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if s, ok := v.(string); ok {
-			result = append(result, s)
+	for i, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be a string, got %T", key, i, v)
 		}
+		result = append(result, s)
 	}
 	return result, nil
 }
 
 // getCostLimits extracts a CostLimits from the raw MCP request arguments.
-func getCostLimits(req mcp.CallToolRequest) *policy.CostLimits {
+func getCostLimits(req mcp.CallToolRequest) (*policy.CostLimits, error) {
 	args := req.GetArguments()
 	raw, ok := args["cost_limits"]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	m, ok := raw.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("cost_limits must be an object, got %T", raw)
 	}
 	cl := &policy.CostLimits{}
-	if v, ok := m["daily_per_agent"].(float64); ok {
-		cl.DailyPerAgent = v
+	if v, exists := m["daily_per_agent"]; exists {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("cost_limits.daily_per_agent must be a number, got %T", v)
+		}
+		cl.DailyPerAgent = f
 	}
-	if v, ok := m["monthly_per_agent"].(float64); ok {
-		cl.MonthlyPerAgent = v
+	if v, exists := m["monthly_per_agent"]; exists {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("cost_limits.monthly_per_agent must be a number, got %T", v)
+		}
+		cl.MonthlyPerAgent = f
 	}
-	if v, ok := m["monthly_global"].(float64); ok {
-		cl.MonthlyGlobal = v
+	if v, exists := m["monthly_global"]; exists {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("cost_limits.monthly_global must be a number, got %T", v)
+		}
+		cl.MonthlyGlobal = f
 	}
-	return cl
+	return cl, nil
 }
 
 // --- Read-only tools ---
@@ -311,10 +325,14 @@ func (s *Server) toolPolicySetRouting() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			costLimits, err := getCostLimits(req)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			patch := &policy.RoutingPolicy{
 				DefaultModel:  req.GetString("default_model", ""),
 				FallbackChain: fallbackChain,
-				CostLimits:    getCostLimits(req),
+				CostLimits:    costLimits,
 			}
 
 			policy.SetRouting(pf, req.GetString("agent", ""), patch)
@@ -402,9 +420,10 @@ func (s *Server) toolPolicySetPosture() server.ServerTool {
 // --- Deploy tool ---
 
 type deployResult struct {
-	Validated bool     `json:"validated"`
-	Deployed  []string `json:"deployed"`
-	Errors    []string `json:"errors,omitempty"`
+	Validated      bool     `json:"validated"`
+	Deployed       []string `json:"deployed"`
+	Errors         []string `json:"errors,omitempty"`
+	PartialFailure bool     `json:"partial_failure,omitempty"`
 }
 
 func (s *Server) toolPolicyDeploy() server.ServerTool {
@@ -517,9 +536,10 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 				return mcp.NewToolResultError(fmt.Sprintf("deploy failed for all agents: %s", strings.Join(errors, "; "))), nil
 			}
 			result := deployResult{
-				Validated: true,
-				Deployed:  deployed,
-				Errors:    errors,
+				Validated:      true,
+				Deployed:       deployed,
+				Errors:         errors,
+				PartialFailure: len(errors) > 0,
 			}
 			return jsonResult(result)
 		},

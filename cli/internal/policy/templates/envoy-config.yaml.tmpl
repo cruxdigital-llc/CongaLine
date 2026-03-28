@@ -43,7 +43,7 @@ static_resources:
                     local a = h:headers():get(":authority") or ""
                     local m = a:match("^([^:]+)")
 {{- if .ValidateMode}}
-                    if not m then return end
+                    if not m then h:logWarn("egress-validate: would deny (missing host)"); return end
 {{- else}}
                     if not m then h:respond({[":status"] = "403"}, "egress denied: missing host\n"); return end
 {{- end}}

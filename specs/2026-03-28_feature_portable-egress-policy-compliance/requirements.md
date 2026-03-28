@@ -17,8 +17,7 @@ The policy schema spec (Feature 12) established that `conga-policy.yaml` is a po
 
 1. Default `mode` is `enforce` (security-first). Operators must explicitly set `mode: validate` to disable enforcement.
 2. When `mode: validate`, all three providers:
-   - Log a warning about unenforced egress rules
-   - Do NOT start the egress proxy container
+   - Start the egress proxy in logging-only mode (Lua filter logs via `logWarn`, no 403 deny)
    - Do NOT apply iptables DROP rules
    - Report `validate-only` in `EnforcementReport()`
 3. When `mode: enforce` (or empty/default), all three providers:

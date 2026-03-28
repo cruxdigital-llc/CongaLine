@@ -63,5 +63,6 @@
 1. `normalizeDefaults()` placed in `Load()` with agent override handling — cleaner than spec
 2. `e.Mode != "validate"` instead of `== "enforce"` — handles direct struct construction edge case
 3. `refresh-all.sh.tmpl` not updated — systemd hooks handle it automatically
+4. Validate mode uses Lua log-and-allow filter with full domain list (Phase 3b design), not passthrough-no-filter (Phase 2 design). Phase 3b superseded Phase 2's approach — provides better operational visibility
 
 **Status: VERIFIED**

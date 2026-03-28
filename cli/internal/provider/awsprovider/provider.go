@@ -539,7 +539,7 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 	if result.Status != "Success" {
 		return fmt.Errorf("deploy-egress failed:\n%s\n%s", result.Stdout, result.Stderr)
 	}
-	fmt.Println(result.Stdout)
+	fmt.Fprintln(os.Stderr, result.Stdout)
 	return nil
 }
 

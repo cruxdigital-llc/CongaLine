@@ -39,8 +39,10 @@ if ! docker image inspect conga-egress-proxy >/dev/null 2>&1; then
   cat > /tmp/conga-egress-build/Dockerfile << 'PROXYDF'
 FROM envoyproxy/envoy:v1.32-latest
 PROXYDF
+  trap 'rm -rf /tmp/conga-egress-build' EXIT
   docker build -t conga-egress-proxy /tmp/conga-egress-build
   rm -rf /tmp/conga-egress-build
+  trap - EXIT
 fi
 
 # Stop existing proxy if running
@@ -87,18 +89,28 @@ if [ -f "$UNIT_FILE" ]; then
   # Add proxy env vars if not already present
   if ! grep -q "HTTPS_PROXY" "$UNIT_FILE"; then
     sed -i "s|--pids-limit|-e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1 --pids-limit|" "$UNIT_FILE"
+    if ! grep -q "HTTPS_PROXY" "$UNIT_FILE"; then
+      echo "ERROR: Failed to inject HTTPS_PROXY into $UNIT_FILE — sed pattern '--pids-limit' not found"
+      exit 1
+    fi
   fi
   # Add proxy bootstrap mount + NODE_OPTIONS if not already present
   if ! grep -q "proxy-bootstrap" "$UNIT_FILE"; then
     sed -i "s|--pids-limit|-v $BOOTSTRAP_PATH:/opt/proxy-bootstrap.js:ro --pids-limit|" "$UNIT_FILE"
     sed -i 's|NODE_OPTIONS="--max-old-space-size=1536"|NODE_OPTIONS="--max-old-space-size=1536 --require /opt/proxy-bootstrap.js"|' "$UNIT_FILE"
+    if ! grep -q "proxy-bootstrap" "$UNIT_FILE"; then
+      echo "ERROR: Failed to inject proxy-bootstrap mount into $UNIT_FILE"
+      exit 1
+    fi
   fi
   systemctl daemon-reload
   systemctl restart "conga-$AGENT_NAME"
   echo "Agent container restarted with HTTPS_PROXY"
 
-  # Reconnect router
-  docker network connect "$AGENT_NET" conga-router 2>/dev/null || true
+  # Reconnect router to agent network (lost on container restart)
+  if ! docker network connect "$AGENT_NET" conga-router 2>&1; then
+    echo "WARNING: Failed to reconnect router to $AGENT_NET — Slack events may not reach $AGENT_NAME"
+  fi
 
   # Apply iptables (enforce mode only)
   if [ "$EGRESS_MODE" = "enforce" ]; then

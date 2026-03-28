@@ -6,8 +6,8 @@ Fix all three providers to consistently respect the `mode` field in `conga-polic
 
 This spec aligns all three providers. The egress proxy is **always deployed** when domains are defined, regardless of mode. The `mode` field controls enforcement intensity:
 
-- **`validate`**: Proxy deployed in **passthrough mode** (all traffic forwarded, no domain filtering). `HTTPS_PROXY` set on agent. No iptables DROP rules. Traffic travels through all layers but nothing is blocked.
-- **`enforce`** (default): Proxy deployed with **domain filtering** (Lua allowlist). `HTTPS_PROXY` set on agent. iptables DROP rules applied (hard enforcement — bypassing the proxy is impossible).
+- **`validate`**: Proxy deployed with **Lua domain-match logging** (`logWarn`, not 403). `HTTPS_PROXY` set on agent. No iptables DROP rules. Traffic is evaluated against the allowlist and violations are logged, but all requests are allowed through.
+- **`enforce`** (default): Proxy deployed with **domain filtering** (Lua allowlist, 403 deny). `HTTPS_PROXY` set on agent. iptables DROP rules applied (hard enforcement — bypassing the proxy is impossible).
 
 **Default mode is `enforce`** — security-first. Operators who want warn-only must explicitly set `mode: validate`.
 
@@ -49,7 +49,7 @@ The key design change: **proxy deployment** and **iptables enforcement** are sep
 - `egressProxy`: true when domains are defined (ANY mode) — deploy proxy, set HTTPS_PROXY
 - `egressEnforce`: true only when `mode == "enforce"` — apply iptables DROP rules, use domain filtering in proxy
 
-When `egressProxy` is true but `egressEnforce` is false (validate mode), the proxy is started with **no domains** passed to `GenerateProxyConf()` / `generate_egress_conf()`, which generates a passthrough config (the Lua filter block is omitted). Traffic flows through the proxy but is never blocked.
+When `egressProxy` is true but `egressEnforce` is false (validate mode), the proxy is started with the full domain list and `mode=validate`. `GenerateProxyConf()` / `generate_egress_conf()` generates a Lua filter that evaluates domains and logs warnings via `logWarn` but allows all traffic through. (This supersedes the original Phase 2 passthrough design — Phase 3b's log-and-allow approach provides better operational visibility.)
 
 ### 2.1 Local Provider — `ProvisionAgent` and `RefreshAgent`
 
@@ -83,7 +83,7 @@ if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
 
 Then update all proxy-related code to use `egressProxy` instead of `egressEnforce`:
 - Start proxy: `if egressProxy` (always when domains defined)
-- Pass domains to proxy: `if egressEnforce` pass `EffectiveAllowedDomains()`, else pass `nil` (passthrough)
+- Pass domains to proxy: always pass `EffectiveAllowedDomains()` with `mode` (Lua filter logs in validate, denies in enforce)
 - Set HTTPS_PROXY on container: `if egressProxy`
 - Write proxy bootstrap JS: `if egressProxy`
 - Apply iptables: `if egressEnforce` (unchanged)
@@ -147,19 +147,15 @@ fi
 EFFECTIVE_MODE="${EFFECTIVE_MODE:-enforce}"
 ```
 
-### 3.2 Generate passthrough config in validate mode
+### 3.2 Generate log-and-allow config in validate mode
 
-At the end of `generate_egress_conf()`, before the domain list is written into the Envoy config, add mode-based behavior:
+> **Note:** This section was superseded by Phase 3b during implementation. Validate mode uses a Lua filter with `logWarn` (not passthrough/no-filter).
 
-```bash
-# In validate mode, generate passthrough config (no Lua filter = all traffic forwarded)
-if [ "$EFFECTIVE_MODE" != "enforce" ]; then
-    log "Egress proxy for $AGENT_NAME in validate mode (passthrough — all traffic forwarded)."
-    DOMAINS=""  # Empty domains = passthrough config (no Lua filter block)
-fi
-```
+At the end of `generate_egress_conf()`, the mode determines the Lua deny action:
+- `validate`: `h:logWarn("egress-validate: would deny " .. host)` (log and allow)
+- `enforce`: `h:respond({[":status"] = "403"}, "egress denied: " .. host)` (deny)
 
-This means the proxy is **always started** when domains are defined. In validate mode, the Envoy config omits the Lua domain filter, so all CONNECT requests are forwarded. In enforce mode, the Lua filter restricts to the allowlist.
+The proxy is **always started** when domains are defined. In both modes, the Lua filter evaluates every request against the allowlist. The difference is the action taken for non-allowlisted requests.
 
 ### 3.3 Proxy startup is no longer gated on mode
 
@@ -546,7 +542,7 @@ In the `conga-policy.yaml.example` comment reference in the Secrets section, no 
 | Scenario | Expected Behavior |
 |----------|------------------|
 | No `mode` field in YAML | Defaults to `enforce` (proxy with domain filtering + iptables) |
-| `mode: validate` with domains | All providers: proxy deployed in passthrough mode, HTTPS_PROXY set, no iptables |
+| `mode: validate` with domains | All providers: proxy deployed with Lua domain-match logging (logWarn, not 403), HTTPS_PROXY set, no iptables |
 | `mode: enforce` with domains | All providers: proxy with domain filtering, HTTPS_PROXY set, iptables DROP rules |
 | `mode: enforce` with no domains | No proxy (no domains = nothing to proxy) |
 | `mode: validate` with no domains | No proxy (no domains = nothing to proxy) |

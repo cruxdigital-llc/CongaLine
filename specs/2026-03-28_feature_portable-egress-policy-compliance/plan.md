@@ -38,7 +38,7 @@ The local provider already implements correct mode-checking. The remote provider
 ## Test Plan
 - Unit: enforcement report returns correct level for all provider/mode combinations
 - Unit: default mode normalization resolves empty to `enforce`
-- Integration: remote provider with `mode: validate` does not start egress proxy
+- Integration: remote provider with `mode: validate` starts egress proxy in logging-only mode (no iptables)
 - Manual: verify `conga policy validate` output reflects mode on each provider
 - Manual: verify iptables rules appear on AWS after bootstrap/refresh
 

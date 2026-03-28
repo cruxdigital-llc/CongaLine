@@ -58,11 +58,11 @@ if [ "$EGRESS_MODE" = "enforce" ]; then
   # Wait for container to be running
   AGENT_IP=""
   for i in $(seq 1 10); do
-    AGENT_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "conga-'$AGENT_NAME'").IPAddress}}' conga-$AGENT_NAME 2>/dev/null || echo "")
+    AGENT_IP=$(docker inspect -f "{{`{{(index .NetworkSettings.Networks \"`}}conga-$AGENT_NAME{{`\").IPAddress}}`}}" conga-$AGENT_NAME 2>/dev/null || echo "")
     [ -n "$AGENT_IP" ] && break
     sleep 1
   done
-  NET_CIDR=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' conga-$AGENT_NAME 2>/dev/null || echo "")
+  NET_CIDR=$(docker network inspect -f '{{`{{range .IPAM.Config}}{{.Subnet}}{{end}}`}}' conga-$AGENT_NAME 2>/dev/null || echo "")
   if [ -n "$AGENT_IP" ] && [ -n "$NET_CIDR" ]; then
     iptables -C DOCKER-USER -s "$AGENT_IP" -j DROP 2>/dev/null || \
       iptables -I DOCKER-USER -s "$AGENT_IP" -j DROP
