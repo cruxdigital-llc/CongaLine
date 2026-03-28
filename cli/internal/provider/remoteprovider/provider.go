@@ -299,7 +299,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		DataDir:            dataDir,
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
-		EgressProxy:      egressProxy,
+		EgressProxy:        egressProxy,
 		EgressProxyName:    policy.EgressProxyName(cfg.Name),
 		ProxyBootstrapPath: bootstrapPath,
 	}); err != nil {
@@ -691,7 +691,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		DataDir:            dataDir,
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
-		EgressProxy:      egressProxy,
+		EgressProxy:        egressProxy,
 		EgressProxyName:    policy.EgressProxyName(agentName),
 		ProxyBootstrapPath: bootstrapPath,
 	}); err != nil {
@@ -1013,7 +1013,10 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 		_, err := p.ssh.Run(ctx, fmt.Sprintf("test -f %s",
 			shellQuote(posixpath.Join(p.remoteEgressProxyDir(), "Dockerfile"))))
 		if err == nil {
-			p.buildImage(ctx, p.remoteEgressProxyDir(), egressProxyImage)
+			if err := p.buildImage(ctx, p.remoteEgressProxyDir(), egressProxyImage); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to build egress proxy image: %v\n", err)
+				return
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: egress proxy image not found and Dockerfile not available — proxy not started\n")
 			return
@@ -1021,7 +1024,10 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 	}
 
 	if !p.networkExists(ctx, egressNetwork) {
-		p.dockerRun(ctx, "network", "create", egressNetwork, "--driver", "bridge")
+		if _, err := p.dockerRun(ctx, "network", "create", egressNetwork, "--driver", "bridge"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to create egress network: %v\n", err)
+			return
+		}
 	}
 
 	fmt.Println("Starting egress proxy...")
@@ -1039,9 +1045,14 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 		return
 	}
 
-	agents, _ := p.ListAgents(ctx)
+	agents, err := p.ListAgents(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list agents for proxy network connections: %v\n", err)
+	}
 	for _, a := range agents {
-		p.connectNetwork(ctx, networkName(a.Name), egressProxyContainer)
+		if err := p.connectNetwork(ctx, networkName(a.Name), egressProxyContainer); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to connect proxy to %s network: %v\n", a.Name, err)
+		}
 	}
 
 	fmt.Println("  Egress proxy started.")

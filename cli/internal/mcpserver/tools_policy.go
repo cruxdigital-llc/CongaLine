@@ -259,10 +259,14 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			mode := req.GetString("mode", "")
+			if mode == "" {
+				mode = "enforce"
+			}
 			patch := &policy.EgressPolicy{
 				AllowedDomains: allowedDomains,
 				BlockedDomains: blockedDomains,
-				Mode:           req.GetString("mode", ""),
+				Mode:           mode,
 			}
 
 			policy.SetEgress(pf, req.GetString("agent", ""), patch)
@@ -505,8 +509,13 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 					merged := pf.MergeForAgent(name)
 					domains := policy.EffectiveAllowedDomains(merged.Egress)
 					if len(domains) == 0 {
-						// Agent override cleared egress domains — skip direct deploy,
-						// RefreshAll will handle reconfiguring this agent.
+						// Agent override cleared egress domains — fall back to RefreshAgent
+						// to reconfigure this agent (removes proxy env vars, stops proxy container).
+						if err := s.prov.RefreshAgent(ctx, name); err != nil {
+							errors = append(errors, fmt.Sprintf("%s (refresh): %v", name, err))
+						} else {
+							deployed = append(deployed, name)
+						}
 						continue
 					}
 					mode := merged.Egress.Mode

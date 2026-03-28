@@ -120,7 +120,7 @@ type agentContainerOpts struct {
 	DataDir            string
 	GatewayPort        int
 	Image              string
-	EgressProxy      bool
+	EgressProxy        bool
 	EgressProxyName    string
 	ProxyBootstrapPath string // Host path to proxy-bootstrap.js (mounted read-only)
 }

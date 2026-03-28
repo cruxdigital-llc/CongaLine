@@ -38,9 +38,10 @@ provider can enforce. The report shows enforcement levels:
 		Short: "Tail the egress proxy logs for an agent",
 		Long: `Show the egress proxy container logs for an agent.
 
-In validate mode, warnings appear in the Envoy application log as
-"egress-validate: would deny <host>". In enforce mode, blocked requests
-return 403 and appear in the Envoy access log with status 403.`,
+In validate mode, would-be-denied requests appear in the proxy application
+log as "egress-validate: would deny <host>". In enforce mode, blocked
+requests receive a 403 from the Lua filter (visible to the requesting
+client but not logged by the proxy).`,
 		RunE: policyProxyLogsRun,
 	}
 	proxyLogsCmd.Flags().IntVarP(&logLines, "lines", "n", 50, "Number of log lines")

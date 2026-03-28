@@ -604,6 +604,11 @@ generate_egress_conf() {
   # No domains = no egress conf to generate
   DOMAINS=$(echo "$ALLOWED" | xargs) # trim
   if [ -z "$DOMAINS" ]; then
+    # Sanity check: if the policy file mentions allowed_domains but we parsed zero,
+    # the YAML structure may not match our grep/sed heuristics (e.g., tabs, anchors).
+    if grep -q "allowed_domains:" "$POLICY_FILE" 2>/dev/null; then
+      log "WARNING: Policy file contains allowed_domains but none were parsed for $AGENT_NAME — check YAML indentation"
+    fi
     return
   fi
 
@@ -773,6 +778,46 @@ PROXYDF
       envoy -c /etc/envoy/envoy.yaml --log-level warn
     # Proxy is on the same Docker network — Docker DNS resolves the container name.
     EGRESS_DOCKER_ARGS="-e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1"
+    # Write proxy bootstrap JS (patches Node.js fetch/https to route through proxy)
+    BOOTSTRAP_PATH="/opt/conga/config/proxy-bootstrap.js"
+    if [ ! -f "$BOOTSTRAP_PATH" ]; then
+      cat > "$BOOTSTRAP_PATH" << 'BOOTSTRAPJS'
+'use strict';
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.__CONGA_PROXY_URL;
+if (proxyUrl) {
+  const http = require('http');
+  const https = require('https');
+  const tls = require('tls');
+  const { URL } = require('url');
+  if (!process.env.HTTPS_PROXY) process.env.HTTPS_PROXY = proxyUrl;
+  const { EnvHttpProxyAgent, setGlobalDispatcher } = require('/app/node_modules/undici');
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+  const parsed = new URL(proxyUrl);
+  class ConnectProxyAgent extends https.Agent {
+    constructor() { super({ keepAlive: true }); }
+    createConnection(opts, cb) {
+      const req = http.request({
+        host: parsed.hostname, port: parsed.port, method: 'CONNECT',
+        path: (opts.host || opts.hostname) + ':' + (opts.port || 443),
+      });
+      req.on('connect', (_res, socket) => {
+        if (_res.statusCode !== 200) { cb(new Error('Proxy CONNECT failed: ' + _res.statusCode)); return; }
+        const tlsSock = tls.connect({ socket: socket, servername: opts.host || opts.hostname }, () => cb(null, tlsSock));
+        tlsSock.on('error', cb);
+      });
+      req.on('error', cb);
+      req.end();
+    }
+  }
+  https.globalAgent = new ConnectProxyAgent();
+  process.env.__CONGA_PROXY_URL = proxyUrl;
+  process.env.HTTPS_PROXY = proxyUrl;
+  process.env.HTTP_PROXY = proxyUrl;
+}
+BOOTSTRAPJS
+      chmod 0444 "$BOOTSTRAP_PATH"
+    fi
+    EGRESS_DOCKER_ARGS="$EGRESS_DOCKER_ARGS -v $BOOTSTRAP_PATH:/opt/proxy-bootstrap.js:ro"
     log "Egress proxy started for $AGENT_NAME"
   fi
 
@@ -781,6 +826,12 @@ PROXYDF
   while IFS="=" read -r key value; do
     [ -n "$key" ] && ENV_FLAGS="$ENV_FLAGS -e $key"
   done < /opt/conga/config/$AGENT_NAME.env
+
+  # Set NODE_OPTIONS — add proxy bootstrap require when egress is configured
+  NODE_OPTS="--max-old-space-size=1536"
+  if [ -f "/opt/conga/config/proxy-bootstrap.js" ] && [ -n "$EGRESS_DOCKER_ARGS" ]; then
+    NODE_OPTS="$NODE_OPTS --require /opt/proxy-bootstrap.js"
+  fi
 
   # Systemd unit — image written literally; updated on boot by conga-image-refresh.service
   cat > /etc/systemd/system/conga-$AGENT_NAME.service << UNIT
@@ -794,9 +845,9 @@ Type=simple
 EnvironmentFile=/opt/conga/config/$AGENT_NAME.env
 ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region ${aws_region} 2>/dev/null || true; /opt/conga/bin/deploy-behavior.sh $AGENT_NAME \$(cat /opt/conga/config/$AGENT_NAME.type 2>/dev/null || echo user) 2>/dev/null || true; chown -R 1000:1000 /opt/conga/data/$AGENT_NAME/data/workspace 2>/dev/null || true'
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
-ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="--max-old-space-size=1536" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
+ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="$NODE_OPTS" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
-ExecStartPost=-/bin/bash -c 'MODE=\$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null); if [ "\$MODE" = "enforce" ]; then AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN; else echo "WARNING: egress iptables rules failed for conga-$AGENT_NAME — container IP or subnet not found" >&2; fi; fi'
+ExecStartPost=-/bin/bash -c 'MODE=\$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null); if [ "\$MODE" = "enforce" ]; then AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP || echo "WARNING: failed to add iptables DROP rule for conga-$AGENT_NAME (\$AGENT_IP)" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN || echo "WARNING: failed to add iptables subnet RETURN rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN || echo "WARNING: failed to add iptables conntrack RETURN rule for conga-$AGENT_NAME" >&2; else echo "WARNING: egress iptables rules failed for conga-$AGENT_NAME — container IP (\$AGENT_IP) or subnet (\$NET_CIDR) not found" >&2; fi; fi'
 ExecStopPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -D DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || true; fi'
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
 StandardOutput=append:/var/log/conga-$AGENT_NAME.log

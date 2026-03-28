@@ -518,6 +518,22 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 		return fmt.Errorf("failed to parse deploy-egress template: %w", err)
 	}
 
+	// Validate template values don't contain heredoc delimiters — a matching line
+	// would terminate the heredoc early and allow arbitrary shell execution.
+	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF"}
+	templateValues := map[string]string{
+		"PolicyContent":    policyContent,
+		"EnvoyConfig":      envoyConfig,
+		"ProxyBootstrapJS": policy.ProxyBootstrapJS(),
+	}
+	for _, delim := range heredocDelimiters {
+		for name, val := range templateValues {
+			if strings.Contains(val, delim) {
+				return fmt.Errorf("%s contains heredoc delimiter %q — refusing to render (possible injection)", name, delim)
+			}
+		}
+	}
+
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, struct {
 		AgentName        string
