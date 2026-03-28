@@ -427,44 +427,74 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
+			// Read raw policy content for upload to remote hosts
+			policyBytes, _ := os.ReadFile(path)
+			policyContent := string(policyBytes)
+
 			agent := req.GetString("agent", "")
+
+			// Determine which agents to deploy to
+			var targetAgents []string
 			if agent != "" {
 				if _, err := s.prov.GetAgent(ctx, agent); err != nil {
 					return mcp.NewToolResultError(fmt.Sprintf("agent %q not found: %v", agent, err)), nil
 				}
-				if err := s.prov.RefreshAgent(ctx, agent); err != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("deploy to %q failed: %v", agent, err)), nil
+				targetAgents = []string{agent}
+			} else {
+				agents, err := s.prov.ListAgents(ctx)
+				if err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("listing agents: %v", err)), nil
 				}
-				return jsonResult(deployResult{
-					Validated: true,
-					Deployed:  []string{agent},
-				})
+				for _, a := range agents {
+					if !a.Paused {
+						targetAgents = append(targetAgents, a.Name)
+					}
+				}
 			}
 
-			// Deploy to all agents.
-			if err := s.prov.RefreshAll(ctx); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("deploy failed: %v", err)), nil
-			}
-
-			agents, err := s.prov.ListAgents(ctx)
-			if err != nil {
-				// Refresh succeeded but listing failed — still report success.
-				return jsonResult(deployResult{
-					Validated: true,
-					Deployed:  []string{"(all agents refreshed)"},
-				})
+			// Check if provider supports direct egress deployment (AWS)
+			type egressDeployer interface {
+				DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, mode string) error
 			}
 
 			var deployed []string
-			for _, a := range agents {
-				if !a.Paused {
-					deployed = append(deployed, a.Name)
+			var errors []string
+
+			if deployer, ok := s.prov.(egressDeployer); ok && pf.Egress != nil && len(pf.Egress.AllowedDomains) > 0 {
+				// Provider supports direct egress deployment — generate configs in Go and push
+				for _, name := range targetAgents {
+					merged := pf.MergeForAgent(name)
+					domains := policy.EffectiveAllowedDomains(merged.Egress)
+					mode := merged.Egress.Mode
+					envoyConfig := policy.GenerateProxyConf(domains, mode)
+
+					if err := deployer.DeployEgress(ctx, name, policyContent, envoyConfig, mode); err != nil {
+						errors = append(errors, fmt.Sprintf("%s: %v", name, err))
+					} else {
+						deployed = append(deployed, name)
+					}
+				}
+			} else {
+				// Fallback: refresh all (local/remote handle egress in their refresh flow)
+				if agent != "" {
+					if err := s.prov.RefreshAgent(ctx, agent); err != nil {
+						return mcp.NewToolResultError(fmt.Sprintf("deploy to %q failed: %v", agent, err)), nil
+					}
+					deployed = targetAgents
+				} else {
+					if err := s.prov.RefreshAll(ctx); err != nil {
+						return mcp.NewToolResultError(fmt.Sprintf("deploy failed: %v", err)), nil
+					}
+					deployed = targetAgents
 				}
 			}
-			return jsonResult(deployResult{
+
+			result := deployResult{
 				Validated: true,
 				Deployed:  deployed,
-			})
+				Errors:    errors,
+			}
+			return jsonResult(result)
 		},
 	}
 }

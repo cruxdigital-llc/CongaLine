@@ -18,6 +18,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/discovery"
+	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/tunnel"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
@@ -498,6 +499,47 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "Output:\n%s\n%s\n", result.Stdout, result.Stderr)
 		return fmt.Errorf("refresh-all failed on instance")
 	}
+	return nil
+}
+
+// --- Egress Policy Deployment ---
+
+// DeployEgress deploys the egress proxy for a single agent without requiring a host cycle.
+// It uploads the policy file, generates Envoy config, starts the proxy container, restarts
+// the agent container with HTTPS_PROXY, and applies iptables rules (enforce mode only).
+func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, mode string) error {
+	instanceID, err := p.findInstance(ctx)
+	if err != nil {
+		return err
+	}
+
+	tmpl, err := template.New("deploy-egress").Parse(scripts.DeployEgressScript)
+	if err != nil {
+		return fmt.Errorf("failed to parse deploy-egress template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, struct {
+		AgentName        string
+		Mode             string
+		PolicyContent    string
+		EnvoyConfig      string
+		ProxyBootstrapJS string
+	}{agentName, mode, policyContent, envoyConfig, policy.ProxyBootstrapJS()}); err != nil {
+		return fmt.Errorf("failed to render deploy-egress script: %w", err)
+	}
+
+	spin := ui.NewSpinner(fmt.Sprintf("Deploying egress proxy for %s (mode=%s)...", agentName, mode))
+	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, buf.String(), 180*time.Second)
+	spin.Stop()
+	if err != nil {
+		return err
+	}
+
+	if result.Status != "Success" {
+		return fmt.Errorf("deploy-egress failed:\n%s\n%s", result.Stdout, result.Stderr)
+	}
+	fmt.Println(result.Stdout)
 	return nil
 }
 
