@@ -88,6 +88,48 @@ func (s *Server) toolGetLogs() server.ServerTool {
 	}
 }
 
+func (s *Server) toolGetProxyLogs() server.ServerTool {
+	return server.ServerTool{
+		Tool: mcp.Tool{
+			Name:        "conga_get_proxy_logs",
+			Description: "Get the last N lines of an agent's egress proxy container logs. Shows domain filtering activity: in validate mode, logs 'egress-validate: would deny <host>' for requests that would be blocked. In enforce mode, logs 'egress denied: <host>' for blocked requests.",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"agent_name": map[string]any{
+						"type":        "string",
+						"description": "Agent name",
+					},
+					"lines": map[string]any{
+						"type":        "integer",
+						"description": "Number of log lines to return (default: 50)",
+					},
+				},
+				Required: []string{"agent_name"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				ReadOnlyHint: boolPtr(true),
+			},
+		},
+		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			name, err := req.RequireString("agent_name")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			lines := req.GetInt("lines", 50)
+
+			ctx, cancel := toolCtx(ctx)
+			defer cancel()
+
+			logs, err := s.prov.GetLogs(ctx, "egress-"+name, lines)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(logs), nil
+		},
+	}
+}
+
 func (s *Server) toolRefreshAgent() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{

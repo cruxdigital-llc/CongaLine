@@ -23,6 +23,7 @@ func (s *Server) registerTools() {
 		// Container Operations
 		s.toolGetStatus(),
 		s.toolGetLogs(),
+		s.toolGetProxyLogs(),
 		s.toolRefreshAgent(),
 		s.toolRefreshAll(),
 		s.toolContainerExec(),

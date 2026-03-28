@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	provpkg "github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -32,7 +33,20 @@ provider can enforce. The report shows enforcement levels:
 	}
 	validateCmd.Flags().StringVar(&policyFilePath, "file", "", "Path to policy file (default: auto-detect from provider)")
 
+	proxyLogsCmd := &cobra.Command{
+		Use:   "proxy-logs",
+		Short: "Tail the egress proxy logs for an agent",
+		Long: `Show the egress proxy container logs for an agent.
+
+In validate mode, logs show "egress-validate: would deny <host>" for
+requests that would be blocked in enforce mode. In enforce mode, logs
+show "egress denied: <host>" for blocked requests.`,
+		RunE: policyProxyLogsRun,
+	}
+	proxyLogsCmd.Flags().IntVarP(&logLines, "lines", "n", 50, "Number of log lines")
+
 	policyCmd.AddCommand(validateCmd)
+	policyCmd.AddCommand(proxyLogsCmd)
 	rootCmd.AddCommand(policyCmd)
 }
 
@@ -134,5 +148,40 @@ func policyValidateRun(cmd *cobra.Command, args []string) error {
 	}
 	ui.PrintTable(headers, rows)
 
+	return nil
+}
+
+func policyProxyLogsRun(cmd *cobra.Command, args []string) error {
+	ctx, cancel := commandContext()
+	defer cancel()
+
+	agentName, err := resolveAgentName(ctx)
+	if err != nil {
+		return err
+	}
+
+	output, err := prov.GetLogs(ctx, "egress-"+agentName, logLines)
+	if err != nil {
+		return err
+	}
+
+	if ui.OutputJSON {
+		lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+		if len(lines) == 1 && lines[0] == "" {
+			lines = []string{}
+		}
+		ui.EmitJSON(struct {
+			Agent string   `json:"agent"`
+			Proxy string   `json:"proxy"`
+			Lines []string `json:"lines"`
+		}{
+			Agent: agentName,
+			Proxy: "conga-egress-" + agentName,
+			Lines: lines,
+		})
+		return nil
+	}
+
+	fmt.Print(output)
 	return nil
 }
