@@ -96,10 +96,10 @@ var envoyConfigTmpl = template.Must(template.New("envoy-config").Parse(templates
 //
 // NOTE: The bash reimplementation in terraform/user-data.sh.tftpl generates the same
 // config format — keep both implementations and templates/envoy-config.yaml.tmpl in sync.
-func GenerateProxyConf(domains []string, mode string) (string, error) {
+func GenerateProxyConf(domains []string, mode EgressMode) (string, error) {
 	data := envoyConfigData{
 		HasDomains:   len(domains) > 0,
-		ValidateMode: mode == "validate",
+		ValidateMode: mode == EgressModeValidate,
 	}
 
 	for _, d := range domains {

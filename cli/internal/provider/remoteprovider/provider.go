@@ -237,7 +237,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	egressEnforce := false
 	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
 		egressProxy = true
-		if egressPolicy.Mode == "enforce" {
+		if egressPolicy.Mode == policy.EgressModeEnforce {
 			egressEnforce = true
 		} else {
 			fmt.Fprintf(os.Stderr, "Egress proxy active in validate mode (logging violations, allowing all traffic). Set mode: enforce to activate domain filtering + iptables.\n")
@@ -290,6 +290,10 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		}
 	}
 
+	var provEgressProxyName string
+	if egressProxy {
+		provEgressProxyName = policy.EgressProxyName(cfg.Name)
+	}
 	fmt.Printf("Starting container %s...\n", cName)
 	if err := p.runAgentContainer(ctx, agentContainerOpts{
 		Name:               cName,
@@ -299,8 +303,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		DataDir:            dataDir,
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
-		EgressProxy:        egressProxy,
-		EgressProxyName:    policy.EgressProxyName(cfg.Name),
+		EgressProxyName:    provEgressProxyName,
 		ProxyBootstrapPath: bootstrapPath,
 	}); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
@@ -445,13 +448,14 @@ func (p *RemoteProvider) ensureEgressIptables(ctx context.Context, agentName str
 		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy for %s: %v\n", agentName, err)
 		return
 	}
-	if egressPolicy == nil || egressPolicy.Mode != "enforce" || len(egressPolicy.AllowedDomains) == 0 {
+	if egressPolicy == nil || egressPolicy.Mode != policy.EgressModeEnforce || len(egressPolicy.AllowedDomains) == 0 {
 		return
 	}
 
 	cName := containerName(agentName)
 	netName := networkName(agentName)
 	if !p.networkExists(ctx, netName) {
+		fmt.Fprintf(os.Stderr, "Warning: network %s not found for %s — cannot verify egress iptables\n", netName, agentName)
 		return
 	}
 
@@ -613,7 +617,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	egressEnforce := false
 	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
 		egressProxy = true
-		if egressPolicy.Mode == "enforce" {
+		if egressPolicy.Mode == policy.EgressModeEnforce {
 			egressEnforce = true
 		} else {
 			fmt.Fprintf(os.Stderr, "Egress proxy active in validate mode (logging violations, allowing all traffic). Set mode: enforce to activate domain filtering + iptables.\n")
@@ -683,6 +687,10 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		return fmt.Errorf("failed to chown data directory: %w", err)
 	}
 
+	var refreshProxyName string
+	if egressProxy {
+		refreshProxyName = policy.EgressProxyName(agentName)
+	}
 	if err := p.runAgentContainer(ctx, agentContainerOpts{
 		Name:               cName,
 		AgentName:          agentName,
@@ -691,8 +699,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		DataDir:            dataDir,
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
-		EgressProxy:        egressProxy,
-		EgressProxyName:    policy.EgressProxyName(agentName),
+		EgressProxyName:    refreshProxyName,
 		ProxyBootstrapPath: bootstrapPath,
 	}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
@@ -1059,7 +1066,7 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 }
 
 // startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering on the remote host.
-func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string, mode string) error {
+func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string, mode policy.EgressMode) error {
 	proxyName := policy.EgressProxyName(agentName)
 	netName := networkName(agentName)
 

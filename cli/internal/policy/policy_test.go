@@ -213,7 +213,7 @@ func TestMergeForAgentWithoutOverride(t *testing.T) {
 	if len(merged.Egress.AllowedDomains) != 1 {
 		t.Fatalf("expected 1 allowed domain, got %d", len(merged.Egress.AllowedDomains))
 	}
-	if merged.Egress.Mode != "validate" {
+	if merged.Egress.Mode != EgressModeValidate {
 		t.Errorf("expected validate mode, got %q", merged.Egress.Mode)
 	}
 }
@@ -317,7 +317,7 @@ func TestDefaultModeIsEnforce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pf.Egress.Mode != "enforce" {
+	if pf.Egress.Mode != EgressModeEnforce {
 		t.Errorf("expected default mode 'enforce', got %q", pf.Egress.Mode)
 	}
 }
@@ -343,10 +343,10 @@ agents:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pf.Egress.Mode != "enforce" {
+	if pf.Egress.Mode != EgressModeEnforce {
 		t.Errorf("expected global default mode 'enforce', got %q", pf.Egress.Mode)
 	}
-	if pf.Agents["myagent"].Egress.Mode != "enforce" {
+	if pf.Agents["myagent"].Egress.Mode != EgressModeEnforce {
 		t.Errorf("expected agent override default mode 'enforce', got %q", pf.Agents["myagent"].Egress.Mode)
 	}
 }

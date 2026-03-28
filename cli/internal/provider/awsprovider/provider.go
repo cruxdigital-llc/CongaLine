@@ -507,7 +507,7 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 // DeployEgress deploys the egress proxy for a single agent without requiring a host cycle.
 // It uploads the policy file, generates Envoy config, starts the proxy container, restarts
 // the agent container with HTTPS_PROXY, and applies iptables rules (enforce mode only).
-func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, mode string) error {
+func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig string, mode policy.EgressMode) error {
 	instanceID, err := p.findInstance(ctx)
 	if err != nil {
 		return err
@@ -518,20 +518,12 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 		return fmt.Errorf("failed to parse deploy-egress template: %w", err)
 	}
 
-	// Validate template values don't contain heredoc delimiters — a matching line
-	// would terminate the heredoc early and allow arbitrary shell execution.
-	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF"}
-	templateValues := map[string]string{
+	if err := validateHeredocSafety(map[string]string{
 		"PolicyContent":    policyContent,
 		"EnvoyConfig":      envoyConfig,
 		"ProxyBootstrapJS": policy.ProxyBootstrapJS(),
-	}
-	for _, delim := range heredocDelimiters {
-		for name, val := range templateValues {
-			if strings.Contains(val, delim) {
-				return fmt.Errorf("%s contains heredoc delimiter %q — refusing to render (possible injection)", name, delim)
-			}
-		}
+	}); err != nil {
+		return err
 	}
 
 	var buf bytes.Buffer
@@ -541,7 +533,7 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 		PolicyContent    string
 		EnvoyConfig      string
 		ProxyBootstrapJS string
-	}{agentName, mode, policyContent, envoyConfig, policy.ProxyBootstrapJS()}); err != nil {
+	}{agentName, string(mode), policyContent, envoyConfig, policy.ProxyBootstrapJS()}); err != nil {
 		return fmt.Errorf("failed to render deploy-egress script: %w", err)
 	}
 
@@ -556,6 +548,20 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 		return fmt.Errorf("deploy-egress failed:\n%s\n%s", result.Stdout, result.Stderr)
 	}
 	fmt.Fprintln(os.Stderr, result.Stdout)
+	return nil
+}
+
+// validateHeredocSafety checks that template values don't contain heredoc delimiters.
+// A matching line would terminate the heredoc early and allow arbitrary shell execution.
+func validateHeredocSafety(values map[string]string) error {
+	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF"}
+	for _, delim := range heredocDelimiters {
+		for name, val := range values {
+			if strings.Contains(val, delim) {
+				return fmt.Errorf("%s contains heredoc delimiter %q — refusing to render (possible injection)", name, delim)
+			}
+		}
+	}
 	return nil
 }
 

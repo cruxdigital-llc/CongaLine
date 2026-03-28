@@ -73,6 +73,10 @@ docker network connect "conga-$AGENT_NAME" conga-router 2>/dev/null || true
 
 # Re-apply egress iptables rules (enforce mode only)
 EGRESS_MODE=$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null || echo "")
+if [ -f "/opt/conga/config/egress-$AGENT_NAME.yaml" ] && [ -z "$EGRESS_MODE" ]; then
+  echo "WARNING: Egress config exists but mode file missing for $AGENT_NAME — defaulting to enforce"
+  EGRESS_MODE="enforce"
+fi
 if [ "$EGRESS_MODE" = "enforce" ]; then
   # Wait for container to be running
   AGENT_IP=""

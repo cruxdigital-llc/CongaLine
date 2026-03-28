@@ -68,7 +68,7 @@ egress:
 	if ep == nil {
 		t.Fatal("expected non-nil egress policy")
 	}
-	if ep.Mode != "enforce" {
+	if ep.Mode != EgressModeEnforce {
 		t.Errorf("expected default mode 'enforce' via LoadEgressPolicy, got %q", ep.Mode)
 	}
 }
@@ -138,7 +138,7 @@ func TestEgressProxyName(t *testing.T) {
 
 func TestGenerateProxyConfAllowlist(t *testing.T) {
 	domains := []string{"api.anthropic.com", "*.slack.com", "github.com"}
-	result, err := GenerateProxyConf(domains, "enforce")
+	result, err := GenerateProxyConf(domains, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestGenerateProxyConfWildcardDedup(t *testing.T) {
 	// When *.slack.com is present, the Lua filter puts .slack.com in SUFFIXES
 	// and slack.com in EXACT. Both appear because Envoy Lua handles them separately.
 	domains := []string{"api.anthropic.com", "slack.com", "*.slack.com"}
-	result, err := GenerateProxyConf(domains, "enforce")
+	result, err := GenerateProxyConf(domains, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestGenerateProxyConfWildcardDedup(t *testing.T) {
 }
 
 func TestGenerateProxyConfPassthrough(t *testing.T) {
-	result, err := GenerateProxyConf(nil, "enforce")
+	result, err := GenerateProxyConf(nil, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestGenerateProxyConfPassthrough(t *testing.T) {
 }
 
 func TestGenerateProxyConfEmptySlice(t *testing.T) {
-	result, err := GenerateProxyConf([]string{}, "enforce")
+	result, err := GenerateProxyConf([]string{}, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestEgressProxyDockerfile(t *testing.T) {
 }
 
 func TestGenerateProxyConfLuaNilAuthorityGuard(t *testing.T) {
-	result, err := GenerateProxyConf([]string{"api.anthropic.com"}, "enforce")
+	result, err := GenerateProxyConf([]string{"api.anthropic.com"}, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestGenerateProxyConfLuaNilAuthorityGuard(t *testing.T) {
 }
 
 func TestGenerateProxyConfDNSFamily(t *testing.T) {
-	result, err := GenerateProxyConf([]string{"api.anthropic.com"}, "enforce")
+	result, err := GenerateProxyConf([]string{"api.anthropic.com"}, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestProxyBootstrapJSSyntax(t *testing.T) {
 func TestGenerateProxyConfLuaEscaping(t *testing.T) {
 	// Even though validateDomain would reject these, verify defense-in-depth
 	// by calling GenerateProxyConf directly with domains that need escaping.
-	result, err := GenerateProxyConf([]string{"normal.com"}, "enforce")
+	result, err := GenerateProxyConf([]string{"normal.com"}, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestGenerateProxyConfLuaEscaping(t *testing.T) {
 
 func TestGenerateProxyConfValidateMode(t *testing.T) {
 	domains := []string{"api.anthropic.com", "*.slack.com"}
-	result, err := GenerateProxyConf(domains, "validate")
+	result, err := GenerateProxyConf(domains, EgressModeValidate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestGenerateProxyConfValidateMode(t *testing.T) {
 
 func TestGenerateProxyConfValidateModeLogsOnMissingHost(t *testing.T) {
 	domains := []string{"api.anthropic.com"}
-	result, err := GenerateProxyConf(domains, "validate")
+	result, err := GenerateProxyConf(domains, EgressModeValidate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestGenerateProxyConfValidateModeLogsOnMissingHost(t *testing.T) {
 
 func TestGenerateProxyConfEnforceMode403(t *testing.T) {
 	domains := []string{"api.anthropic.com"}
-	result, err := GenerateProxyConf(domains, "enforce")
+	result, err := GenerateProxyConf(domains, EgressModeEnforce)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -356,5 +356,27 @@ func TestGenerateProxyConfEnforceMode403(t *testing.T) {
 	}
 	if strings.Contains(result, "logWarn") {
 		t.Error("enforce mode should not use logWarn")
+	}
+}
+
+func TestGenerateProxyConfWildcardOnly(t *testing.T) {
+	// Only wildcard domains, no exact domains — EXACT table should be empty
+	domains := []string{"*.slack.com", "*.github.com"}
+	result, err := GenerateProxyConf(domains, EgressModeEnforce)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(result, "envoy.filters.http.lua") {
+		t.Error("expected Lua filter for wildcard-only domains")
+	}
+	if !strings.Contains(result, `".slack.com"`) {
+		t.Error("expected .slack.com in SUFFIXES table")
+	}
+	if !strings.Contains(result, `".github.com"`) {
+		t.Error("expected .github.com in SUFFIXES table")
+	}
+	if !strings.Contains(result, `":status"] = "403"`) {
+		t.Error("expected 403 deny in enforce mode")
 	}
 }

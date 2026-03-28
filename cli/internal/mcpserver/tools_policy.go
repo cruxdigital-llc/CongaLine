@@ -232,7 +232,7 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 					"mode": map[string]any{
 						"type":        "string",
 						"enum":        []string{"validate", "enforce"},
-						"description": "Enforcement mode: 'validate' (warn only) or 'enforce' (activate egress proxy)",
+						"description": "Enforcement mode: 'validate' (proxy logs violations but allows traffic) or 'enforce' (proxy blocks non-allowlisted traffic + iptables)",
 					},
 					"agent": map[string]any{
 						"type":        "string",
@@ -259,9 +259,9 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			mode := req.GetString("mode", "")
+			mode := policy.EgressMode(req.GetString("mode", ""))
 			if mode == "" {
-				mode = "enforce"
+				mode = policy.EgressModeEnforce
 			}
 			patch := &policy.EgressPolicy{
 				AllowedDomains: allowedDomains,
@@ -495,15 +495,29 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 				}
 			}
 
+			if len(targetAgents) == 0 {
+				return mcp.NewToolResultError("no active agents to deploy to — all agents are paused"), nil
+			}
+
 			// Check if provider supports direct egress deployment (e.g., AWS via SSM)
 			type egressDeployer interface {
-				DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, mode string) error
+				DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig string, mode policy.EgressMode) error
 			}
 
 			var deployed []string
 			var errors []string
 
-			if deployer, ok := s.prov.(egressDeployer); ok && pf.Egress != nil && len(pf.Egress.AllowedDomains) > 0 {
+			hasEgressDomains := pf.Egress != nil && len(pf.Egress.AllowedDomains) > 0
+			if !hasEgressDomains {
+				for _, override := range pf.Agents {
+					if override != nil && override.Egress != nil && len(override.Egress.AllowedDomains) > 0 {
+						hasEgressDomains = true
+						break
+					}
+				}
+			}
+
+			if deployer, ok := s.prov.(egressDeployer); ok && hasEgressDomains {
 				// Provider supports direct egress deployment — generate configs in Go and push
 				for _, name := range targetAgents {
 					merged := pf.MergeForAgent(name)

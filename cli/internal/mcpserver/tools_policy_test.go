@@ -108,7 +108,7 @@ egress:
 	if len(pf.Egress.AllowedDomains) != 1 {
 		t.Errorf("allowed_domains len = %d, want 1", len(pf.Egress.AllowedDomains))
 	}
-	if pf.Egress.Mode != "enforce" {
+	if pf.Egress.Mode != policy.EgressModeEnforce {
 		t.Errorf("mode = %q, want %q", pf.Egress.Mode, "enforce")
 	}
 }
@@ -282,7 +282,7 @@ func TestPolicySetEgress(t *testing.T) {
 	if len(pf.Egress.AllowedDomains) != 2 {
 		t.Errorf("allowed_domains len = %d, want 2", len(pf.Egress.AllowedDomains))
 	}
-	if pf.Egress.Mode != "enforce" {
+	if pf.Egress.Mode != policy.EgressModeEnforce {
 		t.Errorf("mode = %q, want %q", pf.Egress.Mode, "enforce")
 	}
 }
@@ -569,7 +569,7 @@ type mockEgressProvider struct {
 	deployErr      map[string]error // agent name -> error
 }
 
-func (m *mockEgressProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, mode string) error {
+func (m *mockEgressProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig string, mode policy.EgressMode) error {
 	if err, ok := m.deployErr[agentName]; ok && err != nil {
 		return err
 	}
@@ -812,5 +812,97 @@ egress:
 	text := textContent(t, result)
 	if !strings.Contains(text, "deploy failed for all agents") {
 		t.Errorf("error = %q, want it to mention all agents failed", text)
+	}
+}
+
+func TestPolicySetEgressDefaultMode(t *testing.T) {
+	_, client := newPolicyTestEnv(t, "")
+
+	// Call set_egress WITHOUT specifying mode — should default to "enforce"
+	result := callTool(t, client, "conga_policy_set_egress", map[string]any{
+		"allowed_domains": []any{"api.anthropic.com"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, result))
+	}
+
+	var pf policy.PolicyFile
+	if err := json.Unmarshal([]byte(textContent(t, result)), &pf); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if pf.Egress == nil {
+		t.Fatal("egress is nil")
+	}
+	if pf.Egress.Mode != policy.EgressModeEnforce {
+		t.Errorf("mode = %q, want %q (default when omitted)", pf.Egress.Mode, policy.EgressModeEnforce)
+	}
+}
+
+func TestPolicyDeploySkipsPausedAgents(t *testing.T) {
+	yaml := `apiVersion: conga.dev/v1alpha1
+egress:
+  allowed_domains:
+    - api.anthropic.com
+  mode: enforce
+`
+	mock := &mockEgressProvider{
+		mockProvider: mockProvider{
+			name: "aws",
+			agents: []provider.AgentConfig{
+				{Name: "agent1", Type: provider.AgentTypeUser},
+				{Name: "agent2", Type: provider.AgentTypeTeam, Paused: true},
+				{Name: "agent3", Type: provider.AgentTypeUser},
+			},
+			agent: &provider.AgentConfig{
+				Name: "agent1", Type: provider.AgentTypeUser,
+			},
+		},
+	}
+	client := newEgressDeployerTestEnv(t, yaml, mock)
+
+	result := callTool(t, client, "conga_policy_deploy", nil)
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, result))
+	}
+
+	// agent2 is paused — should be skipped
+	if len(mock.deployedAgents) != 2 {
+		t.Errorf("DeployEgress called %d times, want 2 (paused agent should be skipped)", len(mock.deployedAgents))
+	}
+	for _, name := range mock.deployedAgents {
+		if name == "agent2" {
+			t.Error("DeployEgress should not have been called for paused agent2")
+		}
+	}
+}
+
+func TestPolicyDeployAllPausedReturnsError(t *testing.T) {
+	yaml := `apiVersion: conga.dev/v1alpha1
+egress:
+  allowed_domains:
+    - api.anthropic.com
+  mode: enforce
+`
+	mock := &mockEgressProvider{
+		mockProvider: mockProvider{
+			name: "aws",
+			agents: []provider.AgentConfig{
+				{Name: "agent1", Type: provider.AgentTypeUser, Paused: true},
+				{Name: "agent2", Type: provider.AgentTypeTeam, Paused: true},
+			},
+			agent: &provider.AgentConfig{
+				Name: "agent1", Type: provider.AgentTypeUser,
+			},
+		},
+	}
+	client := newEgressDeployerTestEnv(t, yaml, mock)
+
+	result := callTool(t, client, "conga_policy_deploy", nil)
+	if !result.IsError {
+		t.Fatal("expected error when all agents are paused")
+	}
+	text := textContent(t, result)
+	if !strings.Contains(text, "no active agents") {
+		t.Errorf("error = %q, want it to mention no active agents", text)
 	}
 }

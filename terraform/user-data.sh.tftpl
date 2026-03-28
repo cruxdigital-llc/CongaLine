@@ -423,12 +423,9 @@ OCCONFIG
 # Reads global allowed_domains and agent-specific overrides.
 # Output: /opt/conga/config/egress-$AGENT_NAME.yaml
 #
-# WARNING: This bootstrap does NOT apply iptables DROP rules for egress enforcement.
-# The Go CLI providers (local/remote) add iptables rules to DOCKER-USER that DROP all
-# traffic from agent containers except to the bridge subnet (where the proxy lives).
-# This bash bootstrap relies solely on the Envoy proxy for egress filtering — a
-# container that bypasses the HTTPS_PROXY env vars can reach the internet directly.
-# This is a known gap tracked for future work (see Feature 16 Phase 3).
+# When mode is "enforce", iptables DROP rules are applied via ExecStartPost in the
+# systemd unit and cleaned up via ExecStopPost. In validate mode, the Envoy proxy
+# logs would-be-denied requests but does not block traffic or apply iptables rules.
 generate_egress_conf() {
   # NOTE: This function generates the same Envoy config format as the template
   # in cli/internal/policy/templates/envoy-config.yaml.tmpl — keep both in sync.

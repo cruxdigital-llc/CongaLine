@@ -12,6 +12,14 @@ import (
 
 const CurrentAPIVersion = "conga.dev/v1alpha1"
 
+// EgressMode defines the enforcement behavior for egress policy.
+type EgressMode string
+
+const (
+	EgressModeEnforce  EgressMode = "enforce"
+	EgressModeValidate EgressMode = "validate"
+)
+
 // PolicyFile is the top-level structure of conga-policy.yaml.
 type PolicyFile struct {
 	APIVersion string                    `yaml:"apiVersion"`
@@ -23,9 +31,9 @@ type PolicyFile struct {
 
 // EgressPolicy defines which external domains agents can reach.
 type EgressPolicy struct {
-	AllowedDomains []string `yaml:"allowed_domains,omitempty"`
-	BlockedDomains []string `yaml:"blocked_domains,omitempty"`
-	Mode           string   `yaml:"mode,omitempty"` // "enforce" (default) or "validate"
+	AllowedDomains []string   `yaml:"allowed_domains,omitempty"`
+	BlockedDomains []string   `yaml:"blocked_domains,omitempty"`
+	Mode           EgressMode `yaml:"mode,omitempty"` // EgressModeEnforce (default) or EgressModeValidate
 }
 
 // RoutingPolicy defines model selection and routing rules.
@@ -102,11 +110,11 @@ func Load(path string) (*PolicyFile, error) {
 // This ensures all downstream consumers see resolved values.
 func normalizeDefaults(pf *PolicyFile) {
 	if pf.Egress != nil && pf.Egress.Mode == "" {
-		pf.Egress.Mode = "enforce"
+		pf.Egress.Mode = EgressModeEnforce
 	}
 	for _, override := range pf.Agents {
 		if override != nil && override.Egress != nil && override.Egress.Mode == "" {
-			override.Egress.Mode = "enforce"
+			override.Egress.Mode = EgressModeEnforce
 		}
 	}
 }
@@ -158,7 +166,7 @@ func (pf *PolicyFile) Validate() error {
 }
 
 func validateEgress(e *EgressPolicy) error {
-	validModes := map[string]bool{"": true, "validate": true, "enforce": true}
+	validModes := map[EgressMode]bool{"": true, EgressModeValidate: true, EgressModeEnforce: true}
 	if !validModes[e.Mode] {
 		return fmt.Errorf("invalid mode %q (must be \"validate\" or \"enforce\")", e.Mode)
 	}
