@@ -1,6 +1,6 @@
 <!--
 GLaDOS-MANAGED DOCUMENT
-Last Updated: 2026-03-25
+Last Updated: 2026-03-28
 To modify: Edit directly. These standards are expected to evolve as the architecture matures.
 -->
 
@@ -18,6 +18,41 @@ To modify: Edit directly. These standards are expected to evolve as the architec
 4. **No enforcement without policy** — The policy file (`conga-policy.yaml`) is optional. When absent, all behavior is unchanged. Features must never require the policy file to function. This prevents breaking existing deployments.
 5. **Channel abstraction over platform coupling** — Messaging platforms (Slack, Telegram, Discord, etc.) are channels, not core identity. Agent identity, provisioning, and security controls must not depend on any specific messaging platform. See the Channel Abstraction section below.
 
+## Agent Data Safety
+
+**Severity: must**
+
+Agent data (memory, workspace, logs, canvas, identity) is the most valuable artifact in the system. It accumulates over time through agent interactions and cannot be regenerated. Every feature, operation, and infrastructure change must preserve agent data integrity.
+
+### Data Locations
+
+| Provider | Agent Data Path | Storage | Protection |
+|---|---|---|---|
+| AWS | `/opt/conga/data/<name>/` | Dedicated EBS volume (gp3, encrypted) | `prevent_destroy = true` in Terraform |
+| Remote | `/opt/conga/data/<name>/` | Remote host disk | Operator-managed backups |
+| Local | `~/.conga/data/<name>/` | Local disk | Operator-managed backups |
+
+All three mount into the container at `/home/node/.openclaw:rw`.
+
+### Rules
+
+1. **Never delete, overwrite, or recreate agent data directories** during provisioning, refresh, teardown-and-rebuild, or upgrade operations. Data directories are created once during `ProvisionAgent` and persist through all subsequent operations.
+
+2. **Container lifecycle must not affect data.** Container stop, start, remove, and recreate operations must preserve the volume mount. The `-v /path/to/data:/home/node/.openclaw:rw` mount is the contract — data lives on the host, not in the container.
+
+3. **Refresh operations rebuild config, not data.** `RefreshAgent`, `RefreshAll`, and `CycleHost` may regenerate `openclaw.json`, env files, systemd units, and proxy containers. They must never touch the data directory contents.
+
+4. **Teardown must preserve data by default.** `admin teardown` removes containers, networks, and config but must **not** delete data directories unless the user explicitly opts in. The default is to keep data. Deletion must be supported across all three interfaces:
+   - **CLI**: `--delete-data` flag (default `false`)
+   - **JSON input**: `"delete_data": true` field in the JSON schema
+   - **MCP**: `delete_data` boolean parameter on the `conga_teardown` tool
+
+   When deletion is requested, prompt for confirmation with a list of affected agents and data sizes before proceeding. The `--force` flag may skip the confirmation prompt, but never implies `--delete-data` — deletion must always be explicitly requested.
+
+5. **Spec review must consider data impact.** Every spec that touches agent lifecycle, container operations, volume mounts, or directory structures must include a "Data Safety" section confirming that agent data is preserved. If a spec cannot guarantee data safety, it must be flagged as a blocking concern during persona review.
+
+6. **Test for data persistence across operations.** Integration tests for lifecycle operations (provision → refresh → upgrade → teardown) should verify that data directory contents survive each transition.
+
 ## CLI Conventions
 
 All new CLI commands must follow these patterns:
@@ -31,6 +66,28 @@ All new CLI commands must follow these patterns:
 | Human output | `ui.PrintTable(headers, rows)` for tabular data | `cli/internal/ui/table.go` |
 | JSON input | `ui.JSONInputActive` + `ui.MustGetString()` for non-interactive mode | `cli/internal/ui/json_input.go` |
 | Error handling | Return `fmt.Errorf("context: %w", err)` — never swallow errors silently | `specs/2026-03-19_feature_cli-hardening/` |
+
+## Interface Parity
+
+**Severity: must**
+
+Every CLI command must be fully operable through all three interfaces. A feature that only works interactively is incomplete.
+
+| Interface | Purpose | Implementation |
+|---|---|---|
+| **CLI (human)** | Interactive flags, prompts, formatted output | Cobra flags + `ui.Confirm()` / `ui.Prompt()` |
+| **JSON I/O (agent)** | Non-interactive automation via `--json` + `--output json` | `ui.JSONInputActive` + `ui.EmitJSON()` + `conga json-schema` |
+| **MCP (tool use)** | LLM-driven operations via MCP tool calls | `mcpserver/tools*.go` tool registration with typed parameters |
+
+### Rules
+
+1. **Every new flag must have a JSON input field and an MCP parameter.** If a CLI command accepts `--delete-data`, the JSON schema must include `"delete_data"` and the MCP tool must accept a `delete_data` boolean parameter.
+
+2. **Every new command must have an MCP tool.** CLI commands are registered in `cli/cmd/`, JSON schemas in `cli/cmd/json_schema.go`, and MCP tools in `cli/internal/mcpserver/tools*.go`. All three must be updated together.
+
+3. **Behavior must be identical across interfaces.** A `--force` flag in CLI, `"force": true` in JSON, and no confirmation prompt in MCP must all produce the same result. MCP tools inherently skip interactive prompts (the LLM is the user), but destructive operations should use `DestructiveHint: true` in tool annotations.
+
+4. **Default values must be consistent.** If `--delete-data` defaults to `false` in CLI, it must also default to `false` in JSON input and MCP. Never infer different defaults per interface.
 
 ## Config Format Boundary
 

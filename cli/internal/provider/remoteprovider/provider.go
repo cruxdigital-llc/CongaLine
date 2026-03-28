@@ -235,7 +235,11 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	}
 	egressEnforce := false
 	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-		egressEnforce = true // Remote always enforces when domains defined
+		if egressPolicy.Mode != "enforce" {
+			fmt.Fprintf(os.Stderr, "Warning: Egress rules defined but not enforced in validate mode. Set mode: enforce in conga-policy.yaml to activate the egress proxy.\n")
+		} else {
+			egressEnforce = true
+		}
 	}
 
 	// 6. Create Docker network
@@ -430,13 +434,10 @@ func (p *RemoteProvider) GetStatus(ctx context.Context, agentName string) (*prov
 
 // ensureEgressIptables checks if iptables egress rules are in place for a running
 // container and re-applies them if missing. Handles IP changes after container restart.
-//
-// Unlike the local provider, this does NOT check egressPolicy.Mode because the remote
-// provider always enforces iptables when allowed_domains are defined. The "validate" vs
-// "enforce" mode distinction only applies to the local provider.
+// Only applies when egress policy mode is "enforce".
 func (p *RemoteProvider) ensureEgressIptables(ctx context.Context, agentName string) {
 	egressPolicy, err := policy.LoadEgressPolicy(p.dataDir, agentName)
-	if err != nil || egressPolicy == nil || len(egressPolicy.AllowedDomains) == 0 {
+	if err != nil || egressPolicy == nil || egressPolicy.Mode != "enforce" || len(egressPolicy.AllowedDomains) == 0 {
 		return
 	}
 
@@ -598,7 +599,11 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	}
 	egressEnforce := false
 	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-		egressEnforce = true
+		if egressPolicy.Mode != "enforce" {
+			fmt.Fprintf(os.Stderr, "Warning: Egress rules defined but not enforced in validate mode. Set mode: enforce in conga-policy.yaml to activate the egress proxy.\n")
+		} else {
+			egressEnforce = true
+		}
 	}
 
 	cName := containerName(agentName)

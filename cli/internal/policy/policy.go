@@ -25,7 +25,7 @@ type PolicyFile struct {
 type EgressPolicy struct {
 	AllowedDomains []string `yaml:"allowed_domains,omitempty"`
 	BlockedDomains []string `yaml:"blocked_domains,omitempty"`
-	Mode           string   `yaml:"mode,omitempty"` // "validate" (default) or "enforce"
+	Mode           string   `yaml:"mode,omitempty"` // "enforce" (default) or "validate"
 }
 
 // RoutingPolicy defines model selection and routing rules.
@@ -94,7 +94,21 @@ func Load(path string) (*PolicyFile, error) {
 	if err := dec.Decode(&pf); err != nil {
 		return nil, fmt.Errorf("parsing policy YAML: %w", err)
 	}
+	normalizeDefaults(&pf)
 	return &pf, nil
+}
+
+// normalizeDefaults fills in default values for optional fields after parsing.
+// This ensures all downstream consumers see resolved values.
+func normalizeDefaults(pf *PolicyFile) {
+	if pf.Egress != nil && pf.Egress.Mode == "" {
+		pf.Egress.Mode = "enforce"
+	}
+	for _, override := range pf.Agents {
+		if override != nil && override.Egress != nil && override.Egress.Mode == "" {
+			override.Egress.Mode = "enforce"
+		}
+	}
 }
 
 // Validate checks the structural validity of a loaded policy.

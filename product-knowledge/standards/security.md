@@ -1,6 +1,6 @@
 <!--
 GLaDOS-MANAGED DOCUMENT
-Last Updated: 2026-03-25
+Last Updated: 2026-03-28
 To modify: Edit directly. These standards are expected to evolve as we learn more.
 -->
 
@@ -46,7 +46,7 @@ When a policy defines a security control, each provider enforces it with the bes
 
 | Control | Local (Dev) | Remote (Staging) | Enterprise (Prod) |
 |---|---|---|---|
-| **Egress filtering** | Configurable: validate (warns only) or enforce (per-agent Envoy proxy with domain-based CONNECT filtering + iptables DROP rules) | Per-agent Envoy proxy with domain allowlist + iptables DROP rules | Per-agent Envoy proxy with domain allowlist. No iptables enforcement (deferred — Phase 3). Blocked attempts logged. |
+| **Egress filtering** | Configurable: validate (warns only) or enforce (per-agent Envoy proxy + iptables DROP rules). Default: enforce. | Per-agent Envoy proxy + iptables DROP rules. Respects policy mode. Default: enforce. | Per-agent Envoy proxy + iptables DROP rules. Respects policy mode. Default: enforce. |
 | **Host access** | N/A (user's machine) | SSH key-only auth. Gateway via SSH tunnel. | Zero ingress. No SSH. SSM-only. Gateway via SSM tunnel. |
 | **Secrets backend** | File, mode 0400. User owns disk encryption. | File, mode 0400 on remote. | AWS Secrets Manager. Encrypted at rest. IAM-scoped. |
 | **IAM / RBAC** | N/A (single user) | Admin: SSH. End users: CLI-only, scoped to assigned agent. | AWS SSO + IAM roles with explicit deny. Per-user permission sets (planned). |
@@ -63,7 +63,7 @@ Egress domain allowlisting is the single highest-impact security control and the
 |---|---|
 | `allowed_domains` | Domains the agent can reach (e.g., api.anthropic.com, *.slack.com). Wildcards supported. |
 | `blocked_domains` | Explicit deny list. Takes precedence over allowed_domains. |
-| `mode` | `validate` (warn-only, default for local) or `enforce` (activate enforcement mechanism). |
+| `mode` | `enforce` (activate proxy + iptables, default) or `validate` (warn-only). All providers respect this field. |
 
 Defined in `conga-policy.yaml` egress section. See `specs/2026-03-25_feature_policy-schema/` for schema.
 

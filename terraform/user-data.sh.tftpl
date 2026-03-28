@@ -454,6 +454,8 @@ generate_egress_conf() {
   local AGENT_BLOCKED=""
   local GLOBAL_ALLOWED=""
   local GLOBAL_BLOCKED=""
+  local GLOBAL_MODE=""
+  local AGENT_MODE=""
 
   while IFS= read -r line; do
     # Detect agent-specific section
@@ -510,6 +512,10 @@ generate_egress_conf() {
       d=$(echo "$line" | sed 's/^        - //; s/^"//; s/"$//' | tr -d "'" | xargs)
       [ -n "$d" ] && AGENT_BLOCKED="$AGENT_BLOCKED $d"
     fi
+    # Detect agent egress mode
+    if $IN_AGENT_EGRESS && echo "$line" | grep -qE "^      mode:"; then
+      AGENT_MODE=$(echo "$line" | sed 's/^      mode: *//' | tr -d '"' | tr -d "'" | xargs)
+    fi
 
     # Detect global egress section
     if echo "$line" | grep -qE "^egress:"; then
@@ -550,6 +556,10 @@ generate_egress_conf() {
       d=$(echo "$line" | sed 's/^    - //; s/^"//; s/"$//' | tr -d "'" | xargs)
       [ -n "$d" ] && GLOBAL_BLOCKED="$GLOBAL_BLOCKED $d"
     fi
+    # Detect global egress mode
+    if $IN_GLOBAL_EGRESS && echo "$line" | grep -qE "^  mode:"; then
+      GLOBAL_MODE=$(echo "$line" | sed 's/^  mode: *//' | tr -d '"' | tr -d "'" | xargs)
+    fi
   done < "$POLICY_FILE"
 
   # Agent override replaces global (shallow merge per spec)
@@ -561,6 +571,15 @@ generate_egress_conf() {
     ALLOWED="$GLOBAL_ALLOWED"
     BLOCKED="$GLOBAL_BLOCKED"
   fi
+
+  # Resolve effective mode (agent override takes precedence, default is "enforce")
+  local EFFECTIVE_MODE=""
+  if [ -n "$AGENT_ALLOWED" ]; then
+    EFFECTIVE_MODE="$${AGENT_MODE:-$$GLOBAL_MODE}"
+  else
+    EFFECTIVE_MODE="$GLOBAL_MODE"
+  fi
+  EFFECTIVE_MODE="$${EFFECTIVE_MODE:-enforce}"
 
   # Remove blocked domains from allowed list
   if [ -n "$BLOCKED" ]; then
@@ -585,6 +604,12 @@ generate_egress_conf() {
   # No domains = no egress conf to generate
   DOMAINS=$(echo "$ALLOWED" | xargs) # trim
   if [ -z "$DOMAINS" ]; then
+    return
+  fi
+
+  # Only generate proxy config when mode is enforce
+  if [ "$EFFECTIVE_MODE" != "enforce" ]; then
+    log "Egress rules defined for $AGENT_NAME but mode=$EFFECTIVE_MODE — proxy not activated. Set mode: enforce to activate."
     return
   fi
 
@@ -762,6 +787,8 @@ ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
 ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="--max-old-space-size=1536" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
+ExecStartPost=-/bin/bash -c 'if [ -f /opt/conga/config/egress-$AGENT_NAME.yaml ]; then AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN; fi; fi'
+ExecStopPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -D DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || true; fi'
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
 StandardOutput=append:/var/log/conga-$AGENT_NAME.log
 StandardError=append:/var/log/conga-$AGENT_NAME.log
@@ -787,6 +814,15 @@ for OLD_UNIT in /etc/systemd/system/conga-*.service; do
     conga-router|conga-image-refresh|conga-config-check|conga-session-metrics) continue ;;
   esac
   echo "Stopping previous agent: $UNIT_NAME"
+  # Clean up egress iptables rules before stopping (need container IP while running)
+  AGENT_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$UNIT_NAME" 2>/dev/null || echo "")
+  AGENT_NET="${UNIT_NAME#conga-}"
+  NET_CIDR=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "conga-$AGENT_NET" 2>/dev/null || echo "")
+  if [ -n "$AGENT_IP" ] && [ -n "$NET_CIDR" ]; then
+    iptables -D DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
+    iptables -D DOCKER-USER -s "$AGENT_IP" -d "$NET_CIDR" -j RETURN 2>/dev/null || true
+    iptables -D DOCKER-USER -s "$AGENT_IP" -j DROP 2>/dev/null || true
+  fi
   systemctl stop "$UNIT_NAME" 2>/dev/null || true
   docker rm -f "$UNIT_NAME" 2>/dev/null || true
   systemctl disable "$UNIT_NAME" 2>/dev/null || true

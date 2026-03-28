@@ -281,6 +281,76 @@ func TestEnforcementReportRemote(t *testing.T) {
 	}
 }
 
+func TestEnforcementReportAWSValidate(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: "validate"},
+	}
+	reports := pf.EnforcementReport("aws")
+	for _, r := range reports {
+		if r.Rule == "domain_allowlist" && r.Level != ValidateOnly {
+			t.Errorf("aws validate mode: expected validate-only, got %s", r.Level)
+		}
+	}
+}
+
+func TestEnforcementReportRemoteValidate(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: "validate"},
+	}
+	reports := pf.EnforcementReport("remote")
+	for _, r := range reports {
+		if r.Rule == "domain_allowlist" && r.Level != ValidateOnly {
+			t.Errorf("remote validate mode: expected validate-only, got %s", r.Level)
+		}
+	}
+}
+
+func TestDefaultModeIsEnforce(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/conga-policy.yaml"
+	if err := os.WriteFile(path, []byte("apiVersion: conga.dev/v1alpha1\negress:\n  allowed_domains:\n    - api.anthropic.com\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pf, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pf.Egress.Mode != "enforce" {
+		t.Errorf("expected default mode 'enforce', got %q", pf.Egress.Mode)
+	}
+}
+
+func TestDefaultModeAgentOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/conga-policy.yaml"
+	yaml := `apiVersion: conga.dev/v1alpha1
+egress:
+  allowed_domains:
+    - api.anthropic.com
+agents:
+  myagent:
+    egress:
+      allowed_domains:
+        - api.anthropic.com
+        - "*.trello.com"
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pf, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pf.Egress.Mode != "enforce" {
+		t.Errorf("expected global default mode 'enforce', got %q", pf.Egress.Mode)
+	}
+	if pf.Agents["myagent"].Egress.Mode != "enforce" {
+		t.Errorf("expected agent override default mode 'enforce', got %q", pf.Agents["myagent"].Egress.Mode)
+	}
+}
+
 func TestMergeForAgentDeepCopy(t *testing.T) {
 	pf := &PolicyFile{
 		APIVersion: CurrentAPIVersion,
