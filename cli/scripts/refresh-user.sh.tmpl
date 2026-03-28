@@ -52,9 +52,9 @@ systemctl restart conga-$AGENT_NAME
 # Reconnect router to agent network (lost on container restart)
 docker network connect "conga-$AGENT_NAME" conga-router 2>/dev/null || true
 
-# Re-apply egress iptables rules (if egress proxy config exists)
-EGRESS_CONF="/opt/conga/config/egress-$AGENT_NAME.yaml"
-if [ -f "$EGRESS_CONF" ]; then
+# Re-apply egress iptables rules (enforce mode only)
+EGRESS_MODE=$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null || echo "")
+if [ "$EGRESS_MODE" = "enforce" ]; then
   # Wait for container to be running
   AGENT_IP=""
   for i in $(seq 1 10); do

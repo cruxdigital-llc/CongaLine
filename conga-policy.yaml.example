@@ -21,9 +21,9 @@ egress:
   # Domains explicitly blocked (takes precedence over allowed_domains).
   blocked_domains: []
 
-  # Enforcement mode (all providers).
-  #   enforce  — activate per-agent egress proxy + iptables DROP rules (default)
-  #   validate — warn about unenforced rules only
+  # Enforcement mode (all providers). Proxy is always deployed when domains are defined.
+  #   enforce  — proxy with domain filtering + iptables DROP rules (default)
+  #   validate — proxy in passthrough mode, logs what would be blocked (no iptables)
   mode: enforce
 
 # --- Routing Policy ---

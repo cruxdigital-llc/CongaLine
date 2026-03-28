@@ -607,10 +607,16 @@ generate_egress_conf() {
     return
   fi
 
-  # Only generate proxy config when mode is enforce
-  if [ "$EFFECTIVE_MODE" != "enforce" ]; then
-    log "Egress rules defined for $AGENT_NAME but mode=$EFFECTIVE_MODE — proxy not activated. Set mode: enforce to activate."
-    return
+  # Determine deny action based on mode
+  # validate: log what would be denied but allow traffic through
+  # enforce: return 403 to deny non-allowlisted traffic
+  if [ "$EFFECTIVE_MODE" = "validate" ]; then
+    log "Egress proxy for $AGENT_NAME in validate mode (logging only)."
+    local DENY_ACTION='                    h:logWarn("egress-validate: would deny " .. host)'
+    local MISSING_HOST_ACTION='                      return'
+  else
+    local DENY_ACTION='                    h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\\n")'
+    local MISSING_HOST_ACTION='                      h:respond({[":status"] = "403"}, "egress denied: missing host\\n"); return'
   fi
 
   # Generate Envoy config with Lua-based domain filtering
@@ -672,13 +678,14 @@ $(echo -e "$SUFFIX_ENTRIES")                  }
                   function envoy_on_request(h)
                     local a = h:headers():get(":authority") or ""
                     local m = a:match("^([^:]+)")
-                    if not m then h:respond({[":status"] = "403"}, "egress denied: missing host\n"); return end
+$MISSING_HOST_ACTION
+                    end
                     local host = m:lower()
                     if EXACT[host] then return end
                     for _, s in ipairs(SUFFIXES) do
                       if host == s:sub(2) or host:sub(-#s) == s then return end
                     end
-                    h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\n")
+$DENY_ACTION
                   end
           - name: envoy.filters.http.dynamic_forward_proxy
             typed_config:
@@ -702,7 +709,10 @@ $(echo -e "$SUFFIX_ENTRIES")                  }
 ENVOY_CONF
 
   chmod 0400 "$CONF_OUT"
-  log "Generated egress config for $AGENT_NAME with domains: $DOMAINS"
+
+  # Write mode marker so systemd hooks know whether to apply iptables
+  echo "$EFFECTIVE_MODE" > "/opt/conga/config/egress-$AGENT_NAME.mode"
+  log "Generated egress config for $AGENT_NAME (mode=$EFFECTIVE_MODE) with domains: $DOMAINS"
 }
 
 # Shared setup logic for both agent types
@@ -787,7 +797,7 @@ ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
 ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="--max-old-space-size=1536" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
-ExecStartPost=-/bin/bash -c 'if [ -f /opt/conga/config/egress-$AGENT_NAME.yaml ]; then AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN; fi; fi'
+ExecStartPost=-/bin/bash -c 'MODE=\$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null); if [ "\$MODE" = "enforce" ]; then AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN; fi; fi'
 ExecStopPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -D DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || true; fi'
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
 StandardOutput=append:/var/log/conga-$AGENT_NAME.log

@@ -4,7 +4,10 @@
 
 Fix all three providers to consistently respect the `mode` field in `conga-policy.yaml`'s egress section, and add iptables enforcement to the AWS bootstrap. Currently only the local provider honors `mode: validate` vs `mode: enforce`. The remote provider ignores `mode` and always enforces, the AWS provider has no mode check, and the AWS bootstrap lacks iptables DROP rules entirely (relying solely on the Envoy proxy).
 
-This spec aligns all three providers: when `mode` is `enforce` (or absent — the default), start the egress proxy and apply iptables DROP rules. When `mode` is `validate`, log warnings but do not enforce.
+This spec aligns all three providers. The egress proxy is **always deployed** when domains are defined, regardless of mode. The `mode` field controls enforcement intensity:
+
+- **`validate`**: Proxy deployed in **passthrough mode** (all traffic forwarded, no domain filtering). `HTTPS_PROXY` set on agent. No iptables DROP rules. Traffic travels through all layers but nothing is blocked.
+- **`enforce`** (default): Proxy deployed with **domain filtering** (Lua allowlist). `HTTPS_PROXY` set on agent. iptables DROP rules applied (hard enforcement — bypassing the proxy is impossible).
 
 **Default mode is `enforce`** — security-first. Operators who want warn-only must explicitly set `mode: validate`.
 
@@ -39,21 +42,20 @@ The `validateEgress()` function accepts `""` as valid. Keep this — the normali
 
 ---
 
-## Phase 2: Remote Provider — Respect `mode` field
+## Phase 2: All Providers — Split proxy deployment from iptables enforcement
 
-### 2.1 `ProvisionAgent` (line ~236)
+The key design change: **proxy deployment** and **iptables enforcement** are separate concerns.
 
-**File**: `cli/internal/provider/remoteprovider/provider.go`
+- `egressProxy`: true when domains are defined (ANY mode) — deploy proxy, set HTTPS_PROXY
+- `egressEnforce`: true only when `mode == "enforce"` — apply iptables DROP rules, use domain filtering in proxy
+
+When `egressProxy` is true but `egressEnforce` is false (validate mode), the proxy is started with **no domains** passed to `GenerateProxyConf()` / `generate_egress_conf()`, which generates a passthrough config (the Lua filter block is omitted). Traffic flows through the proxy but is never blocked.
+
+### 2.1 Local Provider — `ProvisionAgent` and `RefreshAgent`
+
+**File**: `cli/internal/provider/localprovider/provider.go`
 
 Replace:
-```go
-egressEnforce := false
-if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-    egressEnforce = true // Remote always enforces when domains defined
-}
-```
-
-With:
 ```go
 egressEnforce := false
 if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
@@ -65,66 +67,42 @@ if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
 }
 ```
 
-This matches the local provider's pattern exactly (see `localprovider/provider.go` lines 192-198).
-
-### 2.2 `RefreshAgent` (line ~599)
-
-**File**: `cli/internal/provider/remoteprovider/provider.go`
-
-Same replacement — the `RefreshAgent` function has an identical block at line ~599:
-
-Replace:
-```go
-egressEnforce := false
-if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-    egressEnforce = true
-}
-```
-
 With:
 ```go
+egressProxy := false
 egressEnforce := false
 if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-    if egressPolicy.Mode != "enforce" {
-        fmt.Fprintf(os.Stderr, "Warning: Egress rules defined but not enforced in validate mode. Set mode: enforce in conga-policy.yaml to activate the egress proxy.\n")
-    } else {
+    egressProxy = true
+    if egressPolicy.Mode == "enforce" {
         egressEnforce = true
+    } else {
+        fmt.Fprintf(os.Stderr, "Egress proxy active in validate mode (passthrough). Set mode: enforce to activate domain filtering + iptables.\n")
     }
 }
 ```
 
-### 2.3 `ensureEgressIptables` (line ~437)
+Then update all proxy-related code to use `egressProxy` instead of `egressEnforce`:
+- Start proxy: `if egressProxy` (always when domains defined)
+- Pass domains to proxy: `if egressEnforce` pass `EffectiveAllowedDomains()`, else pass `nil` (passthrough)
+- Set HTTPS_PROXY on container: `if egressProxy`
+- Write proxy bootstrap JS: `if egressProxy`
+- Apply iptables: `if egressEnforce` (unchanged)
+
+### 2.2 Remote Provider — `ProvisionAgent` and `RefreshAgent`
 
 **File**: `cli/internal/provider/remoteprovider/provider.go`
 
-Update the comment and add the mode check. Replace:
-```go
-// ensureEgressIptables checks if iptables egress rules are in place for a running
-// container and re-applies them if missing. Handles IP changes after container restart.
-//
-// Unlike the local provider, this does NOT check egressPolicy.Mode because the remote
-// provider always enforces iptables when allowed_domains are defined. The "validate" vs
-// "enforce" mode distinction only applies to the local provider.
-func (p *RemoteProvider) ensureEgressIptables(ctx context.Context, agentName string) {
-	egressPolicy, err := policy.LoadEgressPolicy(p.dataDir, agentName)
-	if err != nil || egressPolicy == nil || len(egressPolicy.AllowedDomains) == 0 {
-		return
-	}
-```
+Same split as local provider. Both `ProvisionAgent` (~line 236) and `RefreshAgent` (~line 599) get the same pattern.
 
-With:
-```go
-// ensureEgressIptables checks if iptables egress rules are in place for a running
-// container and re-applies them if missing. Handles IP changes after container restart.
-// Only applies when egress policy mode is "enforce".
-func (p *RemoteProvider) ensureEgressIptables(ctx context.Context, agentName string) {
-	egressPolicy, err := policy.LoadEgressPolicy(p.dataDir, agentName)
-	if err != nil || egressPolicy == nil || egressPolicy.Mode != "enforce" || len(egressPolicy.AllowedDomains) == 0 {
-		return
-	}
-```
+### 2.3 Remote Provider — `ensureEgressIptables`
 
-This matches the local provider's `ensureEgressIptables` check (see `localprovider/provider.go` line 392).
+**File**: `cli/internal/provider/remoteprovider/provider.go`
+
+No change from current implementation — already checks `egressPolicy.Mode != "enforce"`.
+
+### 2.4 Local Provider — `ensureEgressIptables`
+
+No change — already checks `egressPolicy.Mode != "enforce"`.
 
 ---
 
@@ -169,29 +147,29 @@ fi
 EFFECTIVE_MODE="${EFFECTIVE_MODE:-enforce}"
 ```
 
-### 3.2 Skip config generation when `mode != enforce`
+### 3.2 Generate passthrough config in validate mode
 
-At the end of `generate_egress_conf()`, before the "No domains = no egress conf" check (line ~585), add:
+At the end of `generate_egress_conf()`, before the domain list is written into the Envoy config, add mode-based behavior:
 
 ```bash
-# Validate mode — only generate config when enforcing
+# In validate mode, generate passthrough config (no Lua filter = all traffic forwarded)
 if [ "$EFFECTIVE_MODE" != "enforce" ]; then
-    if [ -n "$DOMAINS" ]; then
-        log "Egress rules defined for $AGENT_NAME but mode=$EFFECTIVE_MODE — proxy not activated. Set mode: enforce to activate."
-    fi
-    return
+    log "Egress proxy for $AGENT_NAME in validate mode (passthrough — all traffic forwarded)."
+    DOMAINS=""  # Empty domains = passthrough config (no Lua filter block)
 fi
 ```
 
-### 3.3 Verify proxy startup is gated
+This means the proxy is **always started** when domains are defined. In validate mode, the Envoy config omits the Lua domain filter, so all CONNECT requests are forwarded. In enforce mode, the Lua filter restricts to the allowlist.
 
-The existing proxy startup code (lines 711-743) is already gated on `[ -f "$EGRESS_CONF" ]`. Since `generate_egress_conf()` will no longer create the config file in validate mode, the proxy will not start. No changes needed to the proxy startup section.
+### 3.3 Proxy startup is no longer gated on mode
 
-### 3.4 Add iptables DROP rules to bootstrap
+The existing proxy startup code (lines 711-743) is gated on `[ -f "$EGRESS_CONF" ]`. Since `generate_egress_conf()` now always generates a config when domains exist (passthrough in validate, filtering in enforce), the proxy always starts. No changes needed to the proxy startup section.
+
+### 3.4 Add iptables DROP rules to bootstrap (enforce mode only)
 
 **File**: `terraform/user-data.sh.tftpl`
 
-After the proxy startup section (line ~743) and before the systemd unit generation, add iptables enforcement when the egress proxy is active:
+After the proxy startup section (line ~743) and before the systemd unit generation, add iptables enforcement **only when mode is enforce**. The proxy is always running, but iptables are the hard enforcement that prevents bypassing it:
 
 ```bash
   # Apply iptables egress DROP rules (when proxy is active)
@@ -287,6 +265,116 @@ fi
 
 ---
 
+## Phase 3b: Validate-Mode Lua Filter (Log-but-Allow)
+
+### 3b.1 Add `mode` parameter to `GenerateProxyConf()`
+
+**File**: `cli/internal/policy/egress.go`
+
+Change signature from:
+```go
+func GenerateProxyConf(domains []string) string
+```
+
+To:
+```go
+func GenerateProxyConf(domains []string, mode string) string
+```
+
+Pass `mode` through to the template data:
+```go
+type envoyConfigData struct {
+    HasDomains   bool
+    ValidateMode bool     // true = log-but-allow, false = deny
+    ExactDomains []string
+    Suffixes     []string
+}
+```
+
+When `mode == "validate"` and domains are provided, set `HasDomains = true` AND `ValidateMode = true`. The template will generate a Lua filter that matches domains but logs warnings instead of returning 403.
+
+### 3b.2 Update Envoy config template
+
+**File**: `cli/internal/policy/templates/envoy-config.yaml.tmpl`
+
+Replace the Lua `envoy_on_request` function body:
+
+```
+{{- if .HasDomains}}
+          - name: envoy.filters.http.lua
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+              default_source_code:
+                inline_string: |
+                  local EXACT = {
+{{range .ExactDomains}}                    ["{{.}}"] = true,
+{{end}}                  }
+                  local SUFFIXES = {
+{{range .Suffixes}}                    ".{{.}}",
+{{end}}                  }
+                  function envoy_on_request(h)
+                    local a = h:headers():get(":authority") or ""
+                    local m = a:match("^([^:]+)")
+                    if not m then
+{{- if .ValidateMode}}
+                      return
+{{- else}}
+                      h:respond({[":status"] = "403"}, "egress denied: missing host\n"); return
+{{- end}}
+                    end
+                    local host = m:lower()
+                    if EXACT[host] then return end
+                    for _, s in ipairs(SUFFIXES) do
+                      if host == s:sub(2) or host:sub(-#s) == s then return end
+                    end
+{{- if .ValidateMode}}
+                    h:logWarn("egress-validate: would deny " .. host)
+{{- else}}
+                    h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\n")
+{{- end}}
+                  end
+{{- end}}
+```
+
+In validate mode, the filter:
+- Still evaluates every request against the allowlist
+- Logs `egress-validate: would deny <host>` for requests that would be blocked
+- **Allows the request to proceed**
+
+Administrators see these warnings in `docker logs conga-egress-<agent>`, giving full visibility into what enforcement would do before enabling it.
+
+### 3b.3 Update AWS bootstrap Lua generation
+
+**File**: `terraform/user-data.sh.tftpl`
+
+The bootstrap's `generate_egress_conf()` generates the same Envoy config inline. In validate mode, replace the deny line with a log-and-allow:
+
+```bash
+if [ "$EFFECTIVE_MODE" = "validate" ]; then
+    DENY_ACTION='                    h:logWarn("egress-validate: would deny " .. host)'
+else
+    DENY_ACTION='                    h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\\n")'
+fi
+```
+
+And for missing host:
+```bash
+if [ "$EFFECTIVE_MODE" = "validate" ]; then
+    MISSING_HOST_ACTION='                      return'
+else
+    MISSING_HOST_ACTION='                      h:respond({[":status"] = "403"}, "egress denied: missing host\\n"); return'
+fi
+```
+
+### 3b.4 Update all callers of `GenerateProxyConf()`
+
+All call sites must pass the mode:
+- `localprovider/provider.go` — `GenerateProxyConf(domains, egressPolicy.Mode)`
+- `remoteprovider/provider.go` — `GenerateProxyConf(domains, egressPolicy.Mode)`
+- Tests in `egress_test.go` — update existing calls
+
+---
+
 ## Phase 4: Enforcement Report — Reflect actual behavior
 
 ### 4.1 Update `egressReport()`
@@ -304,12 +392,12 @@ func egressReport(e *EgressPolicy, providerName string) []RuleReport {
 		var detail string
 		switch providerName {
 		case "aws", "remote", "local":
-			if e.Mode == "enforce" {
+			if e.Mode != "validate" {
 				level = Enforced
-				detail = "Per-agent Envoy proxy with domain-based CONNECT filtering + iptables DROP rules"
+				detail = "Per-agent Envoy proxy with domain filtering + iptables DROP rules"
 			} else {
 				level = ValidateOnly
-				detail = "Warnings only; set mode: enforce to activate egress proxy"
+				detail = "Per-agent Envoy proxy in passthrough mode (no iptables). Set mode: enforce to activate filtering."
 			}
 		default:
 			level = NotApplicable
@@ -409,8 +497,8 @@ Replace:
 With:
 ```yaml
   # Enforcement mode (all providers).
-  #   enforce  — activate per-agent egress proxy + iptables DROP rules (default)
-  #   validate — warn about unenforced rules only
+  #   enforce  — proxy with domain filtering + iptables DROP rules (default)
+  #   validate — proxy in passthrough mode, no iptables (traffic observed, not blocked)
   mode: enforce
 ```
 
@@ -457,21 +545,22 @@ In the `conga-policy.yaml.example` comment reference in the Secrets section, no 
 
 | Scenario | Expected Behavior |
 |----------|------------------|
-| No `mode` field in YAML | Defaults to `enforce` (proxy + iptables active) |
-| `mode: validate` with domains | All providers: log warning, no proxy, no iptables |
-| `mode: enforce` with domains | All providers: start proxy, apply iptables DROP rules |
-| `mode: enforce` with no domains | No proxy (no domains to filter) |
+| No `mode` field in YAML | Defaults to `enforce` (proxy with domain filtering + iptables) |
+| `mode: validate` with domains | All providers: proxy deployed in passthrough mode, HTTPS_PROXY set, no iptables |
+| `mode: enforce` with domains | All providers: proxy with domain filtering, HTTPS_PROXY set, iptables DROP rules |
+| `mode: enforce` with no domains | No proxy (no domains = nothing to proxy) |
+| `mode: validate` with no domains | No proxy (no domains = nothing to proxy) |
 | Agent override with different mode | Agent's mode overrides global (per existing `MergeForAgent()` shallow merge) |
 | Policy file doesn't exist | No proxy (nil policy, no-op — unchanged) |
-| Transition enforce → validate | `RefreshAgent` / `RefreshAll` removes proxy; systemd `ExecStopPost` cleans iptables |
-| Transition validate → enforce | `RefreshAgent` / `RefreshAll` starts proxy; systemd `ExecStartPost` applies iptables |
-| Container restart (IP change) | Systemd `ExecStartPost` applies rules with new IP; `ExecStopPost` cleans old rules |
-| Docker daemon restart | Systemd restarts containers; `ExecStartPost` re-applies iptables rules |
+| Transition enforce → validate | `RefreshAgent` / `RefreshAll` reconfigures proxy to passthrough, removes iptables |
+| Transition validate → enforce | `RefreshAgent` / `RefreshAll` reconfigures proxy with filtering, applies iptables |
+| Container restart (IP change) | Systemd `ExecStartPost` applies iptables (enforce only); proxy stays running |
+| Docker daemon restart | Systemd restarts containers; `ExecStartPost` re-applies iptables (enforce only) |
 | Host reboot (AWS) | `conga-image-refresh.service` runs, agent services start, `ExecStartPost` applies iptables |
 
 ## Migration Impact
 
-- **Operators with `mode: enforce`**: Zero change. Proxy and iptables active as before (local/remote). AWS gains iptables rules.
-- **Operators with `mode: validate`**: Zero change on local (already worked). Remote will now correctly skip the proxy — this is the behavior they asked for.
-- **Operators with no mode field**: The default is now `enforce`. On local, this is a **behavioral change** — previously local defaulted to `validate`. On remote/AWS, no change since they were already enforcing. Operators who want warn-only must now explicitly set `mode: validate`.
-- **Existing AWS deployments**: Gain iptables DROP rules on next `RefreshAll` or host cycle. This strengthens security — a container that bypasses `HTTPS_PROXY` can no longer reach the internet directly.
+- **Operators with `mode: enforce`**: Proxy and iptables active as before (local/remote). AWS gains iptables rules.
+- **Operators with `mode: validate`**: Proxy now deployed in passthrough mode (previously skipped). Traffic flows through proxy but nothing is blocked. No iptables.
+- **Operators with no mode field**: The default is now `enforce`. Full enforcement on all providers.
+- **Existing AWS deployments**: Gain egress proxy + iptables DROP rules on next host cycle. This strengthens security — a container that bypasses `HTTPS_PROXY` can no longer reach the internet directly.

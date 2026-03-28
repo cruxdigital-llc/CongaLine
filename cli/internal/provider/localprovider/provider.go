@@ -189,12 +189,14 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	if policyErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy: %v\n", policyErr)
 	}
+	egressProxy := false
 	egressEnforce := false
 	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-		if egressPolicy.Mode != "enforce" {
-			fmt.Fprintf(os.Stderr, "Warning: Egress rules defined but not enforced in validate mode. Set mode: enforce in conga-policy.yaml to activate the egress proxy.\n")
-		} else {
+		egressProxy = true
+		if egressPolicy.Mode == "enforce" {
 			egressEnforce = true
+		} else {
+			fmt.Fprintf(os.Stderr, "Egress proxy active in validate mode (logging only). Set mode: enforce to activate domain filtering + iptables.\n")
 		}
 	}
 
@@ -207,10 +209,10 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		}
 	}
 
-	// 7. Start per-agent egress proxy (enforce mode only)
-	if egressEnforce {
+	// 7. Start per-agent egress proxy (always when domains defined)
+	if egressProxy {
 		domains := policy.EffectiveAllowedDomains(egressPolicy)
-		if err := p.startAgentEgressProxy(ctx, cfg.Name, domains); err != nil {
+		if err := p.startAgentEgressProxy(ctx, cfg.Name, domains, egressPolicy.Mode); err != nil {
 			return fmt.Errorf("failed to start egress proxy: %w", err)
 		}
 	}
@@ -233,7 +235,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 
 	// Write proxy bootstrap script for Node.js CONNECT tunneling
 	var bootstrapPath string
-	if egressEnforce {
+	if egressProxy {
 		bootstrapPath = filepath.Join(p.configDir(), "proxy-bootstrap.js")
 		if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
 			return fmt.Errorf("failed to write proxy bootstrap: %w", err)
@@ -249,14 +251,14 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		DataDir:            dataDir,
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
-		EgressEnforce:      egressEnforce,
+		EgressEnforce:      egressProxy,
 		EgressProxyName:    policy.EgressProxyName(cfg.Name),
 		ProxyBootstrapPath: bootstrapPath,
 	}); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
 
-	// Apply iptables egress enforcement (DROP non-subnet traffic)
+	// Apply iptables egress enforcement (DROP non-subnet traffic) — enforce mode only
 	if egressEnforce {
 		agentIP, err := containerIPOnNetwork(ctx, cName, netName)
 		if err != nil {
@@ -559,12 +561,14 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	if policyErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy: %v\n", policyErr)
 	}
+	egressProxy := false
 	egressEnforce := false
 	if egressPolicy != nil && len(egressPolicy.AllowedDomains) > 0 {
-		if egressPolicy.Mode != "enforce" {
-			fmt.Fprintf(os.Stderr, "Warning: Egress rules defined but not enforced in validate mode. Set mode: enforce in conga-policy.yaml to activate the egress proxy.\n")
-		} else {
+		egressProxy = true
+		if egressPolicy.Mode == "enforce" {
 			egressEnforce = true
+		} else {
+			fmt.Fprintf(os.Stderr, "Egress proxy active in validate mode (logging only). Set mode: enforce to activate domain filtering + iptables.\n")
 		}
 	}
 
@@ -610,17 +614,17 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return fmt.Errorf("failed to create network %s: %w", netName, err)
 	}
 
-	// Start per-agent egress proxy (enforce mode only)
-	if egressEnforce {
+	// Start per-agent egress proxy (always when domains defined)
+	if egressProxy {
 		domains := policy.EffectiveAllowedDomains(egressPolicy)
-		if err := p.startAgentEgressProxy(ctx, agentName, domains); err != nil {
+		if err := p.startAgentEgressProxy(ctx, agentName, domains, egressPolicy.Mode); err != nil {
 			return fmt.Errorf("failed to start egress proxy: %w", err)
 		}
 	}
 
 	// Write proxy bootstrap script for Node.js CONNECT tunneling
 	var bootstrapPath string
-	if egressEnforce {
+	if egressProxy {
 		bootstrapPath = filepath.Join(p.configDir(), "proxy-bootstrap.js")
 		if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
 			return fmt.Errorf("failed to write proxy bootstrap: %w", err)
@@ -640,14 +644,14 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		DataDir:            dataDir,
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
-		EgressEnforce:      egressEnforce,
+		EgressEnforce:      egressProxy,
 		EgressProxyName:    policy.EgressProxyName(agentName),
 		ProxyBootstrapPath: bootstrapPath,
 	}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
 	}
 
-	// Apply iptables egress enforcement
+	// Apply iptables egress enforcement — enforce mode only
 	if egressEnforce {
 		agentIP, err := containerIPOnNetwork(ctx, cName, netName)
 		if err != nil {
@@ -1236,7 +1240,7 @@ func (p *LocalProvider) ensureEgressProxy(ctx context.Context) {
 }
 
 // startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering.
-func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string) error {
+func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string, mode string) error {
 	proxyName := policy.EgressProxyName(agentName)
 	netName := networkName(agentName)
 
@@ -1254,7 +1258,7 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 	}
 
 	// Generate Envoy config
-	conf := policy.GenerateProxyConf(domains)
+	conf := policy.GenerateProxyConf(domains, mode)
 	confPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", agentName))
 	if err := os.MkdirAll(filepath.Dir(confPath), 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)

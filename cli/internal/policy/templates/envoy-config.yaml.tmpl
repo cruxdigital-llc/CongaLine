@@ -42,13 +42,21 @@ static_resources:
                   function envoy_on_request(h)
                     local a = h:headers():get(":authority") or ""
                     local m = a:match("^([^:]+)")
+{{- if .ValidateMode}}
+                    if not m then return end
+{{- else}}
                     if not m then h:respond({[":status"] = "403"}, "egress denied: missing host\n"); return end
+{{- end}}
                     local host = m:lower()
                     if EXACT[host] then return end
                     for _, s in ipairs(SUFFIXES) do
                       if host == s:sub(2) or host:sub(-#s) == s then return end
                     end
+{{- if .ValidateMode}}
+                    h:logWarn("egress-validate: would deny " .. host)
+{{- else}}
                     h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\n")
+{{- end}}
                   end
 {{- end}}
           - name: envoy.filters.http.dynamic_forward_proxy
