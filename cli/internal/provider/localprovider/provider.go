@@ -1371,7 +1371,9 @@ func buildEgressProxyImage(ctx context.Context) error {
 func (p *LocalProvider) stopAgentEgressProxy(ctx context.Context, agentName string) {
 	proxyName := policy.EgressProxyName(agentName)
 	if containerExists(ctx, proxyName) {
-		removeContainer(ctx, proxyName)
+		if err := removeContainer(ctx, proxyName); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: failed to remove egress proxy %s: %v\n", proxyName, err)
+		}
 	}
 }
 

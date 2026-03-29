@@ -743,7 +743,9 @@ setup_agent_common() {
   docker network create --driver bridge "conga-$AGENT_NAME" || true
 
   # Generate egress config from policy (if policy file exists on host)
-  generate_egress_conf "$AGENT_NAME"
+  if ! generate_egress_conf "$AGENT_NAME"; then
+    log "ERROR: Failed to generate egress config for $AGENT_NAME — agent will start without egress filtering"
+  fi
 
   # Per-agent egress proxy (when policy-generated config exists)
   EGRESS_CONF="/opt/conga/config/egress-$AGENT_NAME.yaml"
@@ -779,8 +781,13 @@ PROXYDF
       -v "$EGRESS_CONF:/etc/envoy/envoy.yaml:ro" \
       conga-egress-proxy \
       envoy -c /etc/envoy/envoy.yaml --log-level warn
-    # Verify proxy started
-    sleep 2
+    # Verify proxy started (retry to allow for slow starts on loaded hosts)
+    for i in $(seq 1 5); do
+      if docker inspect -f '{{.State.Running}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
+        break
+      fi
+      sleep 1
+    done
     if ! docker inspect -f '{{.State.Running}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
       log "ERROR: Egress proxy $EGRESS_PROXY failed to start — $AGENT_NAME will run without egress filtering"
       docker logs "$EGRESS_PROXY" 2>&1 | tail -20 || true

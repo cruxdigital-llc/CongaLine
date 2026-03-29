@@ -11,6 +11,7 @@ import (
 // Save validates, marshals the PolicyFile to YAML, and writes it atomically.
 // The parent directory is created if it does not exist.
 func Save(pf *PolicyFile, path string) error {
+	normalizeDefaults(pf)
 	if err := pf.Validate(); err != nil {
 		return fmt.Errorf("policy validation failed: %w", err)
 	}

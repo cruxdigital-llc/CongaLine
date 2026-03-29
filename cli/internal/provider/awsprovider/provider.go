@@ -519,6 +519,8 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 	}
 
 	if err := validateHeredocSafety(map[string]string{
+		"AgentName":        agentName,
+		"Mode":             string(mode),
 		"PolicyContent":    policyContent,
 		"EnvoyConfig":      envoyConfig,
 		"ProxyBootstrapJS": policy.ProxyBootstrapJS(),

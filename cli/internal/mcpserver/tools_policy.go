@@ -338,9 +338,6 @@ func (s *Server) toolPolicySetRouting() server.ServerTool {
 
 			policy.SetRouting(pf, req.GetString("agent", ""), patch)
 
-			if err := pf.Validate(); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("validation failed: %v", err)), nil
-			}
 			if err := policy.Save(pf, path); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -407,9 +404,6 @@ func (s *Server) toolPolicySetPosture() server.ServerTool {
 
 			policy.SetPosture(pf, req.GetString("agent", ""), patch)
 
-			if err := pf.Validate(); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("validation failed: %v", err)), nil
-			}
 			if err := policy.Save(pf, path); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -505,17 +499,17 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 			var deployed []string
 			var errors []string
 
-			hasEgressDomains := pf.Egress != nil && len(pf.Egress.AllowedDomains) > 0
-			if !hasEgressDomains {
+			hasEgressPolicy := pf.Egress != nil && (len(pf.Egress.AllowedDomains) > 0 || len(pf.Egress.BlockedDomains) > 0)
+			if !hasEgressPolicy {
 				for _, override := range pf.Agents {
-					if override != nil && override.Egress != nil && len(override.Egress.AllowedDomains) > 0 {
-						hasEgressDomains = true
+					if override != nil && override.Egress != nil && (len(override.Egress.AllowedDomains) > 0 || len(override.Egress.BlockedDomains) > 0) {
+						hasEgressPolicy = true
 						break
 					}
 				}
 			}
 
-			if deployer, ok := s.prov.(egressDeployer); ok && hasEgressDomains {
+			if deployer, ok := s.prov.(egressDeployer); ok && hasEgressPolicy {
 				// Provider supports direct egress deployment — generate configs in Go and push
 				for _, name := range targetAgents {
 					merged := pf.MergeForAgent(name)

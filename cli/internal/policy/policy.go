@@ -163,6 +163,9 @@ func (pf *PolicyFile) Validate() error {
 	}
 
 	for name, override := range pf.Agents {
+		if override == nil {
+			continue
+		}
 		if override.Egress != nil {
 			if err := validateEgress(override.Egress); err != nil {
 				return fmt.Errorf("agents.%s.egress: %w", name, err)

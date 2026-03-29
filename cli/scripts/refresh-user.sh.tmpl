@@ -79,8 +79,9 @@ fi
 # Re-apply egress iptables rules (enforce mode only)
 EGRESS_MODE=$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null || echo "")
 if [ -f "/opt/conga/config/egress-$AGENT_NAME.yaml" ] && [ -z "$EGRESS_MODE" ]; then
-  echo "WARNING: Egress config exists but mode file missing for $AGENT_NAME — defaulting to enforce"
+  echo "WARNING: Egress config exists but mode file missing for $AGENT_NAME — defaulting to enforce" >&2
   EGRESS_MODE="enforce"
+  echo "$EGRESS_MODE" > "/opt/conga/config/egress-$AGENT_NAME.mode"
 fi
 if [ "$EGRESS_MODE" = "enforce" ]; then
   # Wait for container to be running

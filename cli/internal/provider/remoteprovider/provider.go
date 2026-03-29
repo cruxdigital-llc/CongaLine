@@ -1137,7 +1137,9 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 // stopAgentEgressProxy removes the per-agent egress proxy container on the remote host.
 func (p *RemoteProvider) stopAgentEgressProxy(ctx context.Context, agentName string) {
 	proxyName := policy.EgressProxyName(agentName)
-	p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName)))
+	if _, err := p.ssh.Run(ctx, fmt.Sprintf("docker rm -f %s 2>/dev/null || true", shellQuote(proxyName))); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: failed to remove egress proxy %s: %v\n", proxyName, err)
+	}
 }
 
 // --- file helpers ---

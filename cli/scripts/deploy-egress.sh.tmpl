@@ -81,8 +81,13 @@ docker run -d \
   conga-egress-proxy \
   -c /etc/envoy/envoy.yaml --log-level warn
 
-# Verify proxy is running
-sleep 2
+# Verify proxy is running (retry to allow for slow starts on loaded hosts)
+for i in $(seq 1 5); do
+  if docker inspect -f '{{`{{.State.Running}}`}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
+    break
+  fi
+  sleep 1
+done
 if ! docker inspect -f '{{`{{.State.Running}}`}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
   echo "ERROR: Egress proxy $EGRESS_PROXY failed to start — check config"
   docker logs "$EGRESS_PROXY" 2>&1 | tail -20 || true
@@ -97,6 +102,8 @@ if [ ! -f "$UNIT_FILE" ]; then
   exit 1
 fi
 # Add proxy env vars if not already present
+# NOTE: This sed pattern depends on '--pids-limit' appearing in the ExecStart line.
+# If the systemd unit template (user-data.sh.tftpl) changes, update this anchor.
 if ! grep -q "HTTPS_PROXY" "$UNIT_FILE"; then
   sed -i "s|--pids-limit|-e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1 --pids-limit|" "$UNIT_FILE"
   if ! grep -q "HTTPS_PROXY" "$UNIT_FILE"; then
