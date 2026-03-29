@@ -19,10 +19,8 @@ import (
 )
 
 const (
-	egressProxyContainer = "conga-egress-proxy"
-	egressProxyImage     = "conga-egress-proxy"
-	egressNetwork        = "conga-egress"
-	routerContainer      = "conga-router"
+	egressProxyImage = "conga-egress-proxy"
+	routerContainer  = "conga-router"
 )
 
 // RemoteProvider implements provider.Provider for any SSH-accessible host.
@@ -255,13 +253,6 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		return fmt.Errorf("failed to start egress proxy: %w", err)
 	}
 
-	// Connect shared egress proxy if running (legacy / passthrough)
-	if p.containerExists(ctx, egressProxyContainer) {
-		if err := p.connectNetwork(ctx, netName, egressProxyContainer); err != nil {
-			return fmt.Errorf("failed to connect egress proxy to network %s: %w", netName, err)
-		}
-	}
-
 	// 8. Start container
 	cName := containerName(cfg.Name)
 	if p.containerExists(ctx, cName) {
@@ -350,9 +341,6 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 
 	if p.containerExists(ctx, routerContainer) {
 		p.disconnectNetwork(ctx, netName, routerContainer)
-	}
-	if p.containerExists(ctx, egressProxyContainer) {
-		p.disconnectNetwork(ctx, netName, egressProxyContainer)
 	}
 
 	if p.networkExists(ctx, netName) {
@@ -643,9 +631,6 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		if p.containerExists(ctx, routerContainer) {
 			p.disconnectNetwork(ctx, netName, routerContainer)
 		}
-		if p.containerExists(ctx, egressProxyContainer) {
-			p.disconnectNetwork(ctx, netName, egressProxyContainer)
-		}
 		if err := p.removeNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
@@ -701,11 +686,6 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 	}
 
-	if p.containerExists(ctx, egressProxyContainer) {
-		if err := p.connectNetwork(ctx, netName, egressProxyContainer); err != nil {
-			return fmt.Errorf("failed to reconnect egress proxy to network %s: %w", netName, err)
-		}
-	}
 	if p.containerExists(ctx, routerContainer) {
 		if err := p.connectNetwork(ctx, netName, routerContainer); err != nil {
 			return fmt.Errorf("failed to reconnect router to network %s: %w", netName, err)
@@ -814,11 +794,9 @@ func (p *RemoteProvider) CycleHost(ctx context.Context) error {
 		}
 	}
 	p.stopContainer(ctx, routerContainer)
-	p.stopContainer(ctx, egressProxyContainer)
 
 	fmt.Println("Restarting...")
 
-	p.ensureEgressProxy(ctx)
 	if err := p.ensureRouter(ctx, false); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
 	}
@@ -903,10 +881,6 @@ func (p *RemoteProvider) cleanupDockerByPrefix(ctx context.Context) {
 		}
 	}
 
-	if p.networkExists(ctx, egressNetwork) {
-		fmt.Printf("Removing network %s...\n", egressNetwork)
-		p.removeNetwork(ctx, egressNetwork)
-	}
 }
 
 // --- infrastructure helpers ---
@@ -986,65 +960,6 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context, restart bool) error {
 	return nil
 }
 
-func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
-	if p.containerExists(ctx, egressProxyContainer) {
-		state, err := p.inspectState(ctx, egressProxyContainer)
-		if err == nil && state.Running {
-			return
-		}
-		p.removeContainer(ctx, egressProxyContainer)
-	}
-
-	if !p.imageExists(ctx, egressProxyImage) {
-		// Check if Dockerfile exists on remote
-		_, err := p.ssh.Run(ctx, fmt.Sprintf("test -f %s",
-			shellQuote(posixpath.Join(p.remoteEgressProxyDir(), "Dockerfile"))))
-		if err == nil {
-			if err := p.buildImage(ctx, p.remoteEgressProxyDir(), egressProxyImage); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to build egress proxy image: %v\n", err)
-				return
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Warning: egress proxy image not found and Dockerfile not available — proxy not started\n")
-			return
-		}
-	}
-
-	if !p.networkExists(ctx, egressNetwork) {
-		if _, err := p.dockerRun(ctx, "network", "create", egressNetwork, "--driver", "bridge"); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to create egress network: %v\n", err)
-			return
-		}
-	}
-
-	fmt.Println("Starting egress proxy...")
-	_, err := p.dockerRun(ctx, "run", "-d",
-		"--name", egressProxyContainer,
-		"--network", egressNetwork,
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--memory", "64m",
-		"--read-only",
-		egressProxyImage,
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to start egress proxy: %v\n", err)
-		return
-	}
-
-	agents, err := p.ListAgents(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not list agents for proxy network connections: %v\n", err)
-	}
-	for _, a := range agents {
-		if err := p.connectNetwork(ctx, networkName(a.Name), egressProxyContainer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to connect proxy to %s network: %v\n", a.Name, err)
-		}
-	}
-
-	fmt.Println("  Egress proxy started.")
-}
-
 // startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering on the remote host.
 func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, ep *policy.EgressPolicy) error {
 	proxyName := policy.EgressProxyName(agentName)
@@ -1095,15 +1010,6 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 
 	if _, err := p.ssh.Run(ctx, cmd); err != nil {
 		return fmt.Errorf("starting egress proxy: %w", err)
-	}
-
-	// Connect proxy to the egress network so it can reach the internet.
-	// The proxy is started on the agent network (so the agent can reach it),
-	// but also needs external connectivity to forward traffic upstream.
-	if p.networkExists(ctx, egressNetwork) {
-		if err := p.connectNetwork(ctx, egressNetwork, proxyName); err != nil {
-			return fmt.Errorf("connecting egress proxy to egress network: %w", err)
-		}
 	}
 
 	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(policy.EffectiveAllowedDomains(ep)))

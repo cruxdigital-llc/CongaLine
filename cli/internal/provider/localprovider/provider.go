@@ -22,10 +22,8 @@ import (
 )
 
 const (
-	egressProxyContainer = "conga-egress-proxy"
-	egressProxyImage     = "conga-egress-proxy"
-	egressNetwork        = "conga-egress"
-	routerContainer      = "conga-router"
+	egressProxyImage = "conga-egress-proxy"
+	routerContainer  = "conga-router"
 )
 
 // LocalProvider implements provider.Provider using local Docker.
@@ -211,13 +209,6 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to start egress proxy: %w", err)
 	}
 
-	// Connect shared egress proxy if running (legacy / passthrough)
-	if containerExists(ctx, egressProxyContainer) {
-		if err := connectNetwork(ctx, netName, egressProxyContainer); err != nil {
-			return fmt.Errorf("failed to connect egress proxy to network %s: %w", netName, err)
-		}
-	}
-
 	// 8. Start container
 	cName := containerName(cfg.Name)
 	if containerExists(ctx, cName) {
@@ -225,9 +216,9 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	}
 
 	// Ensure all files are owned by the container user (node, uid 1000).
-	if err := exec.CommandContext(ctx, "chown", "-R", "1000:1000", dataDir).Run(); err != nil {
-		return fmt.Errorf("failed to chown data directory: %w", err)
-	}
+	// Best-effort: fails on macOS where uid 1000 doesn't exist, but Docker Desktop
+	// handles ownership mapping transparently via its VM layer.
+	exec.CommandContext(ctx, "chown", "-R", "1000:1000", dataDir).Run() //nolint:errcheck
 
 	// Write proxy bootstrap script for Node.js CONNECT tunneling
 	bootstrapPath := filepath.Join(p.configDir(), "proxy-bootstrap.js")
@@ -252,19 +243,18 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	}
 
 	// Apply iptables egress enforcement (DROP non-subnet traffic) — enforce mode only
+	// Apply iptables egress enforcement (defense-in-depth, best-effort on macOS)
 	if egressEnforce {
 		agentIP, err := containerIPOnNetwork(ctx, cName, netName)
 		if err != nil {
-			return fmt.Errorf("failed to get agent container IP: %w", err)
+			fmt.Fprintf(os.Stderr, "Warning: could not get agent IP for iptables: %v\n", err)
+		} else if cidr, err := networkSubnetCIDR(ctx, netName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not get network CIDR for iptables: %v\n", err)
+		} else if err := addEgressIptablesRules(ctx, agentIP, cidr); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: iptables egress rules not applied (expected on macOS): %v\n", err)
+		} else {
+			fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 		}
-		cidr, err := networkSubnetCIDR(ctx, netName)
-		if err != nil {
-			return fmt.Errorf("failed to get network subnet: %w", err)
-		}
-		if err := addEgressIptablesRules(ctx, agentIP, cidr); err != nil {
-			return fmt.Errorf("failed to add iptables egress rules: %w", err)
-		}
-		fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 	}
 
 	// 9. Update routing.json
@@ -312,9 +302,6 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 
 	if containerExists(ctx, routerContainer) {
 		disconnectNetwork(ctx, netName, routerContainer)
-	}
-	if containerExists(ctx, egressProxyContainer) {
-		disconnectNetwork(ctx, netName, egressProxyContainer)
 	}
 
 	if networkExists(ctx, netName) {
@@ -608,9 +595,6 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		if containerExists(ctx, routerContainer) {
 			disconnectNetwork(ctx, netName, routerContainer)
 		}
-		if containerExists(ctx, egressProxyContainer) {
-			disconnectNetwork(ctx, netName, egressProxyContainer)
-		}
 		if err := removeNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
@@ -650,28 +634,21 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return fmt.Errorf("failed to restart container: %w", err)
 	}
 
-	// Apply iptables egress enforcement — enforce mode only
+	// Apply iptables egress enforcement (defense-in-depth, best-effort on macOS)
 	if egressEnforce {
 		agentIP, err := containerIPOnNetwork(ctx, cName, netName)
 		if err != nil {
-			return fmt.Errorf("failed to get agent container IP: %w", err)
+			fmt.Fprintf(os.Stderr, "Warning: could not get agent IP for iptables: %v\n", err)
+		} else if cidr, err := networkSubnetCIDR(ctx, netName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not get network CIDR for iptables: %v\n", err)
+		} else if err := addEgressIptablesRules(ctx, agentIP, cidr); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: iptables egress rules not applied (expected on macOS): %v\n", err)
+		} else {
+			fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 		}
-		cidr, err := networkSubnetCIDR(ctx, netName)
-		if err != nil {
-			return fmt.Errorf("failed to get network subnet: %w", err)
-		}
-		if err := addEgressIptablesRules(ctx, agentIP, cidr); err != nil {
-			return fmt.Errorf("failed to add iptables egress rules: %w", err)
-		}
-		fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 	}
 
-	// Reconnect egress proxy and router
-	if containerExists(ctx, egressProxyContainer) {
-		if err := connectNetwork(ctx, netName, egressProxyContainer); err != nil {
-			return fmt.Errorf("failed to reconnect egress proxy to network %s: %w", netName, err)
-		}
-	}
+	// Reconnect router
 	if containerExists(ctx, routerContainer) {
 		if err := connectNetwork(ctx, netName, routerContainer); err != nil {
 			return fmt.Errorf("failed to reconnect router to network %s: %w", netName, err)
@@ -975,9 +952,6 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		os.WriteFile(routingPath, []byte(`{"channels":{},"members":{}}`), 0644)
 	}
 
-	// --- Start egress proxy ---
-	p.ensureEgressProxy(ctx)
-
 	// --- Auto-configure channels if secrets were provided in SetupConfig (backwards compat) ---
 	if cfg != nil {
 		for _, ch := range channels.All() {
@@ -1035,12 +1009,9 @@ func (p *LocalProvider) CycleHost(ctx context.Context) error {
 		}
 	}
 	stopContainer(ctx, routerContainer)
-	stopContainer(ctx, egressProxyContainer)
 
 	fmt.Println("Restarting...")
 
-	// Restart infrastructure containers
-	p.ensureEgressProxy(ctx)
 	if err := p.ensureRouter(ctx, false); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
 	}
@@ -1134,11 +1105,6 @@ func (p *LocalProvider) cleanupDockerByPrefix(ctx context.Context) {
 		}
 	}
 
-	// Also clean the egress network
-	if networkExists(ctx, egressNetwork) {
-		fmt.Printf("Removing network %s...\n", egressNetwork)
-		removeNetwork(ctx, egressNetwork)
-	}
 }
 
 // --- infrastructure helpers ---
@@ -1190,67 +1156,6 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 
 	fmt.Println("  Router started.")
 	return nil
-}
-
-// ensureEgressProxy starts the egress proxy if not already running.
-func (p *LocalProvider) ensureEgressProxy(ctx context.Context) {
-	if containerExists(ctx, egressProxyContainer) {
-		state, err := inspectState(ctx, egressProxyContainer)
-		if err == nil && state.Running {
-			return
-		}
-		removeContainer(ctx, egressProxyContainer)
-	}
-
-	// Check if the image exists
-	if !imageExists(ctx, egressProxyImage) {
-		// Try to build it
-		if _, err := os.Stat(filepath.Join(p.egressProxyDir(), "Dockerfile")); err == nil {
-			if err := buildImage(ctx, p.egressProxyDir(), egressProxyImage); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to build egress proxy image: %v\n", err)
-				return
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Warning: egress proxy image not found and Dockerfile not available — proxy not started\n")
-			return
-		}
-	}
-
-	// Create egress network (non-internal — has external access)
-	if !networkExists(ctx, egressNetwork) {
-		if _, err := dockerRun(ctx, "network", "create", egressNetwork, "--driver", "bridge"); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to create egress network: %v\n", err)
-			return
-		}
-	}
-
-	fmt.Println("Starting egress proxy...")
-	_, err := dockerRun(ctx, "run", "-d",
-		"--name", egressProxyContainer,
-		"--network", egressNetwork,
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--memory", "64m",
-		"--read-only",
-		egressProxyImage,
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to start egress proxy: %v\n", err)
-		return
-	}
-
-	// Connect proxy to all existing agent networks
-	agents, err := p.ListAgents(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not list agents for proxy network connections: %v\n", err)
-	}
-	for _, a := range agents {
-		if err := connectNetwork(ctx, networkName(a.Name), egressProxyContainer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to connect proxy to %s network: %v\n", a.Name, err)
-		}
-	}
-
-	fmt.Println("  Egress proxy started.")
 }
 
 // startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering.
@@ -1317,15 +1222,6 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 
 	if _, err := dockerRun(ctx, args...); err != nil {
 		return fmt.Errorf("starting egress proxy: %w", err)
-	}
-
-	// Connect proxy to the egress network so it can reach the internet.
-	// The proxy is started on the agent network (so the agent can reach it),
-	// but also needs external connectivity to forward traffic upstream.
-	if networkExists(ctx, egressNetwork) {
-		if err := connectNetwork(ctx, egressNetwork, proxyName); err != nil {
-			return fmt.Errorf("connecting egress proxy to egress network: %w", err)
-		}
 	}
 
 	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(policy.EffectiveAllowedDomains(ep)))
