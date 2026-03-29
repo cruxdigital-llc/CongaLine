@@ -4,6 +4,12 @@ set -euo pipefail
 # Called by the CLI's policy deploy flow — config is pre-generated in Go.
 AGENT_NAME="{{.AgentName}}"
 EGRESS_MODE="{{.Mode}}"
+
+# Validate agent name format (防 sed/iptables metacharacter injection)
+if ! echo "$AGENT_NAME" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
+  echo "ERROR: Invalid agent name '$AGENT_NAME' — must match [a-z0-9][a-z0-9-]*"
+  exit 1
+fi
 EGRESS_CONF="/opt/conga/config/egress-$AGENT_NAME.yaml"
 EGRESS_PROXY="conga-egress-$AGENT_NAME"
 AGENT_CONTAINER="conga-$AGENT_NAME"
@@ -124,13 +130,9 @@ systemctl daemon-reload
 systemctl restart "conga-$AGENT_NAME"
 echo "Agent container restarted with HTTPS_PROXY"
 
-# Reconnect router to agent network (lost on container restart)
-if docker inspect conga-router >/dev/null 2>&1; then
-  # Tolerate "already connected" (systemd ExecStartPost may have reconnected first)
-  docker network connect "$AGENT_NET" conga-router 2>/dev/null || true
-fi
-
-# Apply iptables (enforce mode only)
+# Apply iptables IMMEDIATELY after restart (enforce mode only).
+# Minimize the window between container start and network-level enforcement.
+# ExecStartPost in the systemd unit may also apply these — belt and suspenders.
 if [ "$EGRESS_MODE" = "enforce" ]; then
   # Wait for container to get an IP
   for i in $(seq 1 10); do
@@ -148,8 +150,15 @@ if [ "$EGRESS_MODE" = "enforce" ]; then
       iptables -I DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
     echo "Egress iptables: DROP rules applied for $AGENT_NAME ($AGENT_IP)"
   else
-    echo "WARNING: Could not apply egress iptables rules in enforce mode — container IP ($AGENT_IP) or subnet ($NET_CIDR) not found"
+    echo "ERROR: Could not apply egress iptables rules in enforce mode — container IP ($AGENT_IP) or subnet ($NET_CIDR) not found"
     exit 1
+  fi
+fi
+
+# Reconnect router to agent network (lost on container restart) — after iptables to minimize enforcement gap
+if docker inspect conga-router >/dev/null 2>&1; then
+  if ! docker network connect "$AGENT_NET" conga-router 2>&1 | grep -v "already exists" >&2; then
+    echo "WARNING: Could not reconnect conga-router to $AGENT_NET — Slack routing may fail" >&2
   fi
 fi
 

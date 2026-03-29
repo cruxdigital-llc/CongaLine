@@ -68,15 +68,9 @@ fi
 systemctl daemon-reload
 systemctl restart conga-$AGENT_NAME
 
-# Reconnect router to agent network (lost on container restart)
-if docker inspect conga-router >/dev/null 2>&1; then
-  if ! docker network connect "conga-$AGENT_NAME" conga-router 2>/dev/null; then
-    # Not fatal — may already be connected (ExecStartPost races with this script)
-    echo "WARNING: Could not reconnect conga-router to conga-$AGENT_NAME — may already be connected or router stopped"
-  fi
-fi
-
-# Re-apply egress iptables rules (enforce mode only)
+# Apply iptables IMMEDIATELY after restart (enforce mode only).
+# Minimize the window between container start and network-level enforcement.
+# ExecStartPost in the systemd unit may also apply these — belt and suspenders.
 EGRESS_MODE=$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null || echo "")
 if [ -f "/opt/conga/config/egress-$AGENT_NAME.yaml" ] && [ -z "$EGRESS_MODE" ]; then
   echo "WARNING: Egress config exists but mode file missing for $AGENT_NAME — defaulting to enforce" >&2
@@ -103,6 +97,14 @@ if [ "$EGRESS_MODE" = "enforce" ]; then
   else
     echo "ERROR: Could not apply egress iptables rules in enforce mode — container IP or subnet not found"
     exit 1
+  fi
+fi
+
+# Reconnect router to agent network (lost on container restart) — after iptables to minimize enforcement gap
+if docker inspect conga-router >/dev/null 2>&1; then
+  if ! docker network connect "conga-$AGENT_NAME" conga-router 2>/dev/null; then
+    # Not fatal ��� may already be connected (ExecStartPost races with this script)
+    echo "WARNING: Could not reconnect conga-router to conga-$AGENT_NAME — may already be connected or router stopped"
   fi
 fi
 

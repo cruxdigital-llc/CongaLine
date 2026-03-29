@@ -744,7 +744,18 @@ setup_agent_common() {
 
   # Generate egress config from policy (if policy file exists on host)
   if ! generate_egress_conf "$AGENT_NAME"; then
-    log "ERROR: Failed to generate egress config for $AGENT_NAME — agent will start without egress filtering"
+    # Check if the policy specifies enforce mode — refuse to start without egress protection
+    AGENT_EGRESS_MODE=$(cat "/opt/conga/config/egress-$AGENT_NAME.mode" 2>/dev/null || echo "")
+    if [ -z "$AGENT_EGRESS_MODE" ]; then
+      # Mode file not written (generate failed early) — check policy file directly
+      AGENT_EGRESS_MODE=$(grep -A5 "^egress:" /opt/conga/conga-policy.yaml 2>/dev/null | grep "mode:" | head -1 | sed 's/.*mode: *//' | tr -d '"'"'" | xargs)
+      AGENT_EGRESS_MODE="$${AGENT_EGRESS_MODE:-enforce}"
+    fi
+    if [ "$AGENT_EGRESS_MODE" = "enforce" ]; then
+      log "FATAL: Egress config generation failed for $AGENT_NAME in enforce mode — refusing to start agent without egress protection"
+      return
+    fi
+    log "WARNING: Egress config generation failed for $AGENT_NAME in validate mode — agent will start without egress filtering"
   fi
 
   # Per-agent egress proxy (when policy-generated config exists)
@@ -761,8 +772,13 @@ setup_agent_common() {
 FROM envoyproxy/envoy:v1.32-latest
 PROXYDF
       if ! docker build -t conga-egress-proxy /tmp/conga-egress-build; then
-        log "ERROR: Failed to build egress proxy image — $AGENT_NAME will run without egress filtering"
         rm -rf /tmp/conga-egress-build
+        AGENT_EGRESS_MODE=$(cat "/opt/conga/config/egress-$AGENT_NAME.mode" 2>/dev/null || echo "enforce")
+        if [ "$AGENT_EGRESS_MODE" = "enforce" ]; then
+          log "FATAL: Failed to build egress proxy image in enforce mode — refusing to start $AGENT_NAME without egress filtering"
+          return
+        fi
+        log "WARNING: Failed to build egress proxy image — $AGENT_NAME will run without egress filtering (validate mode)"
         EGRESS_CONF=""
       fi
       rm -rf /tmp/conga-egress-build
@@ -789,8 +805,13 @@ PROXYDF
       sleep 1
     done
     if ! docker inspect -f '{{.State.Running}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
-      log "ERROR: Egress proxy $EGRESS_PROXY failed to start — $AGENT_NAME will run without egress filtering"
       docker logs "$EGRESS_PROXY" 2>&1 | tail -20 || true
+      AGENT_EGRESS_MODE=$(cat "/opt/conga/config/egress-$AGENT_NAME.mode" 2>/dev/null || echo "enforce")
+      if [ "$AGENT_EGRESS_MODE" = "enforce" ]; then
+        log "FATAL: Egress proxy $EGRESS_PROXY failed to start in enforce mode — refusing to start $AGENT_NAME without egress filtering"
+        return
+      fi
+      log "WARNING: Egress proxy $EGRESS_PROXY failed to start — $AGENT_NAME will run without egress filtering (validate mode)"
       EGRESS_DOCKER_ARGS=""
     else
     # Proxy is on the same Docker network — Docker DNS resolves the container name.
