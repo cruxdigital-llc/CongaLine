@@ -18,6 +18,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/cli/internal/channels"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/discovery"
+	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/tunnel"
 	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
@@ -152,21 +153,43 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 		slackID = slackBinding.ID
 	}
 
+	// Generate egress proxy config (deny-all when no policy, or from existing policy)
+	egressPolicy, policyErr := policy.LoadEgressPolicy(provider.DefaultDataDir(), cfg.Name)
+	if policyErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy: %v\n", policyErr)
+	}
+	egressMode := policy.EgressModeEnforce
+	if egressPolicy != nil {
+		egressMode = egressPolicy.Mode
+	}
+	envoyConfig, err := policy.GenerateProxyConf(egressPolicy)
+	if err != nil {
+		return fmt.Errorf("failed to generate egress config: %w", err)
+	}
+	proxyBootstrapJS := policy.ProxyBootstrapJS()
+
 	var scriptTemplate string
 	var templateData interface{}
+	type provisionData struct {
+		AgentName, SlackMemberID, SlackChannel, AWSRegion, StateBucket string
+		GatewayPort                                                    int
+		EnvoyConfig, EgressMode, ProxyBootstrapJS                      string
+	}
 	switch cfg.Type {
 	case provider.AgentTypeUser:
 		scriptTemplate = scripts.AddUserScript
-		templateData = struct {
-			AgentName, SlackMemberID, AWSRegion, StateBucket string
-			GatewayPort                                      int
-		}{cfg.Name, slackID, p.region, stateBucket, cfg.GatewayPort}
+		templateData = provisionData{
+			AgentName: cfg.Name, SlackMemberID: slackID, AWSRegion: p.region,
+			StateBucket: stateBucket, GatewayPort: cfg.GatewayPort,
+			EnvoyConfig: envoyConfig, EgressMode: string(egressMode), ProxyBootstrapJS: proxyBootstrapJS,
+		}
 	case provider.AgentTypeTeam:
 		scriptTemplate = scripts.AddTeamScript
-		templateData = struct {
-			AgentName, SlackChannel, AWSRegion, StateBucket string
-			GatewayPort                                     int
-		}{cfg.Name, slackID, p.region, stateBucket, cfg.GatewayPort}
+		templateData = provisionData{
+			AgentName: cfg.Name, SlackChannel: slackID, AWSRegion: p.region,
+			StateBucket: stateBucket, GatewayPort: cfg.GatewayPort,
+			EnvoyConfig: envoyConfig, EgressMode: string(egressMode), ProxyBootstrapJS: proxyBootstrapJS,
+		}
 	default:
 		return fmt.Errorf("unknown agent type: %s", cfg.Type)
 	}
@@ -497,6 +520,73 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 	if result.Status != "Success" {
 		fmt.Fprintf(os.Stderr, "Output:\n%s\n%s\n", result.Stdout, result.Stderr)
 		return fmt.Errorf("refresh-all failed on instance")
+	}
+	return nil
+}
+
+// --- Egress Policy Deployment ---
+
+// DeployEgress deploys the egress proxy for a single agent without requiring a host cycle.
+// It uploads the policy file and pre-generated Envoy config, starts the proxy container,
+// restarts the agent container with HTTPS_PROXY, and applies iptables rules (all modes).
+func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig string, mode policy.EgressMode) error {
+	instanceID, err := p.findInstance(ctx)
+	if err != nil {
+		return err
+	}
+
+	tmpl, err := template.New("deploy-egress").Parse(scripts.DeployEgressScript)
+	if err != nil {
+		return fmt.Errorf("failed to parse deploy-egress template: %w", err)
+	}
+
+	if err := validateHeredocSafety(map[string]string{
+		"AgentName":        agentName,
+		"Mode":             string(mode),
+		"PolicyContent":    policyContent,
+		"EnvoyConfig":      envoyConfig,
+		"ProxyBootstrapJS": policy.ProxyBootstrapJS(),
+	}); err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, struct {
+		AgentName        string
+		Mode             string
+		PolicyContent    string
+		EnvoyConfig      string
+		ProxyBootstrapJS string
+	}{agentName, string(mode), policyContent, envoyConfig, policy.ProxyBootstrapJS()}); err != nil {
+		return fmt.Errorf("failed to render deploy-egress script: %w", err)
+	}
+
+	spin := ui.NewSpinner(fmt.Sprintf("Deploying egress proxy for %s (mode=%s)...", agentName, mode))
+	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, buf.String(), 180*time.Second)
+	spin.Stop()
+	if err != nil {
+		return err
+	}
+
+	if result.Status != "Success" {
+		return fmt.Errorf("deploy-egress failed:\n%s\n%s", result.Stdout, result.Stderr)
+	}
+	fmt.Fprintln(os.Stderr, result.Stdout)
+	return nil
+}
+
+// validateHeredocSafety checks that template values don't contain heredoc delimiters.
+// A line containing only the delimiter would terminate the heredoc early and allow
+// arbitrary shell execution. This check conservatively rejects any value containing
+// the delimiter string, even as a substring.
+func validateHeredocSafety(values map[string]string) error {
+	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF"}
+	for _, delim := range heredocDelimiters {
+		for name, val := range values {
+			if strings.Contains(val, delim) {
+				return fmt.Errorf("%s contains heredoc delimiter %q — refusing to render (possible injection)", name, delim)
+			}
+		}
 	}
 	return nil
 }

@@ -21,10 +21,10 @@ egress:
   # Domains explicitly blocked (takes precedence over allowed_domains).
   blocked_domains: []
 
-  # Enforcement mode (local provider only; remote/AWS always enforce).
-  #   validate — warn about unenforced rules (default)
-  #   enforce  — activate egress proxy container
-  mode: validate
+  # Enforcement mode (all providers). Proxy is always deployed when domains are defined.
+  #   enforce  — proxy with domain filtering + iptables DROP rules (default)
+  #   validate — proxy with domain monitoring (logs what would be blocked, allows all traffic, no iptables)
+  mode: enforce
 
 # --- Routing Policy ---
 # Model selection and routing rules.

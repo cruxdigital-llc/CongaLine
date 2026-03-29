@@ -423,12 +423,9 @@ OCCONFIG
 # Reads global allowed_domains and agent-specific overrides.
 # Output: /opt/conga/config/egress-$AGENT_NAME.yaml
 #
-# WARNING: This bootstrap does NOT apply iptables DROP rules for egress enforcement.
-# The Go CLI providers (local/remote) add iptables rules to DOCKER-USER that DROP all
-# traffic from agent containers except to the bridge subnet (where the proxy lives).
-# This bash bootstrap relies solely on the Envoy proxy for egress filtering — a
-# container that bypasses the HTTPS_PROXY env vars can reach the internet directly.
-# This is a known gap tracked for future work (see Feature 16 Phase 3).
+# When mode is "enforce", iptables DROP rules are applied via ExecStartPost in the
+# systemd unit and cleaned up via ExecStopPost. In validate mode, the Envoy proxy
+# logs would-be-denied requests but does not block traffic or apply iptables rules.
 generate_egress_conf() {
   # NOTE: This function generates the same Envoy config format as the template
   # in cli/internal/policy/templates/envoy-config.yaml.tmpl — keep both in sync.
@@ -436,13 +433,16 @@ generate_egress_conf() {
   local POLICY_FILE="/opt/conga/conga-policy.yaml"
   local CONF_OUT="/opt/conga/config/egress-$AGENT_NAME.yaml"
 
+  local DOMAINS=""
+  local EFFECTIVE_MODE="enforce"
+
   if [ ! -f "$POLICY_FILE" ]; then
-    return
-  fi
+    # No policy file — deny-all config (empty allowlist)
+    log "No egress policy for $AGENT_NAME — generating deny-all config"
+  else
 
   # Extract allowed_domains and blocked_domains — check agent override first, fall back to global.
   # Uses simple grep/sed since yq is not guaranteed on AL2023.
-  local DOMAINS=""
   local IN_AGENT_SECTION=false
   local IN_AGENT_EGRESS=false
   local IN_AGENT_ALLOWED=false
@@ -454,6 +454,8 @@ generate_egress_conf() {
   local AGENT_BLOCKED=""
   local GLOBAL_ALLOWED=""
   local GLOBAL_BLOCKED=""
+  local GLOBAL_MODE=""
+  local AGENT_MODE=""
 
   while IFS= read -r line; do
     # Detect agent-specific section
@@ -510,6 +512,10 @@ generate_egress_conf() {
       d=$(echo "$line" | sed 's/^        - //; s/^"//; s/"$//' | tr -d "'" | xargs)
       [ -n "$d" ] && AGENT_BLOCKED="$AGENT_BLOCKED $d"
     fi
+    # Detect agent egress mode
+    if $IN_AGENT_EGRESS && echo "$line" | grep -qE "^      mode:"; then
+      AGENT_MODE=$(echo "$line" | sed 's/^      mode: *//' | tr -d '"' | tr -d "'" | xargs)
+    fi
 
     # Detect global egress section
     if echo "$line" | grep -qE "^egress:"; then
@@ -550,6 +556,10 @@ generate_egress_conf() {
       d=$(echo "$line" | sed 's/^    - //; s/^"//; s/"$//' | tr -d "'" | xargs)
       [ -n "$d" ] && GLOBAL_BLOCKED="$GLOBAL_BLOCKED $d"
     fi
+    # Detect global egress mode
+    if $IN_GLOBAL_EGRESS && echo "$line" | grep -qE "^  mode:"; then
+      GLOBAL_MODE=$(echo "$line" | sed 's/^  mode: *//' | tr -d '"' | tr -d "'" | xargs)
+    fi
   done < "$POLICY_FILE"
 
   # Agent override replaces global (shallow merge per spec)
@@ -561,6 +571,14 @@ generate_egress_conf() {
     ALLOWED="$GLOBAL_ALLOWED"
     BLOCKED="$GLOBAL_BLOCKED"
   fi
+
+  # Resolve effective mode (agent override takes precedence, default is "enforce")
+  if [ -n "$AGENT_ALLOWED" ]; then
+    EFFECTIVE_MODE="$${AGENT_MODE:-$$GLOBAL_MODE}"
+  else
+    EFFECTIVE_MODE="$GLOBAL_MODE"
+  fi
+  EFFECTIVE_MODE="$${EFFECTIVE_MODE:-enforce}"
 
   # Remove blocked domains from allowed list
   if [ -n "$BLOCKED" ]; then
@@ -582,10 +600,30 @@ generate_egress_conf() {
     ALLOWED="$FILTERED"
   fi
 
-  # No domains = no egress conf to generate
+  # Apply effective domains from parsed policy
   DOMAINS=$(echo "$ALLOWED" | xargs) # trim
   if [ -z "$DOMAINS" ]; then
-    return
+    # Sanity check: if the policy file mentions allowed_domains but we parsed zero,
+    # the YAML structure may not match our grep/sed heuristics (e.g., tabs, anchors).
+    if grep -q "allowed_domains:" "$POLICY_FILE" 2>/dev/null; then
+      log "ERROR: Policy file contains allowed_domains but none were parsed for $AGENT_NAME — check YAML indentation. Refusing to start agent without egress protection."
+      return 1
+    fi
+    log "No allowed domains in policy for $AGENT_NAME — generating deny-all config"
+  fi
+
+  fi # end of policy file exists block
+
+  # Determine deny action based on mode
+  # validate: log what would be denied but allow traffic through
+  # enforce: return 403 to deny non-allowlisted traffic
+  if [ "$EFFECTIVE_MODE" = "validate" ]; then
+    log "Egress proxy for $AGENT_NAME in validate mode (logging only)."
+    local DENY_ACTION='                    h:logWarn("egress-validate: would deny " .. host)'
+    local MISSING_HOST_ACTION='                    if not m then h:logWarn("egress-validate: would deny (missing host)"); return end'
+  else
+    local DENY_ACTION='                    h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\\n")'
+    local MISSING_HOST_ACTION='                    if not m then h:respond({[":status"] = "403"}, "egress denied: missing host\\n"); return end'
   fi
 
   # Generate Envoy config with Lua-based domain filtering
@@ -647,20 +685,20 @@ $(echo -e "$SUFFIX_ENTRIES")                  }
                   function envoy_on_request(h)
                     local a = h:headers():get(":authority") or ""
                     local m = a:match("^([^:]+)")
-                    if not m then h:respond({[":status"] = "403"}, "egress denied: missing host\n"); return end
+$MISSING_HOST_ACTION
                     local host = m:lower()
                     if EXACT[host] then return end
                     for _, s in ipairs(SUFFIXES) do
                       if host == s:sub(2) or host:sub(-#s) == s then return end
                     end
-                    h:respond({[":status"] = "403"}, "egress denied: " .. host .. "\n")
+$DENY_ACTION
                   end
           - name: envoy.filters.http.dynamic_forward_proxy
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
               dns_cache_config:
                 name: dns_cache
-                dns_lookup_family: AUTO
+                dns_lookup_family: V4_ONLY
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -673,11 +711,14 @@ $(echo -e "$SUFFIX_ENTRIES")                  }
         "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
         dns_cache_config:
           name: dns_cache
-          dns_lookup_family: AUTO
+          dns_lookup_family: V4_ONLY
 ENVOY_CONF
 
   chmod 0400 "$CONF_OUT"
-  log "Generated egress config for $AGENT_NAME with domains: $DOMAINS"
+
+  # Write mode marker so systemd hooks know whether to apply iptables
+  echo "$EFFECTIVE_MODE" > "/opt/conga/config/egress-$AGENT_NAME.mode"
+  log "Generated egress config for $AGENT_NAME (mode=$EFFECTIVE_MODE) with domains: $DOMAINS"
 }
 
 # Shared setup logic for both agent types
@@ -705,8 +746,21 @@ setup_agent_common() {
   # Docker network
   docker network create --driver bridge "conga-$AGENT_NAME" || true
 
-  # Generate egress config from policy (if policy file exists on host)
-  generate_egress_conf "$AGENT_NAME"
+  # Generate egress config from policy (deny-all when no policy exists)
+  if ! generate_egress_conf "$AGENT_NAME"; then
+    # Check if the policy specifies enforce mode — refuse to start without egress protection
+    AGENT_EGRESS_MODE=$(cat "/opt/conga/config/egress-$AGENT_NAME.mode" 2>/dev/null || echo "")
+    if [ -z "$AGENT_EGRESS_MODE" ]; then
+      # Mode file not written (generate failed early) — check policy file directly
+      AGENT_EGRESS_MODE=$(grep -A5 "^egress:" /opt/conga/conga-policy.yaml 2>/dev/null | grep "mode:" | head -1 | sed 's/.*mode: *//' | tr -d '"'"'" | xargs)
+      AGENT_EGRESS_MODE="$${AGENT_EGRESS_MODE:-enforce}"
+    fi
+    if [ "$AGENT_EGRESS_MODE" = "enforce" ]; then
+      log "FATAL: Egress config generation failed for $AGENT_NAME in enforce mode — refusing to start agent without egress protection"
+      return 1
+    fi
+    log "WARNING: Egress config generation failed for $AGENT_NAME in validate mode — agent will start without egress filtering"
+  fi
 
   # Per-agent egress proxy (when policy-generated config exists)
   EGRESS_CONF="/opt/conga/config/egress-$AGENT_NAME.yaml"
@@ -721,9 +775,19 @@ setup_agent_common() {
       cat > /tmp/conga-egress-build/Dockerfile << 'PROXYDF'
 FROM envoyproxy/envoy:v1.32-latest
 PROXYDF
-      docker build -t conga-egress-proxy /tmp/conga-egress-build
+      if ! docker build -t conga-egress-proxy /tmp/conga-egress-build; then
+        rm -rf /tmp/conga-egress-build
+        AGENT_EGRESS_MODE=$(cat "/opt/conga/config/egress-$AGENT_NAME.mode" 2>/dev/null || echo "enforce")
+        if [ "$AGENT_EGRESS_MODE" = "enforce" ]; then
+          log "FATAL: Failed to build egress proxy image in enforce mode — refusing to start $AGENT_NAME without egress filtering"
+          return 1
+        fi
+        log "WARNING: Failed to build egress proxy image — $AGENT_NAME will run without egress filtering (validate mode)"
+        EGRESS_CONF=""
+      fi
       rm -rf /tmp/conga-egress-build
     fi
+    if [ -n "$EGRESS_CONF" ]; then
     docker rm -f "$EGRESS_PROXY" 2>/dev/null || true
     docker run -d \
       --name "$EGRESS_PROXY" \
@@ -737,9 +801,69 @@ PROXYDF
       -v "$EGRESS_CONF:/etc/envoy/envoy.yaml:ro" \
       conga-egress-proxy \
       envoy -c /etc/envoy/envoy.yaml --log-level warn
+    # Verify proxy started (retry to allow for slow starts on loaded hosts)
+    for i in $(seq 1 5); do
+      if docker inspect -f '{{.State.Running}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
+        break
+      fi
+      sleep 1
+    done
+    if ! docker inspect -f '{{.State.Running}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
+      docker logs "$EGRESS_PROXY" 2>&1 | tail -20 || true
+      AGENT_EGRESS_MODE=$(cat "/opt/conga/config/egress-$AGENT_NAME.mode" 2>/dev/null || echo "enforce")
+      if [ "$AGENT_EGRESS_MODE" = "enforce" ]; then
+        log "FATAL: Egress proxy $EGRESS_PROXY failed to start in enforce mode — refusing to start $AGENT_NAME without egress filtering"
+        return 1
+      fi
+      log "WARNING: Egress proxy $EGRESS_PROXY failed to start — $AGENT_NAME will run without egress filtering (validate mode)"
+      EGRESS_DOCKER_ARGS=""
+    else
     # Proxy is on the same Docker network — Docker DNS resolves the container name.
     EGRESS_DOCKER_ARGS="-e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1"
+    # Write proxy bootstrap JS (patches Node.js fetch/https to route through proxy)
+    # NOTE: This must match cli/internal/policy/templates/proxy-bootstrap.js — keep both in sync.
+    BOOTSTRAP_PATH="/opt/conga/config/proxy-bootstrap.js"
+    if [ ! -f "$BOOTSTRAP_PATH" ]; then
+      cat > "$BOOTSTRAP_PATH" << 'BOOTSTRAPJS'
+'use strict';
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.__CONGA_PROXY_URL;
+if (proxyUrl) {
+  const http = require('http');
+  const https = require('https');
+  const tls = require('tls');
+  const { URL } = require('url');
+  if (!process.env.HTTPS_PROXY) process.env.HTTPS_PROXY = proxyUrl;
+  const { EnvHttpProxyAgent, setGlobalDispatcher } = require('/app/node_modules/undici');
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+  const parsed = new URL(proxyUrl);
+  class ConnectProxyAgent extends https.Agent {
+    constructor() { super({ keepAlive: true }); }
+    createConnection(opts, cb) {
+      const req = http.request({
+        host: parsed.hostname, port: parsed.port, method: 'CONNECT',
+        path: (opts.host || opts.hostname) + ':' + (opts.port || 443),
+      });
+      req.on('connect', (_res, socket) => {
+        if (_res.statusCode !== 200) { cb(new Error('Proxy CONNECT failed: ' + _res.statusCode)); return; }
+        const tlsSock = tls.connect({ socket: socket, servername: opts.host || opts.hostname }, () => cb(null, tlsSock));
+        tlsSock.on('error', cb);
+      });
+      req.on('error', cb);
+      req.end();
+    }
+  }
+  https.globalAgent = new ConnectProxyAgent();
+  process.env.__CONGA_PROXY_URL = proxyUrl;
+  process.env.HTTPS_PROXY = proxyUrl;
+  process.env.HTTP_PROXY = proxyUrl;
+}
+BOOTSTRAPJS
+      chmod 0444 "$BOOTSTRAP_PATH"
+    fi
+    EGRESS_DOCKER_ARGS="$EGRESS_DOCKER_ARGS -v $BOOTSTRAP_PATH:/opt/proxy-bootstrap.js:ro"
     log "Egress proxy started for $AGENT_NAME"
+    fi # proxy started successfully
+    fi # EGRESS_CONF still set (build succeeded)
   fi
 
   # Build -e flags from env file keys
@@ -747,6 +871,12 @@ PROXYDF
   while IFS="=" read -r key value; do
     [ -n "$key" ] && ENV_FLAGS="$ENV_FLAGS -e $key"
   done < /opt/conga/config/$AGENT_NAME.env
+
+  # Set NODE_OPTIONS — add proxy bootstrap require when egress is configured
+  NODE_OPTS="--max-old-space-size=1536"
+  if [ -f "/opt/conga/config/proxy-bootstrap.js" ] && [ -n "$EGRESS_DOCKER_ARGS" ]; then
+    NODE_OPTS="$NODE_OPTS --require /opt/proxy-bootstrap.js"
+  fi
 
   # Systemd unit — image written literally; updated on boot by conga-image-refresh.service
   cat > /etc/systemd/system/conga-$AGENT_NAME.service << UNIT
@@ -760,8 +890,10 @@ Type=simple
 EnvironmentFile=/opt/conga/config/$AGENT_NAME.env
 ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region ${aws_region} 2>/dev/null || true; /opt/conga/bin/deploy-behavior.sh $AGENT_NAME \$(cat /opt/conga/config/$AGENT_NAME.type 2>/dev/null || echo user) 2>/dev/null || true; chown -R 1000:1000 /opt/conga/data/$AGENT_NAME/data/workspace 2>/dev/null || true'
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
-ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="--max-old-space-size=1536" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
+ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="$NODE_OPTS" --pids-limit 256 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
+ExecStartPost=-/bin/bash -c 'MODE=\$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null); if [ "\$MODE" = "enforce" ]; then AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP || echo "WARNING: failed to add iptables DROP rule for conga-$AGENT_NAME (\$AGENT_IP)" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN || echo "WARNING: failed to add iptables subnet RETURN rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN || echo "WARNING: failed to add iptables conntrack RETURN rule for conga-$AGENT_NAME" >&2; else echo "WARNING: egress iptables rules failed for conga-$AGENT_NAME — container IP (\$AGENT_IP) or subnet (\$NET_CIDR) not found" >&2; fi; fi'
+ExecStopPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -D DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || true; fi'
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
 StandardOutput=append:/var/log/conga-$AGENT_NAME.log
 StandardError=append:/var/log/conga-$AGENT_NAME.log
@@ -787,6 +919,15 @@ for OLD_UNIT in /etc/systemd/system/conga-*.service; do
     conga-router|conga-image-refresh|conga-config-check|conga-session-metrics) continue ;;
   esac
   echo "Stopping previous agent: $UNIT_NAME"
+  # Clean up egress iptables rules before stopping (need container IP while running)
+  AGENT_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$UNIT_NAME" 2>/dev/null || echo "")
+  AGENT_NET="$${UNIT_NAME#conga-}"
+  NET_CIDR=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "conga-$AGENT_NET" 2>/dev/null || echo "")
+  if [ -n "$AGENT_IP" ] && [ -n "$NET_CIDR" ]; then
+    iptables -D DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
+    iptables -D DOCKER-USER -s "$AGENT_IP" -d "$NET_CIDR" -j RETURN 2>/dev/null || true
+    iptables -D DOCKER-USER -s "$AGENT_IP" -j DROP 2>/dev/null || true
+  fi
   systemctl stop "$UNIT_NAME" 2>/dev/null || true
   docker rm -f "$UNIT_NAME" 2>/dev/null || true
   systemctl disable "$UNIT_NAME" 2>/dev/null || true

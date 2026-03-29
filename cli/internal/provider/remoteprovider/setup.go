@@ -332,9 +332,6 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		p.ssh.Upload(routingPath, []byte(`{"channels":{},"members":{}}`), 0644)
 	}
 
-	// --- Start egress proxy ---
-	p.ensureEgressProxy(ctx)
-
 	// --- Auto-configure channels if secrets were provided in SetupConfig (backwards compat) ---
 	if cfg != nil {
 		for _, ch := range channels.All() {

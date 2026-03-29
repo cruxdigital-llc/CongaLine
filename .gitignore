@@ -17,6 +17,8 @@ bin/
 
 # MCP config (user-specific)
 .mcp.json
+.mcp.json.*
+!.mcp.json.example
 
 # User-specific policy config
 conga-policy.yaml

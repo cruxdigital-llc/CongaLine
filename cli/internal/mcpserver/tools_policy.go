@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -38,47 +39,61 @@ func (s *Server) loadPolicy() (*policy.PolicyFile, string, error) {
 }
 
 // getStringSlice extracts a []string from the raw MCP request arguments.
-func getStringSlice(req mcp.CallToolRequest, key string) []string {
+func getStringSlice(req mcp.CallToolRequest, key string) ([]string, error) {
 	args := req.GetArguments()
 	raw, ok := args[key]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an array, got %T", key, raw)
 	}
 	result := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if s, ok := v.(string); ok {
-			result = append(result, s)
+	for i, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] must be a string, got %T", key, i, v)
 		}
+		result = append(result, s)
 	}
-	return result
+	return result, nil
 }
 
 // getCostLimits extracts a CostLimits from the raw MCP request arguments.
-func getCostLimits(req mcp.CallToolRequest) *policy.CostLimits {
+func getCostLimits(req mcp.CallToolRequest) (*policy.CostLimits, error) {
 	args := req.GetArguments()
 	raw, ok := args["cost_limits"]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	m, ok := raw.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("cost_limits must be an object, got %T", raw)
 	}
 	cl := &policy.CostLimits{}
-	if v, ok := m["daily_per_agent"].(float64); ok {
-		cl.DailyPerAgent = v
+	if v, exists := m["daily_per_agent"]; exists {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("cost_limits.daily_per_agent must be a number, got %T", v)
+		}
+		cl.DailyPerAgent = f
 	}
-	if v, ok := m["monthly_per_agent"].(float64); ok {
-		cl.MonthlyPerAgent = v
+	if v, exists := m["monthly_per_agent"]; exists {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("cost_limits.monthly_per_agent must be a number, got %T", v)
+		}
+		cl.MonthlyPerAgent = f
 	}
-	if v, ok := m["monthly_global"].(float64); ok {
-		cl.MonthlyGlobal = v
+	if v, exists := m["monthly_global"]; exists {
+		f, ok := v.(float64)
+		if !ok {
+			return nil, fmt.Errorf("cost_limits.monthly_global must be a number, got %T", v)
+		}
+		cl.MonthlyGlobal = f
 	}
-	return cl
+	return cl, nil
 }
 
 // --- Read-only tools ---
@@ -217,7 +232,7 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 					"mode": map[string]any{
 						"type":        "string",
 						"enum":        []string{"validate", "enforce"},
-						"description": "Enforcement mode: 'validate' (warn only) or 'enforce' (activate egress proxy)",
+						"description": "Enforcement mode: 'validate' (proxy logs violations but allows traffic) or 'enforce' (proxy blocks non-allowlisted traffic + iptables)",
 					},
 					"agent": map[string]any{
 						"type":        "string",
@@ -236,17 +251,26 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
+			allowedDomains, err := getStringSlice(req, "allowed_domains")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			blockedDomains, err := getStringSlice(req, "blocked_domains")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			mode, err := policy.ParseEgressMode(req.GetString("mode", ""))
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			patch := &policy.EgressPolicy{
-				AllowedDomains: getStringSlice(req, "allowed_domains"),
-				BlockedDomains: getStringSlice(req, "blocked_domains"),
-				Mode:           req.GetString("mode", ""),
+				AllowedDomains: allowedDomains,
+				BlockedDomains: blockedDomains,
+				Mode:           mode,
 			}
 
 			policy.SetEgress(pf, req.GetString("agent", ""), patch)
 
-			if err := pf.Validate(); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("validation failed: %v", err)), nil
-			}
 			if err := policy.Save(pf, path); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -298,17 +322,22 @@ func (s *Server) toolPolicySetRouting() server.ServerTool {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
+			fallbackChain, err := getStringSlice(req, "fallback_chain")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			costLimits, err := getCostLimits(req)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			patch := &policy.RoutingPolicy{
 				DefaultModel:  req.GetString("default_model", ""),
-				FallbackChain: getStringSlice(req, "fallback_chain"),
-				CostLimits:    getCostLimits(req),
+				FallbackChain: fallbackChain,
+				CostLimits:    costLimits,
 			}
 
 			policy.SetRouting(pf, req.GetString("agent", ""), patch)
 
-			if err := pf.Validate(); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("validation failed: %v", err)), nil
-			}
 			if err := policy.Save(pf, path); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -362,18 +391,19 @@ func (s *Server) toolPolicySetPosture() server.ServerTool {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
+			complianceFrameworks, err := getStringSlice(req, "compliance_frameworks")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			patch := &policy.PostureDeclarations{
 				IsolationLevel:       req.GetString("isolation_level", ""),
 				SecretsBackend:       req.GetString("secrets_backend", ""),
 				Monitoring:           req.GetString("monitoring", ""),
-				ComplianceFrameworks: getStringSlice(req, "compliance_frameworks"),
+				ComplianceFrameworks: complianceFrameworks,
 			}
 
 			policy.SetPosture(pf, req.GetString("agent", ""), patch)
 
-			if err := pf.Validate(); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("validation failed: %v", err)), nil
-			}
 			if err := policy.Save(pf, path); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -385,9 +415,10 @@ func (s *Server) toolPolicySetPosture() server.ServerTool {
 // --- Deploy tool ---
 
 type deployResult struct {
-	Validated bool     `json:"validated"`
-	Deployed  []string `json:"deployed"`
-	Errors    []string `json:"errors,omitempty"`
+	Validated      bool     `json:"validated"`
+	Deployed       []string `json:"deployed"`
+	Errors         []string `json:"errors,omitempty"`
+	PartialFailure bool     `json:"partial_failure,omitempty"`
 }
 
 func (s *Server) toolPolicyDeploy() server.ServerTool {
@@ -413,7 +444,14 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			pf, err := policy.Load(path)
+			policyBytes, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return mcp.NewToolResultError("no policy file found — create one with conga_policy_set_egress or conga_policy_set_routing first"), nil
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("failed to read policy file: %v", err)), nil
+			}
+			pf, err := policy.LoadFromBytes(policyBytes)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -423,48 +461,90 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 			if err := pf.Validate(); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("policy validation failed: %v — fix the policy before deploying", err)), nil
 			}
+			policyContent := string(policyBytes)
 
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
 			agent := req.GetString("agent", "")
+
+			// Determine which agents to deploy to
+			var targetAgents []string
 			if agent != "" {
 				if _, err := s.prov.GetAgent(ctx, agent); err != nil {
 					return mcp.NewToolResultError(fmt.Sprintf("agent %q not found: %v", agent, err)), nil
 				}
-				if err := s.prov.RefreshAgent(ctx, agent); err != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("deploy to %q failed: %v", agent, err)), nil
+				targetAgents = []string{agent}
+			} else {
+				agents, err := s.prov.ListAgents(ctx)
+				if err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("listing agents: %v", err)), nil
 				}
-				return jsonResult(deployResult{
-					Validated: true,
-					Deployed:  []string{agent},
-				})
+				for _, a := range agents {
+					if !a.Paused {
+						targetAgents = append(targetAgents, a.Name)
+					}
+				}
 			}
 
-			// Deploy to all agents.
-			if err := s.prov.RefreshAll(ctx); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("deploy failed: %v", err)), nil
+			if len(targetAgents) == 0 {
+				return mcp.NewToolResultError("no active agents to deploy to — all agents are paused"), nil
 			}
 
-			agents, err := s.prov.ListAgents(ctx)
-			if err != nil {
-				// Refresh succeeded but listing failed — still report success.
-				return jsonResult(deployResult{
-					Validated: true,
-					Deployed:  []string{"(all agents refreshed)"},
-				})
+			// Check if provider supports direct egress deployment (e.g., AWS via SSM)
+			type egressDeployer interface {
+				DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig string, mode policy.EgressMode) error
 			}
 
 			var deployed []string
-			for _, a := range agents {
-				if !a.Paused {
-					deployed = append(deployed, a.Name)
+			var errors []string
+
+			if deployer, ok := s.prov.(egressDeployer); ok {
+				// Provider supports direct egress deployment — generate configs in Go and push
+				// Always deploys proxy (deny-all when no domains configured)
+				for _, name := range targetAgents {
+					merged := pf.MergeForAgent(name)
+					envoyConfig, err := policy.GenerateProxyConf(merged.Egress)
+					if err != nil {
+						errors = append(errors, fmt.Sprintf("%s: %v", name, err))
+						continue
+					}
+
+					mode := policy.EgressModeEnforce
+					if merged.Egress != nil {
+						mode = merged.Egress.Mode
+					}
+					if err := deployer.DeployEgress(ctx, name, policyContent, envoyConfig, mode); err != nil {
+						errors = append(errors, fmt.Sprintf("%s: %v", name, err))
+					} else {
+						deployed = append(deployed, name)
+					}
+				}
+			} else {
+				// Fallback: refresh all (local/remote handle egress in their refresh flow)
+				if agent != "" {
+					if err := s.prov.RefreshAgent(ctx, agent); err != nil {
+						return mcp.NewToolResultError(fmt.Sprintf("deploy to %q failed: %v", agent, err)), nil
+					}
+					deployed = targetAgents
+				} else {
+					if err := s.prov.RefreshAll(ctx); err != nil {
+						return mcp.NewToolResultError(fmt.Sprintf("deploy failed: %v", err)), nil
+					}
+					deployed = targetAgents
 				}
 			}
-			return jsonResult(deployResult{
-				Validated: true,
-				Deployed:  deployed,
-			})
+
+			if len(errors) > 0 && len(deployed) == 0 {
+				return mcp.NewToolResultError(fmt.Sprintf("deploy failed for all agents: %s", strings.Join(errors, "; "))), nil
+			}
+			result := deployResult{
+				Validated:      true,
+				Deployed:       deployed,
+				Errors:         errors,
+				PartialFailure: len(errors) > 0,
+			}
+			return jsonResult(result)
 		},
 	}
 }

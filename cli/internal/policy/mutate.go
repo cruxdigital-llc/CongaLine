@@ -8,9 +8,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Save marshals the PolicyFile to YAML and writes it atomically.
+// Save validates, marshals the PolicyFile to YAML, and writes it atomically.
 // The parent directory is created if it does not exist.
 func Save(pf *PolicyFile, path string) error {
+	normalizeDefaults(pf)
+	if err := pf.Validate(); err != nil {
+		return fmt.Errorf("policy validation failed: %w", err)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("creating policy directory: %w", err)
 	}
@@ -39,9 +44,10 @@ func Save(pf *PolicyFile, path string) error {
 func SetEgress(pf *PolicyFile, agentName string, patch *EgressPolicy) {
 	if agentName == "" {
 		pf.Egress = patch
-		return
+	} else {
+		ensureAgentOverride(pf, agentName).Egress = patch
 	}
-	ensureAgentOverride(pf, agentName).Egress = patch
+	normalizeDefaults(pf)
 }
 
 // SetRouting sets the routing section. Same semantics as SetEgress.

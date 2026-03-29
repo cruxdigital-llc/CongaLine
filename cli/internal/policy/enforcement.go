@@ -44,19 +44,13 @@ func egressReport(e *EgressPolicy, providerName string) []RuleReport {
 		var level EnforcementLevel
 		var detail string
 		switch providerName {
-		case "aws":
-			level = Enforced
-			detail = "Per-agent Envoy proxy with domain-based CONNECT filtering"
-		case "remote":
-			level = Enforced
-			detail = "Per-agent Envoy proxy with domain-based CONNECT filtering"
-		case "local":
-			if e.Mode == "enforce" {
+		case "aws", "remote", "local":
+			if e.Mode != EgressModeValidate {
 				level = Enforced
-				detail = "Per-agent Envoy proxy with domain-based CONNECT filtering"
+				detail = "Per-agent Envoy proxy with domain-based CONNECT filtering + iptables DROP rules"
 			} else {
 				level = ValidateOnly
-				detail = "Warnings only; use mode: enforce to activate egress proxy"
+				detail = "Per-agent Envoy proxy with domain logging + iptables DROP rules (violations logged, not blocked). Set mode: enforce to block non-allowlisted traffic."
 			}
 		default:
 			level = NotApplicable

@@ -12,6 +12,27 @@ import (
 
 const CurrentAPIVersion = "conga.dev/v1alpha1"
 
+// EgressMode defines the enforcement behavior for egress policy.
+type EgressMode string
+
+const (
+	EgressModeEnforce  EgressMode = "enforce"
+	EgressModeValidate EgressMode = "validate"
+)
+
+// ParseEgressMode validates a string as an EgressMode.
+// Returns EgressModeEnforce for empty string (default).
+func ParseEgressMode(s string) (EgressMode, error) {
+	switch EgressMode(s) {
+	case EgressModeEnforce, EgressModeValidate:
+		return EgressMode(s), nil
+	case "":
+		return EgressModeEnforce, nil
+	default:
+		return "", fmt.Errorf("invalid egress mode %q (must be \"validate\" or \"enforce\")", s)
+	}
+}
+
 // PolicyFile is the top-level structure of conga-policy.yaml.
 type PolicyFile struct {
 	APIVersion string                    `yaml:"apiVersion"`
@@ -23,9 +44,9 @@ type PolicyFile struct {
 
 // EgressPolicy defines which external domains agents can reach.
 type EgressPolicy struct {
-	AllowedDomains []string `yaml:"allowed_domains,omitempty"`
-	BlockedDomains []string `yaml:"blocked_domains,omitempty"`
-	Mode           string   `yaml:"mode,omitempty"` // "validate" (default) or "enforce"
+	AllowedDomains []string   `yaml:"allowed_domains,omitempty"`
+	BlockedDomains []string   `yaml:"blocked_domains,omitempty"`
+	Mode           EgressMode `yaml:"mode,omitempty"` // EgressModeEnforce (default) or EgressModeValidate
 }
 
 // RoutingPolicy defines model selection and routing rules.
@@ -83,7 +104,12 @@ func Load(path string) (*PolicyFile, error) {
 		}
 		return nil, fmt.Errorf("reading policy file: %w", err)
 	}
+	return LoadFromBytes(data)
+}
 
+// LoadFromBytes parses a PolicyFile from raw YAML bytes.
+// Returns an error if the bytes are empty or not valid policy YAML.
+func LoadFromBytes(data []byte) (*PolicyFile, error) {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return nil, fmt.Errorf("policy file is empty")
 	}
@@ -94,7 +120,21 @@ func Load(path string) (*PolicyFile, error) {
 	if err := dec.Decode(&pf); err != nil {
 		return nil, fmt.Errorf("parsing policy YAML: %w", err)
 	}
+	normalizeDefaults(&pf)
 	return &pf, nil
+}
+
+// normalizeDefaults fills in default values for optional fields after parsing.
+// This ensures all downstream consumers see resolved values.
+func normalizeDefaults(pf *PolicyFile) {
+	if pf.Egress != nil && pf.Egress.Mode == "" {
+		pf.Egress.Mode = EgressModeEnforce
+	}
+	for _, override := range pf.Agents {
+		if override != nil && override.Egress != nil && override.Egress.Mode == "" {
+			override.Egress.Mode = EgressModeEnforce
+		}
+	}
 }
 
 // Validate checks the structural validity of a loaded policy.
@@ -123,6 +163,9 @@ func (pf *PolicyFile) Validate() error {
 	}
 
 	for name, override := range pf.Agents {
+		if override == nil {
+			continue
+		}
 		if override.Egress != nil {
 			if err := validateEgress(override.Egress); err != nil {
 				return fmt.Errorf("agents.%s.egress: %w", name, err)
@@ -144,7 +187,7 @@ func (pf *PolicyFile) Validate() error {
 }
 
 func validateEgress(e *EgressPolicy) error {
-	validModes := map[string]bool{"": true, "validate": true, "enforce": true}
+	validModes := map[EgressMode]bool{EgressModeValidate: true, EgressModeEnforce: true}
 	if !validModes[e.Mode] {
 		return fmt.Errorf("invalid mode %q (must be \"validate\" or \"enforce\")", e.Mode)
 	}
@@ -258,6 +301,7 @@ func (pf *PolicyFile) MergeForAgent(agentName string) *PolicyFile {
 		merged.Posture = copyPosture(override.Posture)
 	}
 
+	normalizeDefaults(merged)
 	return merged
 }
 
