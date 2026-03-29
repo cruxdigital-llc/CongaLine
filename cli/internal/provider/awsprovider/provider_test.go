@@ -146,3 +146,72 @@ func TestSetAgentPaused_PreservesUnknownFields(t *testing.T) {
 		t.Errorf("custom_field lost after unpause: got %v", unpaused["custom_field"])
 	}
 }
+
+func TestValidateHeredocSafety(t *testing.T) {
+	tests := []struct {
+		name    string
+		values  map[string]string
+		wantErr bool
+	}{
+		{
+			"clean inputs",
+			map[string]string{
+				"PolicyContent": "egress:\n  allowed_domains:\n    - api.anthropic.com",
+				"EnvoyConfig":   "static_resources:\n  listeners: []",
+			},
+			false,
+		},
+		{
+			"POLICYEOF in policy content",
+			map[string]string{
+				"PolicyContent": "line1\nPOLICYEOF\nline3",
+			},
+			true,
+		},
+		{
+			"ENVOYEOF in envoy config",
+			map[string]string{
+				"EnvoyConfig": "bad\nENVOYEOF\ninjection",
+			},
+			true,
+		},
+		{
+			"BOOTSTRAPEOF in bootstrap",
+			map[string]string{
+				"ProxyBootstrapJS": "// BOOTSTRAPEOF",
+			},
+			true,
+		},
+		{
+			"PROXYDF in any value",
+			map[string]string{
+				"PolicyContent": "FROM envoyproxy/envoy\nPROXYDF\n",
+			},
+			true,
+		},
+		{
+			"delimiter as substring",
+			map[string]string{
+				"PolicyContent": "contains POLICYEOF inside",
+			},
+			true,
+		},
+		{
+			"similar but not matching",
+			map[string]string{
+				"PolicyContent": "POLICY_EOF is fine",
+				"EnvoyConfig":   "ENVOY_EOF is fine",
+			},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHeredocSafety(tt.values)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateHeredocSafety() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}

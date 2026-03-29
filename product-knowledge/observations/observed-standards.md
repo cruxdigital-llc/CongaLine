@@ -62,3 +62,27 @@
 - **Suggested Severity**: must
 - **Confidence**: High
 - **Status**: enforced — implemented in PR #3 (open-source sanitization)
+
+### 2026-03-28 - Security defaults must be enforce, not validate
+- **Source**: User explicit statement — "no definition for mode should default to enforce to honor our security first footprint"
+- **Context**: Egress policy `mode` field defaulted to `validate` (warn-only). User directed that security controls should be active by default.
+- **Proposed Standard**: "Security-relevant policy fields must default to the most restrictive option. Operators opt into permissive modes explicitly."
+- **Suggested Severity**: must
+- **Confidence**: High
+- **Status**: promoted — implemented in Feature 18, `normalizeDefaults()` in `policy.go`
+
+### 2026-03-28 - Agent data must survive all lifecycle operations
+- **Source**: User explicit statement — asked to confirm no data loss and requested it as a critical standard
+- **Context**: Planning AWS upgrade, concern about agent memory persistence across container restarts and config changes
+- **Proposed Standard**: "Agent data directories must never be deleted, overwritten, or recreated by provisioning, refresh, or upgrade operations."
+- **Suggested Severity**: must
+- **Confidence**: High
+- **Status**: promoted — formalized as "Agent Data Safety" standard in `architecture.md`
+
+### 2026-03-28 - CLI changes must be represented across all interfaces
+- **Source**: User explicit statement — "Any changes to the CLI should support both human (arg) and agent (json) i/o as well as be represented in the MCP layer"
+- **Context**: Adding `--delete-data` flag to teardown; user wanted to ensure parity across CLI, JSON, and MCP
+- **Proposed Standard**: "Every CLI flag must have a JSON input field and an MCP tool parameter. Every command must have an MCP tool."
+- **Suggested Severity**: must
+- **Confidence**: High
+- **Status**: promoted — formalized as "Interface Parity" standard in `architecture.md`

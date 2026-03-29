@@ -14,7 +14,7 @@ func TestSaveAndReload(t *testing.T) {
 		APIVersion: CurrentAPIVersion,
 		Egress: &EgressPolicy{
 			AllowedDomains: []string{"api.anthropic.com", "*.slack.com"},
-			Mode:           "enforce",
+			Mode:           EgressModeEnforce,
 		},
 	}
 
@@ -36,7 +36,7 @@ func TestSaveAndReload(t *testing.T) {
 	if len(loaded.Egress.AllowedDomains) != 2 {
 		t.Errorf("allowed_domains len = %d, want 2", len(loaded.Egress.AllowedDomains))
 	}
-	if loaded.Egress.Mode != "enforce" {
+	if loaded.Egress.Mode != EgressModeEnforce {
 		t.Errorf("mode = %q, want %q", loaded.Egress.Mode, "enforce")
 	}
 }
@@ -63,7 +63,7 @@ func TestSetEgressGlobal(t *testing.T) {
 	pf := &PolicyFile{APIVersion: CurrentAPIVersion}
 	patch := &EgressPolicy{
 		AllowedDomains: []string{"api.anthropic.com"},
-		Mode:           "enforce",
+		Mode:           EgressModeEnforce,
 	}
 
 	SetEgress(pf, "", patch)
@@ -74,7 +74,7 @@ func TestSetEgressGlobal(t *testing.T) {
 	if len(pf.Egress.AllowedDomains) != 1 {
 		t.Errorf("allowed_domains len = %d, want 1", len(pf.Egress.AllowedDomains))
 	}
-	if pf.Egress.Mode != "enforce" {
+	if pf.Egress.Mode != EgressModeEnforce {
 		t.Errorf("mode = %q, want %q", pf.Egress.Mode, "enforce")
 	}
 }
@@ -88,7 +88,7 @@ func TestSetEgressAgent(t *testing.T) {
 	}
 	patch := &EgressPolicy{
 		AllowedDomains: []string{"api.anthropic.com", "*.github.com"},
-		Mode:           "enforce",
+		Mode:           EgressModeEnforce,
 	}
 
 	SetEgress(pf, "myagent", patch)

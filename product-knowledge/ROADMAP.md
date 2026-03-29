@@ -51,7 +51,7 @@ The organizing principle: local → remote → enterprise is a promotion pipelin
 | Area | Deliverable | Status |
 |---|---|---|
 | **Policy schema** | `conga-policy.yaml` with egress, routing, posture sections. Go types, validation, enforcement reporting. `conga policy validate` command. | ✅ Complete — `specs/2026-03-25_feature_policy-schema/` |
-| **Egress — All providers** | Per-agent Envoy proxy with domain-based CONNECT filtering + iptables DROP rules. Local: validate (warn) or enforce modes. Remote/AWS: always enforce. | ✅ Complete — `specs/2026-03-25_feature_egress-allowlist/` |
+| **Egress — All providers** | Per-agent Envoy proxy with domain-based CONNECT filtering + iptables DROP rules. All providers respect `mode: enforce` (default) or `mode: validate`. AWS includes iptables enforcement. | ✅ Complete — `specs/2026-03-25_feature_egress-allowlist/`, `specs/2026-03-28_feature_portable-egress-policy-compliance/` |
 | **Version awareness** | `conga status` shows OpenClaw version + security update availability. | Planned |
 | **Demo playbook** | 5 ready-today scenarios (container escape, network isolation, config tamper, SSRF, IAM deny). | Planned |
 

@@ -22,3 +22,6 @@ var PauseAgentScript string
 
 //go:embed unpause-agent.sh.tmpl
 var UnpauseAgentScript string
+
+//go:embed deploy-egress.sh.tmpl
+var DeployEgressScript string
