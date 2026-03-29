@@ -167,6 +167,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return err
 	}
 	envPath := filepath.Join(p.configDir(), cfg.Name+".env")
+	os.Remove(envPath) // remove read-only file from prior run before overwriting
 	if err := os.WriteFile(envPath, envContent, 0400); err != nil {
 		return err
 	}
@@ -222,6 +223,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 
 	// Write proxy bootstrap script for Node.js CONNECT tunneling
 	bootstrapPath := filepath.Join(p.configDir(), "proxy-bootstrap.js")
+	os.Remove(bootstrapPath) // remove read-only file from prior run before overwriting
 	if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
 		return fmt.Errorf("failed to write proxy bootstrap: %w", err)
 	}
@@ -611,6 +613,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 
 	// Write proxy bootstrap script for Node.js CONNECT tunneling
 	bootstrapPath := filepath.Join(p.configDir(), "proxy-bootstrap.js")
+	os.Remove(bootstrapPath) // remove read-only file from prior run before overwriting
 	if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
 		return fmt.Errorf("failed to write proxy bootstrap: %w", err)
 	}
@@ -1185,6 +1188,7 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 	if err := os.MkdirAll(filepath.Dir(confPath), 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
+	os.Remove(confPath) // remove read-only file from prior run before overwriting
 	if err := os.WriteFile(confPath, []byte(conf), 0444); err != nil {
 		return fmt.Errorf("writing egress config: %w", err)
 	}
@@ -1198,6 +1202,7 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 
 	// Write entrypoint script for Envoy
 	entrypointPath := filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", agentName))
+	os.Remove(entrypointPath) // remove read-only file from prior run before overwriting
 	if err := os.WriteFile(entrypointPath, []byte(policy.GenerateProxyEntrypoint()), 0555); err != nil {
 		return fmt.Errorf("writing entrypoint: %w", err)
 	}
