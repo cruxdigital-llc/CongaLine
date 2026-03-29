@@ -92,7 +92,7 @@ func (s *Server) toolGetProxyLogs() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{
 			Name:        "conga_get_proxy_logs",
-			Description: "Get the last N lines of an agent's egress proxy container logs. Shows domain filtering activity: in validate mode, would-be-denied requests appear in the proxy application log as 'egress-validate: would deny <host>'. In enforce mode, blocked requests receive a 403 from the Lua filter (visible to the client but not logged by the proxy).",
+			Description: "Get the last N lines of an agent's egress proxy container logs. Shows domain filtering activity: in validate mode, would-be-denied requests appear as 'egress-validate: would deny <host>' via Lua logWarn. In enforce mode, blocked requests receive a 403 from the Lua filter and appear in Envoy's access log.",
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{

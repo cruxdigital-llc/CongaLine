@@ -255,8 +255,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 
 	// 7. Start per-agent egress proxy (always when domains defined)
 	if egressProxy {
-		domains := policy.EffectiveAllowedDomains(egressPolicy)
-		if err := p.startAgentEgressProxy(ctx, cfg.Name, domains, egressPolicy.Mode); err != nil {
+		if err := p.startAgentEgressProxy(ctx, cfg.Name, egressPolicy); err != nil {
 			return fmt.Errorf("failed to start egress proxy: %w", err)
 		}
 	}
@@ -672,8 +671,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 
 	// Start per-agent egress proxy (always when domains defined)
 	if egressProxy {
-		domains := policy.EffectiveAllowedDomains(egressPolicy)
-		if err := p.startAgentEgressProxy(ctx, agentName, domains, egressPolicy.Mode); err != nil {
+		if err := p.startAgentEgressProxy(ctx, agentName, egressPolicy); err != nil {
 			return fmt.Errorf("failed to start egress proxy: %w", err)
 		}
 	}
@@ -1072,7 +1070,7 @@ func (p *RemoteProvider) ensureEgressProxy(ctx context.Context) {
 }
 
 // startAgentEgressProxy starts a per-agent Envoy proxy for egress domain filtering on the remote host.
-func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, domains []string, mode policy.EgressMode) error {
+func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName string, ep *policy.EgressPolicy) error {
 	proxyName := policy.EgressProxyName(agentName)
 	netName := networkName(agentName)
 
@@ -1092,7 +1090,7 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 	}
 
 	// Generate and upload Envoy config
-	conf, err := policy.GenerateProxyConf(domains, mode)
+	conf, err := policy.GenerateProxyConf(ep)
 	if err != nil {
 		return fmt.Errorf("generating envoy config: %w", err)
 	}
@@ -1132,7 +1130,7 @@ func (p *RemoteProvider) startAgentEgressProxy(ctx context.Context, agentName st
 		}
 	}
 
-	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(domains))
+	fmt.Printf("  Egress proxy started for %s (%d domains allowed)\n", agentName, len(policy.EffectiveAllowedDomains(ep)))
 	return nil
 }
 

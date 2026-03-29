@@ -43,9 +43,10 @@ func Save(pf *PolicyFile, path string) error {
 func SetEgress(pf *PolicyFile, agentName string, patch *EgressPolicy) {
 	if agentName == "" {
 		pf.Egress = patch
-		return
+	} else {
+		ensureAgentOverride(pf, agentName).Egress = patch
 	}
-	ensureAgentOverride(pf, agentName).Egress = patch
+	normalizeDefaults(pf)
 }
 
 // SetRouting sets the routing section. Same semantics as SetEgress.

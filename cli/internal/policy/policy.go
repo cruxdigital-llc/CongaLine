@@ -20,6 +20,19 @@ const (
 	EgressModeValidate EgressMode = "validate"
 )
 
+// ParseEgressMode validates a string as an EgressMode.
+// Returns EgressModeEnforce for empty string (default).
+func ParseEgressMode(s string) (EgressMode, error) {
+	switch EgressMode(s) {
+	case EgressModeEnforce, EgressModeValidate:
+		return EgressMode(s), nil
+	case "":
+		return EgressModeEnforce, nil
+	default:
+		return "", fmt.Errorf("invalid egress mode %q (must be \"validate\" or \"enforce\")", s)
+	}
+}
+
 // PolicyFile is the top-level structure of conga-policy.yaml.
 type PolicyFile struct {
 	APIVersion string                    `yaml:"apiVersion"`
@@ -171,7 +184,7 @@ func (pf *PolicyFile) Validate() error {
 }
 
 func validateEgress(e *EgressPolicy) error {
-	validModes := map[EgressMode]bool{"": true, EgressModeValidate: true, EgressModeEnforce: true}
+	validModes := map[EgressMode]bool{EgressModeValidate: true, EgressModeEnforce: true}
 	if !validModes[e.Mode] {
 		return fmt.Errorf("invalid mode %q (must be \"validate\" or \"enforce\")", e.Mode)
 	}

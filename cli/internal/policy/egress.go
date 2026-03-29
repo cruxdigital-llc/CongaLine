@@ -85,18 +85,26 @@ type envoyConfigData struct {
 
 var envoyConfigTmpl = template.Must(template.New("envoy-config").Parse(templates.EnvoyConfig))
 
-// GenerateProxyConf generates an Envoy config for an egress proxy.
+// GenerateProxyConf generates an Envoy config for an egress proxy from an EgressPolicy.
 // Envoy handles HTTP CONNECT tunneling via its dynamic forward proxy filter.
 // Domain filtering uses a Lua filter that inspects :authority before routing.
 //
 // When mode is "enforce": non-allowlisted requests receive 403 (hard deny).
 // When mode is "validate": non-allowlisted requests are logged as warnings but allowed
 // through, giving administrators visibility into what enforcement would block.
-// When domains is nil/empty: no Lua filter at all (pure passthrough).
+// When effective domains is nil/empty: no Lua filter at all (pure passthrough).
+//
+// EffectiveAllowedDomains is called internally to filter blocked domains.
 //
 // NOTE: The bash reimplementation in terraform/user-data.sh.tftpl generates the same
 // config format — keep both implementations and templates/envoy-config.yaml.tmpl in sync.
-func GenerateProxyConf(domains []string, mode EgressMode) (string, error) {
+func GenerateProxyConf(ep *EgressPolicy) (string, error) {
+	domains := EffectiveAllowedDomains(ep)
+	mode := EgressModeEnforce
+	if ep != nil {
+		mode = ep.Mode
+	}
+
 	data := envoyConfigData{
 		HasDomains:   len(domains) > 0,
 		ValidateMode: mode == EgressModeValidate,

@@ -259,9 +259,9 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			mode := policy.EgressMode(req.GetString("mode", ""))
-			if mode == "" {
-				mode = policy.EgressModeEnforce
+			mode, err := policy.ParseEgressMode(req.GetString("mode", ""))
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			patch := &policy.EgressPolicy{
 				AllowedDomains: allowedDomains,
@@ -271,9 +271,6 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 
 			policy.SetEgress(pf, req.GetString("agent", ""), patch)
 
-			if err := pf.Validate(); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("validation failed: %v", err)), nil
-			}
 			if err := policy.Save(pf, path); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -522,8 +519,7 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 				// Provider supports direct egress deployment — generate configs in Go and push
 				for _, name := range targetAgents {
 					merged := pf.MergeForAgent(name)
-					domains := policy.EffectiveAllowedDomains(merged.Egress)
-					if len(domains) == 0 {
+					if merged.Egress == nil || len(policy.EffectiveAllowedDomains(merged.Egress)) == 0 {
 						// Agent override cleared egress domains — fall back to RefreshAgent
 						// to reconfigure this agent (removes proxy env vars, stops proxy container).
 						if err := s.prov.RefreshAgent(ctx, name); err != nil {
@@ -533,14 +529,13 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 						}
 						continue
 					}
-					mode := merged.Egress.Mode
-					envoyConfig, err := policy.GenerateProxyConf(domains, mode)
+					envoyConfig, err := policy.GenerateProxyConf(merged.Egress)
 					if err != nil {
 						errors = append(errors, fmt.Sprintf("%s: %v", name, err))
 						continue
 					}
 
-					if err := deployer.DeployEgress(ctx, name, policyContent, envoyConfig, mode); err != nil {
+					if err := deployer.DeployEgress(ctx, name, policyContent, envoyConfig, merged.Egress.Mode); err != nil {
 						errors = append(errors, fmt.Sprintf("%s: %v", name, err))
 					} else {
 						deployed = append(deployed, name)

@@ -69,7 +69,12 @@ systemctl daemon-reload
 systemctl restart conga-$AGENT_NAME
 
 # Reconnect router to agent network (lost on container restart)
-docker network connect "conga-$AGENT_NAME" conga-router 2>/dev/null || true
+if docker inspect conga-router >/dev/null 2>&1; then
+  if ! docker network connect "conga-$AGENT_NAME" conga-router 2>/dev/null; then
+    # Not fatal — may already be connected (ExecStartPost races with this script)
+    echo "WARNING: Could not reconnect conga-router to conga-$AGENT_NAME — may already be connected or router stopped"
+  fi
+fi
 
 # Re-apply egress iptables rules (enforce mode only)
 EGRESS_MODE=$(cat /opt/conga/config/egress-$AGENT_NAME.mode 2>/dev/null || echo "")

@@ -168,7 +168,7 @@ func TestMergeForAgentWithOverride(t *testing.T) {
 		APIVersion: CurrentAPIVersion,
 		Egress: &EgressPolicy{
 			AllowedDomains: []string{"api.anthropic.com", "*.slack.com"},
-			Mode:           "validate",
+			Mode:           EgressModeValidate,
 		},
 		Posture: &PostureDeclarations{
 			IsolationLevel: "standard",
@@ -205,7 +205,7 @@ func TestMergeForAgentWithoutOverride(t *testing.T) {
 		APIVersion: CurrentAPIVersion,
 		Egress: &EgressPolicy{
 			AllowedDomains: []string{"api.anthropic.com"},
-			Mode:           "validate",
+			Mode:           EgressModeValidate,
 		},
 	}
 
@@ -221,7 +221,7 @@ func TestMergeForAgentWithoutOverride(t *testing.T) {
 func TestEnforcementReportLocal(t *testing.T) {
 	pf := &PolicyFile{
 		APIVersion: CurrentAPIVersion,
-		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: "validate"},
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: EgressModeValidate},
 		Posture:    &PostureDeclarations{IsolationLevel: "standard", Monitoring: "basic"},
 	}
 	reports := pf.EnforcementReport("local")
@@ -238,7 +238,7 @@ func TestEnforcementReportLocal(t *testing.T) {
 func TestEnforcementReportLocalEnforce(t *testing.T) {
 	pf := &PolicyFile{
 		APIVersion: CurrentAPIVersion,
-		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: "enforce"},
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: EgressModeEnforce},
 	}
 	reports := pf.EnforcementReport("local")
 	for _, r := range reports {
@@ -284,7 +284,7 @@ func TestEnforcementReportRemote(t *testing.T) {
 func TestEnforcementReportAWSValidate(t *testing.T) {
 	pf := &PolicyFile{
 		APIVersion: CurrentAPIVersion,
-		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: "validate"},
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: EgressModeValidate},
 	}
 	reports := pf.EnforcementReport("aws")
 	for _, r := range reports {
@@ -297,7 +297,7 @@ func TestEnforcementReportAWSValidate(t *testing.T) {
 func TestEnforcementReportRemoteValidate(t *testing.T) {
 	pf := &PolicyFile{
 		APIVersion: CurrentAPIVersion,
-		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: "validate"},
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: EgressModeValidate},
 	}
 	reports := pf.EnforcementReport("remote")
 	for _, r := range reports {
@@ -356,7 +356,7 @@ func TestMergeForAgentDeepCopy(t *testing.T) {
 		APIVersion: CurrentAPIVersion,
 		Egress: &EgressPolicy{
 			AllowedDomains: []string{"api.anthropic.com"},
-			Mode:           "validate",
+			Mode:           EgressModeValidate,
 		},
 		Agents: map[string]*AgentOverride{
 			"myagent": {
@@ -478,6 +478,76 @@ func TestValidateDomainAcceptsValidDNS(t *testing.T) {
 		if err != nil {
 			t.Errorf("validateDomain(%q) should accept valid DNS name, got: %v", d, err)
 		}
+	}
+}
+
+func TestParseEgressMode(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    EgressMode
+		wantErr bool
+	}{
+		{"enforce", EgressModeEnforce, false},
+		{"validate", EgressModeValidate, false},
+		{"", EgressModeEnforce, false},
+		{"turbo", "", true},
+		{"ENFORCE", "", true},
+	}
+	for _, tt := range tests {
+		got, err := ParseEgressMode(tt.input)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ParseEgressMode(%q) error = %v, wantErr = %v", tt.input, err, tt.wantErr)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseEgressMode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestSaveRejectsInvalidPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "conga-policy.yaml")
+
+	pf := &PolicyFile{} // missing apiVersion
+	if err := Save(pf, path); err == nil {
+		t.Fatal("expected Save to reject invalid policy")
+	}
+	// File should not exist
+	if _, err := os.Stat(path); err == nil {
+		t.Error("invalid policy file should not have been written")
+	}
+}
+
+func TestLoadFromBytesEdgeCases(t *testing.T) {
+	// Whitespace-only bytes
+	if _, err := LoadFromBytes([]byte("   \n\t  ")); err == nil {
+		t.Error("expected error for whitespace-only bytes")
+	}
+
+	// Valid minimal
+	pf, err := LoadFromBytes([]byte("apiVersion: conga.dev/v1alpha1"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pf.APIVersion != CurrentAPIVersion {
+		t.Errorf("apiVersion = %q", pf.APIVersion)
+	}
+
+	// Invalid YAML bytes
+	if _, err := LoadFromBytes([]byte("{{invalid")); err == nil {
+		t.Error("expected error for invalid YAML bytes")
+	}
+}
+
+func TestValidateRejectsEmptyModeAfterNormalization(t *testing.T) {
+	// Construct a policy with empty mode WITHOUT going through Load/normalizeDefaults
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress:     &EgressPolicy{AllowedDomains: []string{"api.anthropic.com"}, Mode: ""},
+	}
+	if err := pf.Validate(); err == nil {
+		t.Fatal("expected validation to reject empty mode (normalization must run before validation)")
 	}
 }
 

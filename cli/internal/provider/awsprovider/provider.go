@@ -505,8 +505,8 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 // --- Egress Policy Deployment ---
 
 // DeployEgress deploys the egress proxy for a single agent without requiring a host cycle.
-// It uploads the policy file, generates Envoy config, starts the proxy container, restarts
-// the agent container with HTTPS_PROXY, and applies iptables rules (enforce mode only).
+// It uploads the policy file and pre-generated Envoy config, starts the proxy container,
+// restarts the agent container with HTTPS_PROXY, and applies iptables rules (enforce mode only).
 func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig string, mode policy.EgressMode) error {
 	instanceID, err := p.findInstance(ctx)
 	if err != nil {
@@ -552,7 +552,9 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 }
 
 // validateHeredocSafety checks that template values don't contain heredoc delimiters.
-// A matching line would terminate the heredoc early and allow arbitrary shell execution.
+// A line containing only the delimiter would terminate the heredoc early and allow
+// arbitrary shell execution. This check conservatively rejects any value containing
+// the delimiter string, even as a substring.
 func validateHeredocSafety(values map[string]string) error {
 	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF"}
 	for _, delim := range heredocDelimiters {

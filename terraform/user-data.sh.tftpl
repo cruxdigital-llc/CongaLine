@@ -707,7 +707,7 @@ $DENY_ACTION
         "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
         dns_cache_config:
           name: dns_cache
-          dns_lookup_family: AUTO
+          dns_lookup_family: V4_ONLY
 ENVOY_CONF
 
   chmod 0400 "$CONF_OUT"
@@ -758,9 +758,14 @@ setup_agent_common() {
       cat > /tmp/conga-egress-build/Dockerfile << 'PROXYDF'
 FROM envoyproxy/envoy:v1.32-latest
 PROXYDF
-      docker build -t conga-egress-proxy /tmp/conga-egress-build
+      if ! docker build -t conga-egress-proxy /tmp/conga-egress-build; then
+        log "ERROR: Failed to build egress proxy image — $AGENT_NAME will run without egress filtering"
+        rm -rf /tmp/conga-egress-build
+        EGRESS_CONF=""
+      fi
       rm -rf /tmp/conga-egress-build
     fi
+    if [ -n "$EGRESS_CONF" ]; then
     docker rm -f "$EGRESS_PROXY" 2>/dev/null || true
     docker run -d \
       --name "$EGRESS_PROXY" \
@@ -774,9 +779,17 @@ PROXYDF
       -v "$EGRESS_CONF:/etc/envoy/envoy.yaml:ro" \
       conga-egress-proxy \
       envoy -c /etc/envoy/envoy.yaml --log-level warn
+    # Verify proxy started
+    sleep 2
+    if ! docker inspect -f '{{.State.Running}}' "$EGRESS_PROXY" 2>/dev/null | grep -q true; then
+      log "ERROR: Egress proxy $EGRESS_PROXY failed to start — $AGENT_NAME will run without egress filtering"
+      docker logs "$EGRESS_PROXY" 2>&1 | tail -20 || true
+      EGRESS_DOCKER_ARGS=""
+    else
     # Proxy is on the same Docker network — Docker DNS resolves the container name.
     EGRESS_DOCKER_ARGS="-e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1"
     # Write proxy bootstrap JS (patches Node.js fetch/https to route through proxy)
+    # NOTE: This must match cli/internal/policy/templates/proxy-bootstrap.js — keep both in sync.
     BOOTSTRAP_PATH="/opt/conga/config/proxy-bootstrap.js"
     if [ ! -f "$BOOTSTRAP_PATH" ]; then
       cat > "$BOOTSTRAP_PATH" << 'BOOTSTRAPJS'
@@ -817,6 +830,8 @@ BOOTSTRAPJS
     fi
     EGRESS_DOCKER_ARGS="$EGRESS_DOCKER_ARGS -v $BOOTSTRAP_PATH:/opt/proxy-bootstrap.js:ro"
     log "Egress proxy started for $AGENT_NAME"
+    fi # proxy started successfully
+    fi # EGRESS_CONF still set (build succeeded)
   fi
 
   # Build -e flags from env file keys
