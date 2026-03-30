@@ -353,10 +353,86 @@ func TestExpandSecrets_ChannelSecrets(t *testing.T) {
 	}
 }
 
+func TestExpandSecrets_MidStringVar(t *testing.T) {
+	t.Setenv("TEST_TOKEN", "abc123")
+	m := &Manifest{
+		Agents: []ManifestAgent{
+			{Name: "a", Secrets: map[string]string{"key": "Bearer $TEST_TOKEN"}},
+		},
+	}
+	if err := ExpandSecrets(m); err != nil {
+		t.Fatalf("ExpandSecrets failed: %v", err)
+	}
+	if m.Agents[0].Secrets["key"] != "Bearer abc123" {
+		t.Errorf("got %q, want \"Bearer abc123\"", m.Agents[0].Secrets["key"])
+	}
+}
+
 func TestExpandSecrets_NoAgentsOrChannels(t *testing.T) {
 	m := &Manifest{}
 	if err := ExpandSecrets(m); err != nil {
 		t.Fatalf("ExpandSecrets failed on empty manifest: %v", err)
+	}
+}
+
+func TestLoadEnvFile_Valid(t *testing.T) {
+	content := "KEY1=value1\nKEY2=value2\n# comment\n\nKEY3=value3"
+	path := writeTempFile(t, "test.env", content)
+	if err := LoadEnvFile(path); err != nil {
+		t.Fatalf("LoadEnvFile failed: %v", err)
+	}
+	if v := os.Getenv("KEY1"); v != "value1" {
+		t.Errorf("KEY1 = %q", v)
+	}
+	if v := os.Getenv("KEY2"); v != "value2" {
+		t.Errorf("KEY2 = %q", v)
+	}
+	if v := os.Getenv("KEY3"); v != "value3" {
+		t.Errorf("KEY3 = %q", v)
+	}
+}
+
+func TestLoadEnvFile_MalformedLine(t *testing.T) {
+	content := "GOOD=value\nBAD LINE NO EQUALS"
+	path := writeTempFile(t, "bad.env", content)
+	err := LoadEnvFile(path)
+	if err == nil {
+		t.Fatal("expected error for malformed line")
+	}
+	assertContains(t, err.Error(), "missing '='")
+}
+
+func TestLoadEnvFile_EmptyKey(t *testing.T) {
+	content := "=value"
+	path := writeTempFile(t, "emptykey.env", content)
+	err := LoadEnvFile(path)
+	if err == nil {
+		t.Fatal("expected error for empty key")
+	}
+	assertContains(t, err.Error(), "empty key")
+}
+
+func TestLoadEnvFile_QuotedValues(t *testing.T) {
+	content := "DQ=\"double quoted\"\nSQ='single quoted'\nNQ=no quotes"
+	path := writeTempFile(t, "quoted.env", content)
+	if err := LoadEnvFile(path); err != nil {
+		t.Fatalf("LoadEnvFile failed: %v", err)
+	}
+	if v := os.Getenv("DQ"); v != "double quoted" {
+		t.Errorf("DQ = %q, want \"double quoted\"", v)
+	}
+	if v := os.Getenv("SQ"); v != "single quoted" {
+		t.Errorf("SQ = %q, want \"single quoted\"", v)
+	}
+	if v := os.Getenv("NQ"); v != "no quotes" {
+		t.Errorf("NQ = %q, want \"no quotes\"", v)
+	}
+}
+
+func TestLoadEnvFile_FileNotFound(t *testing.T) {
+	err := LoadEnvFile("/nonexistent/path/test.env")
+	if err == nil {
+		t.Fatal("expected error for missing file")
 	}
 }
 

@@ -157,7 +157,7 @@ func Validate(m *Manifest) error {
 
 // ExpandSecrets expands $VAR and ${VAR} references in agent and channel
 // secret values from the process environment. Returns an error if any
-// referenced variable is empty or unset.
+// referenced variable is not set.
 func ExpandSecrets(m *Manifest) error {
 	for i := range m.Agents {
 		if err := expandMap(m.Agents[i].Secrets, "agent", m.Agents[i].Name); err != nil {
@@ -174,40 +174,53 @@ func ExpandSecrets(m *Manifest) error {
 
 // LoadEnvFile reads a KEY=VALUE env file and sets each variable in the
 // process environment. Lines starting with # and empty lines are skipped.
+// Returns an error for malformed lines (no '=' sign) or empty keys.
+// Surrounding double or single quotes on values are stripped.
 func LoadEnvFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading env file: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
-			continue
+			return fmt.Errorf("env file line %d: missing '=' in %q", i+1, line)
 		}
-		os.Setenv(strings.TrimSpace(key), strings.TrimSpace(value))
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("env file line %d: empty key in %q", i+1, line)
+		}
+		val := strings.TrimSpace(value)
+		// Strip matching surrounding quotes
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		os.Setenv(key, val)
 	}
 	return nil
 }
 
 func expandMap(secrets map[string]string, kind, name string) error {
 	for k, v := range secrets {
-		if !strings.HasPrefix(v, "$") {
+		if !strings.Contains(v, "$") {
 			continue
 		}
-		var missing string
+		var missing []string
 		expanded := os.Expand(v, func(key string) string {
-			val := os.Getenv(key)
-			if val == "" {
-				missing = key
+			val, ok := os.LookupEnv(key)
+			if !ok {
+				missing = append(missing, key)
 			}
 			return val
 		})
-		if missing != "" {
-			return fmt.Errorf("expanding secrets for %s %q: environment variable %s is not set", kind, name, missing)
+		if len(missing) > 0 {
+			return fmt.Errorf("expanding secrets for %s %q: environment variable(s) not set: %s", kind, name, strings.Join(missing, ", "))
 		}
 		secrets[k] = expanded
 	}

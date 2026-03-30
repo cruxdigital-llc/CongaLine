@@ -51,9 +51,13 @@ func Bootstrap(ctx context.Context, prov provider.Provider, m *Manifest, policyP
 	// Resolve policy: existing file wins over manifest section.
 	writePolicy := false
 	if m.Policy != nil {
-		if _, err := os.Stat(policyPath); err != nil {
-			// No existing policy file — seed from manifest.
-			writePolicy = true
+		_, err := os.Stat(policyPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				writePolicy = true
+			} else {
+				return nil, fmt.Errorf("checking policy file %s: %w", policyPath, err)
+			}
 		} else {
 			ui.Infoln("Using existing conga-policy.yaml (bootstrap policy section ignored)")
 		}
@@ -97,6 +101,10 @@ func Bootstrap(ctx context.Context, prov provider.Provider, m *Manifest, policyP
 		}})
 	}
 
+	if len(steps) == 0 {
+		return result, fmt.Errorf("manifest has no actionable sections (no setup, agents, channels, or policy)")
+	}
+
 	total := len(steps)
 	for i, s := range steps {
 		ui.Info("[%d/%d] %s... ", i+1, total, s.name)
@@ -124,6 +132,21 @@ func channelBindingCount(m *Manifest) int {
 	return n
 }
 
+// agentExists checks whether an agent with the given name already exists.
+// Uses ListAgents to avoid conflating "not found" with transient errors.
+func agentExists(ctx context.Context, prov provider.Provider, name string) (bool, error) {
+	agents, err := prov.ListAgents(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, a := range agents {
+		if a.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func bootstrapSetup(ctx context.Context, prov provider.Provider, setup *ManifestSetup) (StepResult, error) {
 	cfg := &provider.SetupConfig{
 		Image:         setup.Image,
@@ -143,7 +166,11 @@ func bootstrapSetup(ctx context.Context, prov provider.Provider, setup *Manifest
 func bootstrapAgents(ctx context.Context, prov provider.Provider, agents []ManifestAgent) (StepResult, error) {
 	sr := StepResult{Status: "done"}
 	for _, a := range agents {
-		if _, err := prov.GetAgent(ctx, a.Name); err == nil {
+		exists, err := agentExists(ctx, prov, a.Name)
+		if err != nil {
+			return sr, fmt.Errorf("checking agent %q: %w", a.Name, err)
+		}
+		if exists {
 			sr.Details = append(sr.Details, a.Name+": already exists")
 			continue
 		}

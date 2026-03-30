@@ -69,7 +69,10 @@ func bootstrapRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize provider: --provider flag > manifest > persisted config > "local"
-	cfg, _ := provider.LoadConfig(provider.DefaultConfigPath())
+	cfg, err := provider.LoadConfig(provider.DefaultConfigPath())
+	if err != nil {
+		return fmt.Errorf("loading provider config: %w", err)
+	}
 	if flagProvider != "" {
 		cfg.Provider = flagProvider
 	} else if m.Provider != "" {
