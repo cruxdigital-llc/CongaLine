@@ -158,6 +158,15 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 
 ### 20. Manifest Apply — ✅ Verified and Complete
 *See `specs/2026-03-30_feature_manifest-apply/` for full trace*
+- Note: Renamed from `conga apply` to `conga bootstrap` post-verification. Bootstrap is additive-only, no state management. Policy section seeds `conga-policy.yaml` only on first run (existing policy file takes precedence).
+
+### 21. Terraform Provider — Planned (Future Roadmap)
+*Lead: Architect + PM + QA*
+*See `specs/2026-03-30_feature_terraform-provider/` for full trace*
+- [x] Requirements defined
+- [x] Plan defined (resource model, architecture, implementation phases)
+- [ ] Spec (deferred — implement when enterprise use case materializes)
+- [ ] Implementation (8 phases: skeleton → core resources → channels → policy → data sources → import → tests → registry)
 
 ### 11. Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
