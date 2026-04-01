@@ -65,17 +65,17 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 ### 8. Agent Pause / Unpause — Verified Complete
 *See `specs/2026-03-21_feature_agent-pause/` for full trace*
 
-### 9. Remote Provider (formerly VPS) — Verified Complete, E2E Tested on Raspberry Pi
+### 9. Remote Provider (formerly VPS) — ✅ Verified Complete, E2E Tested on Raspberry Pi
 *See `specs/2026-03-22_feature_vps-provider/` for full trace*
 - Full lifecycle verified on Raspberry Pi (Debian 13, ARM64, 905MB RAM): setup, add-user, status, logs, secrets, connect (SSH tunnel, HTTP 200), pause, unpause, teardown
 - 3 bugs found and fixed during integration testing (SSH auth ordering, first-time setup flow, non-root sudo)
-- [ ] Phase 1: SSH foundation (`ssh.go`)
-- [ ] Phase 2: Docker helpers (`docker.go`)
-- [ ] Phase 3: Core provider + agent lifecycle (`provider.go`)
-- [ ] Phase 4: Secrets + integrity (`secrets.go`, `integrity.go`)
-- [ ] Phase 5: Setup wizard (`setup.go`)
-- [ ] Phase 6: Config + wiring (`config.go`, `root.go`, `go.mod`)
-- [ ] Phase 7: Documentation
+- [x] Phase 1: SSH foundation (`ssh.go`)
+- [x] Phase 2: Docker helpers (`docker.go`)
+- [x] Phase 3: Core provider + agent lifecycle (`provider.go`)
+- [x] Phase 4: Secrets + integrity (`secrets.go`, `integrity.go`)
+- [x] Phase 5: Setup wizard (`setup.go`)
+- [x] Phase 6: Config + wiring (`config.go`, `root.go`, `go.mod`)
+- [x] Phase 7: Documentation
 
 ### 10. CLI JSON Input — Verified Complete
 *See `specs/2026-03-23_feature_cli-json-input/` for full trace*
@@ -90,45 +90,15 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 *See `specs/2026-03-26_feature_channel-abstraction/` for full trace*
 
 
-### 15. MCP Policy Tools — Implementation Complete, Ready for Verification
-*Lead: Architect + QA*
+### 15. MCP Policy Tools — ✅ Verified and Complete
 *See `specs/2026-03-26_feature_mcp-policy-tools/` for full trace*
-- [x] Requirements defined: `specs/2026-03-26_feature_mcp-policy-tools/requirements.md`
-- [x] Plan defined: `specs/2026-03-26_feature_mcp-policy-tools/plan.md`
-- [x] Spec defined: `specs/2026-03-26_feature_mcp-policy-tools/spec.md`
-- [x] Persona review passed (Architect + QA)
-- [x] Standards gate passed (10/10 checks clear)
-- [x] Phase 1: Policy mutation helpers (`policy/mutate.go`) — 11 tests
-- [x] Phase 2: MCP tool handlers (`mcpserver/tools_policy.go`) — 7 tools
-- [x] Phase 3: Registration & wiring (`tools.go`)
-- [x] Phase 4: MCP tool tests (`tools_policy_test.go`) — 16 tests
-- [x] Phase 5: Full test suite passes
 
-### 16. Network-Level Egress Enforcement — Specified, Ready for Implementation
-*Lead: Architect + QA*
+### 16. Network-Level Egress Enforcement — ✅ Verified and Complete
 *See `specs/2026-03-26_feature_network-level-egress-enforcement/` for full trace*
-- [x] Requirements defined: `specs/2026-03-26_feature_network-level-egress-enforcement/requirements.md`
-- [x] Plan defined: `specs/2026-03-26_feature_network-level-egress-enforcement/plan.md`
-- [x] Spec defined: `specs/2026-03-26_feature_network-level-egress-enforcement/spec.md`
-- [x] Persona review passed (Architect + QA)
-- [x] Standards gate passed (10/10 checks clear, resolves "cooperative proxy" residual risk)
-- [x] Phase 1: Remote provider — Envoy proxy + iptables DROP rules
-- [x] Phase 2: Local provider — Envoy proxy + iptables DROP rules (nsenter on macOS)
-- [ ] Phase 3: AWS provider — bootstrap script + systemd integration (deferred)
+- Phase 3 (AWS) completed as part of Feature #18 (Portable Egress Policy Compliance)
 
-### 17. Channel Management CLI — Implementation Complete, Ready for Verification
-*Lead: Architect + QA*
+### 17. Channel Management CLI — ✅ Verified and Complete
 *See `specs/2026-03-27_feature_channel-management-cli/` for full trace*
-- [x] Requirements defined: `specs/2026-03-27_feature_channel-management-cli/requirements.md`
-- [x] Plan defined: `specs/2026-03-27_feature_channel-management-cli/plan.md`
-- [x] Spec defined: `specs/2026-03-27_feature_channel-management-cli/spec.md`
-- [x] Persona review passed (Architect + QA)
-- [x] Standards gate passed (10 checks, 1 warning: MCP Slack-specific params — accepted)
-- [x] Phase 1: Provider interface extension (5 new methods + ChannelStatus type)
-- [x] Phase 2: Setup flow simplification (channel secrets removed from admin setup)
-- [x] Phase 3: CLI commands (channels add/remove/list/bind/unbind)
-- [x] Phase 4: MCP tool wrappers (5 tools)
-- [x] Phase 5: Tests (7 MCP tool tests) + demo update (gateway-first flow)
 
 ### 18. Portable Egress Policy Compliance — Verified Complete
 *Lead: Architect + QA*
@@ -168,13 +138,21 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [ ] Spec (deferred — implement when enterprise use case materializes)
 - [ ] Implementation (8 phases: skeleton → core resources → channels → policy → data sources → import → tests → registry)
 
-### 11. Backlog / Upcoming
+### 22. Model Routing — Planned (Future Roadmap)
+*See `specs/2026-03-27_feature_model-routing/` for full trace*
+- [x] Schema defined (`RoutingPolicy` in `cli/internal/policy/policy.go`)
+- [x] Validation implemented
+- [x] MCP tool scaffolding (`conga_policy_set_routing`)
+- [ ] Spec (deferred — requires Bifrost integration design)
+- [ ] Implementation (model selection logic, sidecar proxy, cost limits enforcement)
+
+### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
 
 ## Known Issues / Technical Debt
-- CLI has zero test coverage — addressed by CLI Hardening spec (Phase 4)
-- CLI `admin.go` is 549 lines with 6 commands — addressed by CLI Hardening spec (Phase 5)
+- CLI test coverage at ~27% (aws), ~28% (ui), ~10% (cmd) — see CLI Hardening spec (Phase 4). Deferred items: `params_test.go`, `agent_test.go`
+- CLI `admin.go` split into 4 files — see CLI Hardening spec (Phase 5)
 - Per-user API keys: each employee brings their own credentials and plugins
 - Egress proxy enforcement uses HTTPS_PROXY env vars + iptables DROP rules to prevent bypass. See Network-Level Egress Enforcement spec (Feature 16)
 - Open question: which OpenClaw skills/plugins to enable and sandbox requirements

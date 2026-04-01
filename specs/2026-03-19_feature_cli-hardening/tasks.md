@@ -56,4 +56,4 @@
 
 ## CI Integration
 - [x] 7.1 Add `go test` and coverage steps to `.github/workflows/ci.yml`
-- [ ] 7.2 Verify: CI passes on push
+- [x] 7.2 Verify: CI passes on push
