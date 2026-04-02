@@ -75,11 +75,39 @@ resource "conga_secret" "nextgen_delivery_api_key" {
 # Aaron's Trello secrets are managed via CLI (already in Secrets Manager).
 # Add them here when ready to fully manage via Terraform.
 
-# Slack channels and bindings are managed via `conga admin setup` on AWS.
-# The AWS provider handles Slack config through the bootstrap script and
-# shared secrets in Secrets Manager — not via AddChannel/BindChannel.
-# TODO: Implement AddChannel/BindChannel for AWS provider to enable
-# channel management here.
+# Slack channel
+resource "conga_channel" "slack" {
+  platform       = "slack"
+  bot_token      = var.slack_bot_token
+  signing_secret = var.slack_signing_secret
+  app_token      = var.slack_app_token
+  depends_on     = [conga_environment.prod]
+}
+
+# Channel bindings
+resource "conga_channel_binding" "aaron_slack" {
+  agent      = conga_agent.aaron.name
+  platform   = conga_channel.slack.platform
+  binding_id = "UA13HEGTS"
+}
+
+resource "conga_channel_binding" "zach_slack" {
+  agent      = conga_agent.zach.name
+  platform   = conga_channel.slack.platform
+  binding_id = "U01UNLBCWNR"
+}
+
+resource "conga_channel_binding" "nathan_slack" {
+  agent      = conga_agent.nathan.name
+  platform   = conga_channel.slack.platform
+  binding_id = "U05926LNP37"
+}
+
+resource "conga_channel_binding" "nextgen_delivery_slack" {
+  agent      = conga_agent.nextgen_delivery.name
+  platform   = conga_channel.slack.platform
+  binding_id = "C0AFBSMHQ15"
+}
 
 # Egress policy
 resource "conga_policy" "prod" {

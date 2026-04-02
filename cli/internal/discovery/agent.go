@@ -20,6 +20,16 @@ type AgentConfig struct {
 	Paused      bool                      `json:"paused,omitempty"`
 }
 
+// ChannelBinding returns the first binding for the given platform, or nil.
+func (a *AgentConfig) ChannelBinding(platform string) *channels.ChannelBinding {
+	for i := range a.Channels {
+		if a.Channels[i].Platform == platform {
+			return &a.Channels[i]
+		}
+	}
+	return nil
+}
+
 // parseAgentConfig parses an agent config from its SSM parameter name and JSON value.
 // The agent name is derived from the last segment of the parameter path.
 func parseAgentConfig(paramName, jsonValue string) (*AgentConfig, error) {
