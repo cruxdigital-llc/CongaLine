@@ -49,4 +49,10 @@
 - [x] Add Terraform Registry manifest (`terraform-registry-manifest.json`)
 - [x] Add provider docs in `docs/` (terraform-plugin-docs format)
 - [x] Add minimal per-provider examples in `examples/` for registry documentation
-- [ ] Publish to Terraform Registry under `cruxdigital-llc/conga`
+- [x] Create `cruxdigital-llc/terraform-provider-conga` repo with provider binary, CI, and release workflows
+- [x] Rename `cli/internal/` → `cli/pkg/` to allow external module imports
+- [x] Register provider namespace on Terraform Registry
+- [ ] After merge: tag CongaLine as `cli/v0.X.X` (Go requires `cli/` prefix for submodule resolution)
+- [ ] After tag: update `terraform-provider-conga/go.mod` — replace local `replace` directive with tagged version
+- [ ] Add `GPG_PRIVATE_KEY` secret to `terraform-provider-conga` repo
+- [ ] Tag `terraform-provider-conga` `v0.1.0` — triggers GoReleaser, registry picks up signed binaries
