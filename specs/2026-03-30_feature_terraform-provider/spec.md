@@ -20,12 +20,15 @@ User Interfaces:  CLI  |  MCP Server  |  Terraform Provider
 
 ## Module Structure
 
-Separate Go module at `terraform-provider-conga/` importing `github.com/cruxdigital-llc/conga-line/cli`.
+Located within the CLI module at `cli/internal/terraform/` (not a separate Go module — Go's `internal/` visibility rules prevent external modules from importing the Provider interface). Binary entry point at `cli/cmd/terraform-provider-conga/`.
+
+Terraform modules for composable deployments at `terraform/modules/congaline/`.
 
 ```
-terraform-provider-conga/
-  main.go
-  internal/provider/
+cli/
+  cmd/terraform-provider-conga/
+    main.go                  # plugin server entry point
+  internal/terraform/
     provider.go              # terraform-plugin-framework provider
     environment_resource.go  # conga_environment
     agent_resource.go        # conga_agent
