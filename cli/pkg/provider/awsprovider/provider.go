@@ -482,34 +482,25 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 		return nil
 	}
 
-	instanceID, err := p.findInstance(ctx)
-	if err != nil {
-		return err
-	}
-
-	tmpl, err := template.New("refresh-all").Parse(scripts.RefreshAllScript)
-	if err != nil {
-		return fmt.Errorf("failed to parse refresh-all template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, struct {
-		Agents    []provider.AgentConfig
-		AWSRegion string
-	}{activeAgents, p.region}); err != nil {
-		return fmt.Errorf("failed to render refresh-all script: %w", err)
-	}
-
+	// Refresh each agent individually so env files are regenerated from
+	// Secrets Manager. The old approach used a bulk shell script that only
+	// restarted systemd units without regenerating env files, causing stale
+	// secrets after secret changes.
+	var failed []string
 	spin := ui.NewSpinner("Refreshing all agents...")
-	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, buf.String(), 300*time.Second)
-	spin.Stop()
-	if err != nil {
-		return err
+	for _, a := range activeAgents {
+		spin.Stop()
+		if err := p.RefreshAgent(ctx, a.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to refresh %s: %v\n", a.Name, err)
+			failed = append(failed, a.Name)
+		}
+		spin = ui.NewSpinner("Refreshing all agents...")
 	}
+	spin.Stop()
 
-	if result.Status != "Success" {
-		fmt.Fprintf(os.Stderr, "Output:\n%s\n%s\n", result.Stdout, result.Stderr)
-		return fmt.Errorf("refresh-all failed on instance")
+	if len(failed) > 0 {
+		return fmt.Errorf("failed to refresh %d agent(s): %s",
+			len(failed), strings.Join(failed, ", "))
 	}
 	return nil
 }
