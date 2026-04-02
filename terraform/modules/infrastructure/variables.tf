@@ -35,7 +35,7 @@ variable "alert_email" {
 }
 
 variable "setup_manifest" {
-  description = "Describes the config values and shared secrets required for the deployment. The CLI reads this manifest during `conga admin setup` and prompts for missing values."
+  description = "Describes the config values and shared secrets required for the deployment."
   type = object({
     config   = map(string)
     defaults = optional(map(string), {})
@@ -58,6 +58,7 @@ variable "setup_manifest" {
   }
 }
 
-# Agents are managed entirely via the CLI (conga admin add-user / add-team).
-# Agent config lives in SSM Parameter Store at /conga/agents/<name>.
-# The bootstrap script discovers agents from SSM at boot time.
+variable "repo_root" {
+  description = "Absolute path to the congaline repository root. Used to locate behavior files, router source, and CLI scripts."
+  type        = string
+}

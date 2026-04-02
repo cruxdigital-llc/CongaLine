@@ -13,15 +13,15 @@ locals {
 resource "aws_s3_object" "router_package_json" {
   bucket  = local.state_bucket
   key     = "conga/router/package.json"
-  content = file("${path.module}/../router/package.json")
-  etag    = md5(file("${path.module}/../router/package.json"))
+  content = file("${var.repo_root}/router/package.json")
+  etag    = md5(file("${var.repo_root}/router/package.json"))
 }
 
 resource "aws_s3_object" "router_index_js" {
   bucket  = local.state_bucket
   key     = "conga/router/src/index.js"
-  content = file("${path.module}/../router/src/index.js")
-  etag    = md5(file("${path.module}/../router/src/index.js"))
+  content = file("${var.repo_root}/router/src/index.js")
+  etag    = md5(file("${var.repo_root}/router/src/index.js"))
 }
 
 resource "aws_s3_object" "bootstrap_script" {
