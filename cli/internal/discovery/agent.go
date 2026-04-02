@@ -12,7 +12,7 @@ import (
 )
 
 type AgentConfig struct {
-	Name        string
+	Name        string                    `json:"-"` // Derived from SSM parameter path, not serialized
 	Type        string                    `json:"type"`
 	Channels    []channels.ChannelBinding `json:"channels,omitempty"`
 	GatewayPort int                       `json:"gateway_port"`

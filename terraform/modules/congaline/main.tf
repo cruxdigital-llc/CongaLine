@@ -69,12 +69,10 @@ resource "conga_secret" "agent" {
 
 # Messaging channel — created only when channel_secrets are provided
 resource "conga_channel" "slack" {
-  count          = length(var.channel_secrets) > 0 ? 1 : 0
-  platform       = "slack"
-  bot_token      = lookup(var.channel_secrets, "slack-bot-token", "")
-  signing_secret = lookup(var.channel_secrets, "slack-signing-secret", "")
-  app_token      = lookup(var.channel_secrets, "slack-app-token", "")
-  depends_on     = [conga_environment.this]
+  count      = length(var.channel_secrets) > 0 ? 1 : 0
+  platform   = "slack"
+  secrets    = var.channel_secrets
+  depends_on = [conga_environment.this]
 }
 
 # Channel bindings — one per agent that has a binding_id (only when channel exists)

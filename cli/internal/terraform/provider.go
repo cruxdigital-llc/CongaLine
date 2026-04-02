@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	congaprovider "github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -58,6 +60,9 @@ func (p *congaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp
 			"provider_type": schema.StringAttribute{
 				Required:    true,
 				Description: `Deployment target: "local", "remote", or "aws".`,
+				Validators: []validator.String{
+					stringvalidator.OneOf("local", "remote", "aws"),
+				},
 			},
 			"data_dir": schema.StringAttribute{
 				Optional:    true,
@@ -101,6 +106,16 @@ func (p *congaProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	providerType := config.ProviderType.ValueString()
 	if providerType == "" {
 		resp.Diagnostics.AddError("Missing provider_type", "The provider_type attribute is required.")
+		return
+	}
+
+	// Cross-field validation
+	if providerType == "remote" && config.SSHHost.IsNull() {
+		resp.Diagnostics.AddError("Missing ssh_host", "The ssh_host attribute is required when provider_type is \"remote\".")
+		return
+	}
+	if providerType == "aws" && config.Region.IsNull() {
+		resp.Diagnostics.AddError("Missing region", "The region attribute is required when provider_type is \"aws\".")
 		return
 	}
 

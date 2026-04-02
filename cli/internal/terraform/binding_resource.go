@@ -106,8 +106,20 @@ func (r *channelBindingResource) Create(ctx context.Context, req resource.Create
 
 	agentName := plan.Agent.ValueString()
 	if err := r.prov.BindChannel(ctx, agentName, binding); err != nil {
-		// If binding already exists, treat as success (idempotent create).
-		if !strings.Contains(err.Error(), "already has a") {
+		if strings.Contains(err.Error(), "already has a") {
+			// Binding already exists — verify it matches the plan.
+			agent, getErr := r.prov.GetAgent(ctx, agentName)
+			if getErr != nil {
+				resp.Diagnostics.AddError("Failed to verify existing binding", getErr.Error())
+				return
+			}
+			existing := agent.ChannelBinding(binding.Platform)
+			if existing == nil || existing.ID != binding.ID {
+				resp.Diagnostics.AddError("Conflicting binding exists",
+					fmt.Sprintf("Agent %q already has a %s binding with a different ID. Unbind it first.", agentName, binding.Platform))
+				return
+			}
+		} else {
 			resp.Diagnostics.AddError("Failed to bind channel", err.Error())
 			return
 		}
@@ -129,7 +141,11 @@ func (r *channelBindingResource) Read(ctx context.Context, req resource.ReadRequ
 
 	agent, err := r.prov.GetAgent(ctx, state.Agent.ValueString())
 	if err != nil {
-		resp.State.RemoveResource(ctx)
+		if isNotFoundErr(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to read agent", err.Error())
 		return
 	}
 

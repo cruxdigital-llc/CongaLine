@@ -97,10 +97,15 @@ func (r *environmentResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	// Verify the environment still exists by listing agents.
+	// Best-effort existence check — ListAgents succeeding implies the provider
+	// backend is reachable, not that the full environment is intact.
 	_, err := r.prov.ListAgents(ctx)
 	if err != nil {
-		resp.State.RemoveResource(ctx)
+		if isNotFoundErr(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to read environment state", err.Error())
 		return
 	}
 

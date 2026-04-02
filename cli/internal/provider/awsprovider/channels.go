@@ -87,7 +87,9 @@ func (p *AWSProvider) RemoveChannel(ctx context.Context, platform string) error 
 	}
 
 	// 1. Stop router on instance
-	p.runOnInstance(ctx, instanceID, "docker rm -f conga-router 2>/dev/null || true", 30*time.Second)
+	if _, err := p.runOnInstance(ctx, instanceID, "docker rm -f conga-router 2>/dev/null || true", 30*time.Second); err != nil {
+		return fmt.Errorf("failed to stop router (instance may be unreachable): %w", err)
+	}
 
 	// 2. Strip bindings from all agents, regenerate configs, update SSM
 	agents, err := discovery.ListAgents(ctx, p.clients.SSM)
@@ -122,7 +124,9 @@ func (p *AWSProvider) RemoveChannel(ctx context.Context, platform string) error 
 	}
 
 	// 5. Remove router.env
-	p.runOnInstance(ctx, instanceID, "rm -f /opt/conga/config/router.env", 15*time.Second)
+	if _, err := p.runOnInstance(ctx, instanceID, "rm -f /opt/conga/config/router.env", 15*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove router.env: %v\n", err)
+	}
 
 	return nil
 }
@@ -209,9 +213,11 @@ func (p *AWSProvider) BindChannel(ctx context.Context, agentName string, binding
 	}
 
 	// Connect router to agent network and restart
-	p.runOnInstance(ctx, instanceID,
+	if _, err := p.runOnInstance(ctx, instanceID,
 		fmt.Sprintf("docker network connect conga-%s conga-router 2>/dev/null || true", agentName),
-		15*time.Second)
+		15*time.Second); err != nil {
+		return fmt.Errorf("failed to connect router to agent network: %w", err)
+	}
 
 	if err := p.restartRouterOnInstance(ctx, instanceID); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to restart router: %v\n", err)
@@ -291,7 +297,7 @@ func (p *AWSProvider) readSharedSecrets(ctx context.Context) (common.SharedSecre
 			secretPath := fmt.Sprintf("conga/shared/%s", def.Name)
 			val, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, secretPath)
 			if err != nil {
-				continue
+				return secrets, fmt.Errorf("failed to read shared secret %s: %w", def.Name, err)
 			}
 			if val != "" && val != "REPLACE_ME" {
 				secrets.Values[def.Name] = val
@@ -299,10 +305,16 @@ func (p *AWSProvider) readSharedSecrets(ctx context.Context) (common.SharedSecre
 		}
 	}
 
-	if id, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, "conga/shared/google-client-id"); err == nil && id != "REPLACE_ME" {
+	// Google OAuth secrets are read separately because they are not part of any
+	// channel's SharedSecrets() manifest but are needed for gateway authentication.
+	if id, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, "conga/shared/google-client-id"); err != nil {
+		return secrets, fmt.Errorf("failed to read google-client-id: %w", err)
+	} else if id != "" && id != "REPLACE_ME" {
 		secrets.GoogleClientID = id
 	}
-	if secret, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, "conga/shared/google-client-secret"); err == nil && secret != "REPLACE_ME" {
+	if secret, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, "conga/shared/google-client-secret"); err != nil {
+		return secrets, fmt.Errorf("failed to read google-client-secret: %w", err)
+	} else if secret != "" && secret != "REPLACE_ME" {
 		secrets.GoogleClientSecret = secret
 	}
 
@@ -320,7 +332,10 @@ func (p *AWSProvider) readAgentSecrets(ctx context.Context, agentName string) (m
 	secrets := make(map[string]string)
 	for _, e := range entries {
 		val, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, fmt.Sprintf("conga/agents/%s/%s", agentName, e.Name))
-		if err == nil && val != "" {
+		if err != nil {
+			return nil, fmt.Errorf("failed to read agent secret %s/%s: %w", agentName, e.Name, err)
+		}
+		if val != "" {
 			secrets[e.Name] = val
 		}
 	}
@@ -328,14 +343,9 @@ func (p *AWSProvider) readAgentSecrets(ctx context.Context, agentName string) (m
 }
 
 // saveAgentToSSM writes an agent config to SSM Parameter Store.
+// Name is excluded via json:"-" tag on AgentConfig — it's derived from the SSM parameter path.
 func (p *AWSProvider) saveAgentToSSM(ctx context.Context, a discovery.AgentConfig) error {
-	agentConfigJSON, err := json.Marshal(map[string]any{
-		"type":         a.Type,
-		"channels":     a.Channels,
-		"gateway_port": a.GatewayPort,
-		"iam_identity": a.IAMIdentity,
-		"paused":       a.Paused,
-	})
+	agentConfigJSON, err := json.Marshal(a)
 	if err != nil {
 		return fmt.Errorf("failed to serialize agent config: %w", err)
 	}
@@ -374,8 +384,10 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return fmt.Errorf("failed to upload env file: %w", err)
 	}
 
-	// Fix ownership for container user
-	p.runOnInstance(ctx, instanceID, fmt.Sprintf("chown -R 1000:1000 %s", dataDir), 15*time.Second)
+	// Fix ownership for container user (SFTP uploads create root-owned files)
+	if _, err := p.runOnInstance(ctx, instanceID, fmt.Sprintf("chown -R 1000:1000 '%s'", dataDir), 15*time.Second); err != nil {
+		return fmt.Errorf("failed to fix ownership on %s: %w", dataDir, err)
+	}
 
 	return nil
 }
@@ -415,7 +427,7 @@ docker rm -f conga-router 2>/dev/null || true
 
 # Install npm deps if needed
 if [ ! -d /opt/conga/router/node_modules ]; then
-  docker run --rm -v /opt/conga/router:/app -w /app node:20-alpine npm install --production 2>/dev/null || true
+  docker run --rm -v /opt/conga/router:/app -w /app node:22-alpine npm install --production
 fi
 
 # Start router
@@ -424,10 +436,10 @@ docker run -d \
   --env-file /opt/conga/config/router.env \
   --cap-drop ALL \
   --security-opt no-new-privileges \
-  --memory 256m \
+  --memory 128m \
   -v /opt/conga/router:/app:ro \
   -v /opt/conga/config/routing.json:/opt/conga/config/routing.json:ro \
-  node:20-alpine node /app/src/index.js
+  node:22-alpine node /app/src/index.js
 
 # Connect router to each agent's Docker network
 for NET in $(docker network ls --filter name=conga- --format '{{.Name}}' | grep -v '^conga-router$'); do
@@ -452,7 +464,7 @@ echo "Router restarted"
 func (p *AWSProvider) uploadFile(ctx context.Context, instanceID, path string, content []byte, mode string) error {
 	encoded := base64.StdEncoding.EncodeToString(content)
 	script := fmt.Sprintf(
-		"mkdir -p $(dirname %s) && echo '%s' | base64 -d > %s && chmod %s %s",
+		"mkdir -p \"$(dirname '%s')\" && echo '%s' | base64 -d > '%s' && chmod %s '%s'",
 		path, encoded, path, mode, path,
 	)
 

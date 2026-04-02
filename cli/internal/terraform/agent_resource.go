@@ -4,12 +4,14 @@ import (
 	"context"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	congaprovider "github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -53,9 +55,12 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"name": schema.StringAttribute{
 				Required:    true,
-				Description: "Unique agent name.",
+				Description: "Unique agent name (lowercase alphanumeric with hyphens).",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(agentNameRegex, "must be lowercase alphanumeric with hyphens"),
 				},
 			},
 			"type": schema.StringAttribute{
@@ -63,6 +68,9 @@ func (r *agentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description: `Agent type: "user" (DM-only) or "team" (channel-based).`,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("user", "team"),
 				},
 			},
 			"gateway_port": schema.Int64Attribute{
@@ -92,7 +100,11 @@ func (r *agentResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	// Use explicit port if provided, otherwise auto-assign.
+	if err := common.ValidateAgentName(plan.Name.ValueString()); err != nil {
+		resp.Diagnostics.AddError("Invalid agent name", err.Error())
+		return
+	}
+
 	var port int
 	if !plan.GatewayPort.IsNull() && !plan.GatewayPort.IsUnknown() {
 		port = int(plan.GatewayPort.ValueInt64())
@@ -138,7 +150,11 @@ func (r *agentResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	agent, err := r.prov.GetAgent(ctx, state.Name.ValueString())
 	if err != nil {
-		resp.State.RemoveResource(ctx)
+		if isNotFoundErr(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to read agent", err.Error())
 		return
 	}
 

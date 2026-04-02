@@ -23,7 +23,7 @@ func TestAccChannelResource_lifecycle(t *testing.T) {
 				ResourceName:            "conga_channel.test",
 				ImportState:             true,
 				ImportStateId:           "slack",
-				ImportStateVerifyIgnore: []string{"bot_token", "signing_secret", "app_token"},
+				ImportStateVerifyIgnore: []string{"secrets"},
 			},
 		},
 	})
@@ -65,11 +65,13 @@ resource "conga_environment" "test" {
 }
 
 resource "conga_channel" "test" {
-  platform       = "slack"
-  bot_token      = "xoxb-test-bot-token"
-  signing_secret = "test-signing-secret"
-  app_token      = "xapp-test-app-token"
-  depends_on     = [conga_environment.test]
+  platform   = "slack"
+  secrets = {
+    "slack-bot-token"      = "xoxb-test-bot-token"
+    "slack-signing-secret" = "test-signing-secret"
+    "slack-app-token"      = "xapp-test-app-token"
+  }
+  depends_on = [conga_environment.test]
 }
 `
 }
@@ -91,11 +93,13 @@ resource "conga_agent" "test" {
 }
 
 resource "conga_channel" "test" {
-  platform       = "slack"
-  bot_token      = "xoxb-test-bot-token"
-  signing_secret = "test-signing-secret"
-  app_token      = "xapp-test-app-token"
-  depends_on     = [conga_environment.test]
+  platform = "slack"
+  secrets = {
+    "slack-bot-token"      = "xoxb-test-bot-token"
+    "slack-signing-secret" = "test-signing-secret"
+    "slack-app-token"      = "xapp-test-app-token"
+  }
+  depends_on = [conga_environment.test]
 }
 
 resource "conga_channel_binding" "test" {

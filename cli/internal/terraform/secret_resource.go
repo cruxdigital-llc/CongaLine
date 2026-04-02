@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	congaprovider "github.com/cruxdigital-llc/conga-line/cli/internal/provider"
@@ -55,6 +57,9 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(agentNameRegex, "must be lowercase alphanumeric with hyphens"),
+				},
 			},
 			"name": schema.StringAttribute{
 				Required:    true,
@@ -62,11 +67,17 @@ func (r *secretResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(secretNameRegex, "must be kebab-case (e.g. anthropic-api-key)"),
+				},
 			},
 			"value": schema.StringAttribute{
 				Required:    true,
 				Sensitive:   true,
-				Description: "Secret value.",
+				Description: "Secret value. Cannot be read back after creation.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 		},
 	}
@@ -104,7 +115,11 @@ func (r *secretResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	secrets, err := r.prov.ListSecrets(ctx, state.Agent.ValueString())
 	if err != nil {
-		resp.State.RemoveResource(ctx)
+		if isNotFoundErr(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to list secrets", err.Error())
 		return
 	}
 
@@ -162,6 +177,11 @@ func (r *secretResource) ImportState(ctx context.Context, req resource.ImportSta
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("agent"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), parts[1])...)
-	// Value cannot be imported — user must set it after import.
+	// Value cannot be read back from the provider, so it's set to empty string.
+	// After import, the user must run `terraform apply` with the correct value in config to reconcile state.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("value"), "")...)
+	resp.Diagnostics.AddWarning(
+		"Secret value not imported",
+		fmt.Sprintf("The value for secret %q cannot be read back. Set the correct value in your Terraform configuration and run `terraform apply`.", req.ID),
+	)
 }

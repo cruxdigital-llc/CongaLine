@@ -2,15 +2,19 @@ package terraform
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/cruxdigital-llc/conga-line/cli/internal/policy"
@@ -81,6 +85,9 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Optional:    true,
 				Computed:    true,
 				Description: `Egress enforcement mode: "enforce" (default) or "validate".`,
+				Validators: []validator.String{
+					stringvalidator.OneOf("enforce", "validate"),
+				},
 			},
 			"egress_allowed_domains": schema.ListAttribute{
 				Optional:    true,
@@ -97,14 +104,23 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"posture_isolation_level": schema.StringAttribute{
 				Optional:    true,
 				Description: `Isolation level: "standard", "hardened", or "segmented".`,
+				Validators: []validator.String{
+					stringvalidator.OneOf("standard", "hardened", "segmented"),
+				},
 			},
 			"posture_secrets_backend": schema.StringAttribute{
 				Optional:    true,
 				Description: `Secrets backend: "file", "managed", or "proxy".`,
+				Validators: []validator.String{
+					stringvalidator.OneOf("file", "managed", "proxy"),
+				},
 			},
 			"posture_monitoring": schema.StringAttribute{
 				Optional:    true,
 				Description: `Monitoring level: "basic", "standard", or "full".`,
+				Validators: []validator.String{
+					stringvalidator.OneOf("basic", "standard", "full"),
+				},
 			},
 			"posture_compliance_frameworks": schema.ListAttribute{
 				Optional:    true,
@@ -130,6 +146,9 @@ func (r *policyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 						"egress_mode": schema.StringAttribute{
 							Optional:    true,
 							Description: `Egress mode override: "enforce" or "validate".`,
+							Validators: []validator.String{
+								stringvalidator.OneOf("enforce", "validate"),
+							},
 						},
 						"egress_allowed_domains": schema.ListAttribute{
 							Optional:    true,
@@ -158,6 +177,10 @@ func (r *policyResource) Configure(_ context.Context, req resource.ConfigureRequ
 	}
 	p, ok := req.ProviderData.(*congaProvider)
 	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected *congaProvider, got %T", req.ProviderData),
+		)
 		return
 	}
 	r.prov = p.prov
@@ -408,10 +431,17 @@ func (r *policyResource) readPolicyToState(ctx context.Context, pf *policy.Polic
 		state.RoutingDefaultModel = types.StringNull()
 	}
 
-	// Per-agent overrides
+	// Per-agent overrides (sorted by name for deterministic state)
 	if len(pf.Agents) > 0 {
+		names := make([]string, 0, len(pf.Agents))
+		for name := range pf.Agents {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
 		state.AgentOverrides = make([]agentOverrideModel, 0, len(pf.Agents))
-		for name, override := range pf.Agents {
+		for _, name := range names {
+			override := pf.Agents[name]
 			if override == nil {
 				continue
 			}
