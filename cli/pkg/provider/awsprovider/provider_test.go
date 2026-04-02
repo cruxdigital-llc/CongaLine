@@ -10,7 +10,7 @@ import (
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	awsutil "github.com/cruxdigital-llc/conga-line/cli/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/cli/pkg/channels"
-	"github.com/cruxdigital-llc/conga-line/cli/pkg/discovery"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/provider"
 )
 
 func TestParseKeyValues(t *testing.T) {
@@ -103,7 +103,7 @@ func TestSetAgentPaused_PreservesUnknownFields(t *testing.T) {
 		"/conga/agents/testuser": original,
 	}}
 	p := &AWSProvider{clients: &awsutil.Clients{SSM: mock}}
-	agent := &discovery.AgentConfig{
+	agent := &provider.AgentConfig{
 		Name:        "testuser",
 		Type:        "user",
 		Channels:    []channels.ChannelBinding{{Platform: "slack", ID: "U123"}},

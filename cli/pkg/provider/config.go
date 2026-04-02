@@ -6,9 +6,18 @@ import (
 	"path/filepath"
 )
 
+// ProviderName identifies a deployment target.
+type ProviderName string
+
+const (
+	ProviderAWS    ProviderName = "aws"
+	ProviderLocal  ProviderName = "local"
+	ProviderRemote ProviderName = "remote"
+)
+
 // Config holds provider-agnostic configuration.
 type Config struct {
-	Provider string `json:"provider"`           // "aws", "local", or "remote"
+	Provider ProviderName `json:"provider"` // "aws", "local", or "remote"
 	DataDir  string `json:"data_dir,omitempty"` // override for ~/.conga/
 	Region   string `json:"region,omitempty"`   // AWS region (aws provider)
 	Profile  string `json:"profile,omitempty"`  // AWS profile (aws provider)

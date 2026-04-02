@@ -84,23 +84,37 @@ func (p *LocalProvider) readSharedSecrets() (common.SharedSecrets, error) {
 		Values: make(map[string]string),
 	}
 
-	read := func(name string) string {
-		val, _ := readSecret(filepath.Join(dir, name))
-		return val
+	read := func(name string) (string, error) {
+		val, err := readSecret(filepath.Join(dir, name))
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		return val, nil
 	}
 
 	// Read channel-defined secrets into the Values map
 	for _, ch := range channels.All() {
 		for _, def := range ch.SharedSecrets() {
-			if v := read(def.Name); v != "" {
+			v, err := read(def.Name)
+			if err != nil {
+				return s, fmt.Errorf("reading shared secret %s: %w", def.Name, err)
+			}
+			if v != "" {
 				s.Values[def.Name] = v
 			}
 		}
 	}
 
-	// Non-channel shared secrets
-	s.GoogleClientID = read("google-client-id")
-	s.GoogleClientSecret = read("google-client-secret")
+	// Non-channel shared secrets (optional — errors are non-fatal)
+	if v, err := read("google-client-id"); err == nil {
+		s.GoogleClientID = v
+	}
+	if v, err := read("google-client-secret"); err == nil {
+		s.GoogleClientSecret = v
+	}
 
 	return s, nil
 }
@@ -123,6 +137,7 @@ func (p *LocalProvider) readAgentSecrets(agentName string) (map[string]string, e
 		}
 		val, err := readSecret(filepath.Join(dir, e.Name()))
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping unreadable secret %s: %v\n", e.Name(), err)
 			continue
 		}
 		secrets[e.Name()] = val

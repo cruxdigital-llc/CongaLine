@@ -3,7 +3,6 @@ package remoteprovider
 import (
 	"context"
 	"fmt"
-	"os"
 	posixpath "path"
 
 	"github.com/cruxdigital-llc/conga-line/cli/pkg/channels"
@@ -198,12 +197,14 @@ func (p *RemoteProvider) BindChannel(ctx context.Context, agentName string, bind
 	}
 
 	// Restart router to pick up updated routing.json
-	p.restartRouter(ctx)
+	if err := p.restartRouter(ctx); err != nil {
+		return fmt.Errorf("binding saved but router restart failed: %w", err)
+	}
 
 	// Restart agent to pick up new config
 	if !a.Paused {
 		if err := p.RefreshAgent(ctx, agentName); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to refresh agent %s: %v (config updated, restart manually)\n", agentName, err)
+			return fmt.Errorf("binding saved but agent refresh failed (restart manually): %w", err)
 		}
 	}
 
@@ -244,12 +245,14 @@ func (p *RemoteProvider) UnbindChannel(ctx context.Context, agentName string, pl
 	}
 
 	// Restart router to pick up updated routing.json
-	p.restartRouter(ctx)
+	if err := p.restartRouter(ctx); err != nil {
+		return fmt.Errorf("unbind saved but router restart failed: %w", err)
+	}
 
 	// Restart agent to pick up new config
 	if !a.Paused {
 		if err := p.RefreshAgent(ctx, agentName); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to refresh agent %s: %v (config updated, restart manually)\n", agentName, err)
+			return fmt.Errorf("unbind saved but agent refresh failed (restart manually): %w", err)
 		}
 	}
 

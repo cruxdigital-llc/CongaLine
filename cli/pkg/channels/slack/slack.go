@@ -32,6 +32,8 @@ func (s *Slack) ValidateBinding(agentType, id string) error {
 		if !channelIDPattern.MatchString(id) {
 			return fmt.Errorf("invalid Slack channel ID %q: must match C + 8-12 alphanumeric chars (e.g., C0123456789)", id)
 		}
+	default:
+		return fmt.Errorf("unknown agent type %q for slack binding validation", agentType)
 	}
 	return nil
 }

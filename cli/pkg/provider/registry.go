@@ -8,15 +8,18 @@ import (
 // Factory creates a provider instance from the given config.
 type Factory func(cfg *Config) (Provider, error)
 
-var registry = map[string]Factory{}
+var registry = map[ProviderName]Factory{}
 
-// Register adds a provider factory to the registry.
-func Register(name string, factory Factory) {
+// Register adds a provider factory to the registry. Panics on duplicate.
+func Register(name ProviderName, factory Factory) {
+	if _, exists := registry[name]; exists {
+		panic(fmt.Sprintf("provider: duplicate registration %q", name))
+	}
 	registry[name] = factory
 }
 
 // Get returns a provider instance by name.
-func Get(name string, cfg *Config) (Provider, error) {
+func Get(name ProviderName, cfg *Config) (Provider, error) {
 	factory, ok := registry[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider %q (available: %v)", name, Names())
@@ -28,7 +31,7 @@ func Get(name string, cfg *Config) (Provider, error) {
 func Names() []string {
 	names := make([]string, 0, len(registry))
 	for name := range registry {
-		names = append(names, name)
+		names = append(names, string(name))
 	}
 	sort.Strings(names)
 	return names

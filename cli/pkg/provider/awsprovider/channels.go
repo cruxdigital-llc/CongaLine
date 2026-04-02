@@ -103,7 +103,7 @@ func (p *AWSProvider) RemoveChannel(ctx context.Context, platform string) error 
 				return fmt.Errorf("failed to update agent %s: %w", a.Name, err)
 			}
 			if !a.Paused {
-				if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, convertAgent(a)); err != nil {
+				if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, a); err != nil {
 					warnings = append(warnings, fmt.Sprintf("failed to regenerate config for %s: %v", a.Name, err))
 				}
 			}
@@ -190,7 +190,7 @@ func (p *AWSProvider) BindChannel(ctx context.Context, agentName string, binding
 	}
 
 	// Validate binding
-	if err := ch.ValidateBinding(a.Type, binding.ID); err != nil {
+	if err := ch.ValidateBinding(string(a.Type), binding.ID); err != nil {
 		return err
 	}
 
@@ -206,7 +206,7 @@ func (p *AWSProvider) BindChannel(ctx context.Context, agentName string, binding
 	}
 
 	// Regenerate agent config files (openclaw.json, .env) on instance
-	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, convertAgent(*a)); err != nil {
+	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, *a); err != nil {
 		return fmt.Errorf("failed to regenerate config for %s: %w", agentName, err)
 	}
 
@@ -265,7 +265,7 @@ func (p *AWSProvider) UnbindChannel(ctx context.Context, agentName string, platf
 	}
 
 	// Regenerate agent config files on instance
-	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, convertAgent(*a)); err != nil {
+	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, *a); err != nil {
 		return fmt.Errorf("failed to regenerate config for %s: %w", agentName, err)
 	}
 
@@ -346,9 +346,23 @@ func (p *AWSProvider) readAgentSecrets(ctx context.Context, agentName string) (m
 }
 
 // saveAgentToSSM writes an agent config to SSM Parameter Store.
-// Name is excluded via json:"-" tag on AgentConfig — it's derived from the SSM parameter path.
-func (p *AWSProvider) saveAgentToSSM(ctx context.Context, a discovery.AgentConfig) error {
-	agentConfigJSON, err := json.Marshal(a)
+// Name is excluded from JSON because it's derived from the SSM parameter path.
+func (p *AWSProvider) saveAgentToSSM(ctx context.Context, a provider.AgentConfig) error {
+	// SSM derives name from parameter path, so exclude it from the JSON body.
+	type ssmAgent struct {
+		Type        provider.AgentType        `json:"type"`
+		Channels    []channels.ChannelBinding `json:"channels,omitempty"`
+		GatewayPort int                       `json:"gateway_port"`
+		IAMIdentity string                    `json:"iam_identity,omitempty"`
+		Paused      bool                      `json:"paused,omitempty"`
+	}
+	agentConfigJSON, err := json.Marshal(ssmAgent{
+		Type:        a.Type,
+		Channels:    a.Channels,
+		GatewayPort: a.GatewayPort,
+		IAMIdentity: a.IAMIdentity,
+		Paused:      a.Paused,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to serialize agent config: %w", err)
 	}
@@ -422,11 +436,13 @@ if [ ! -f /opt/conga/config/router.env ]; then
   exit 0
 fi
 
-# Stop and remove old router — retry to handle Docker name release race
+# Stop and remove old router — retry until name is released
 docker stop conga-router 2>/dev/null || true
-docker rm -f conga-router 2>/dev/null || true
-sleep 1
-docker rm -f conga-router 2>/dev/null || true
+for i in 1 2 3; do
+  docker rm -f conga-router 2>/dev/null || true
+  docker inspect conga-router >/dev/null 2>&1 || break
+  sleep "$i"
+done
 
 # Install npm deps if needed
 if [ ! -d /opt/conga/router/node_modules ]; then

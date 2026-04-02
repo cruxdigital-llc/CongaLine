@@ -357,7 +357,7 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 
 	// --- Save provider config ---
 	provCfg := &provider.Config{
-		Provider:   "remote",
+		Provider:   provider.ProviderRemote,
 		DataDir:    p.dataDir,
 		SSHHost:    p.ssh.host,
 		SSHPort:    p.ssh.port,

@@ -29,26 +29,42 @@ func (p *RemoteProvider) readSharedSecrets() (common.SharedSecrets, error) {
 	var s common.SharedSecrets
 	s.Values = make(map[string]string)
 
-	read := func(name string) string {
+	read := func(name string) (string, error) {
 		data, err := p.ssh.Download(posixpath.Join(dir, name))
 		if err != nil {
-			return ""
+			// Treat "not found" (download fails for missing file) as empty
+			// SSH download errors for missing files return an error; we can't
+			// distinguish not-found from real errors via SFTP, so we check
+			// if the error message suggests the file doesn't exist.
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "not exist") || strings.Contains(errMsg, "no such file") {
+				return "", nil
+			}
+			return "", err
 		}
-		return string(data)
+		return string(data), nil
 	}
 
 	// Read channel-specific secrets
 	for _, ch := range channels.All() {
 		for _, sec := range ch.SharedSecrets() {
-			if v := read(sec.Name); v != "" {
+			v, err := read(sec.Name)
+			if err != nil {
+				return s, fmt.Errorf("reading shared secret %s: %w", sec.Name, err)
+			}
+			if v != "" {
 				s.Values[sec.Name] = v
 			}
 		}
 	}
 
-	// Read Google OAuth secrets (not channel-specific)
-	s.GoogleClientID = read("google-client-id")
-	s.GoogleClientSecret = read("google-client-secret")
+	// Read Google OAuth secrets (optional — errors are non-fatal)
+	if v, err := read("google-client-id"); err == nil {
+		s.GoogleClientID = v
+	}
+	if v, err := read("google-client-secret"); err == nil {
+		s.GoogleClientSecret = v
+	}
 
 	return s, nil
 }
@@ -69,6 +85,7 @@ func (p *RemoteProvider) readAgentSecrets(agentName string) (map[string]string, 
 		}
 		data, err := p.ssh.Download(posixpath.Join(dir, name))
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping unreadable secret %s: %v\n", name, err)
 			continue
 		}
 		secrets[name] = string(data)
@@ -80,7 +97,9 @@ func (p *RemoteProvider) readAgentSecrets(agentName string) (map[string]string, 
 func (p *RemoteProvider) SetSecret(ctx context.Context, agentName, secretName, value string) error {
 	path := posixpath.Join(p.agentSecretsDir(agentName), secretName)
 	// Ensure directory exists
-	p.ssh.MkdirAll(posixpath.Dir(path), 0700)
+	if err := p.ssh.MkdirAll(posixpath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("failed to create secrets directory: %w", err)
+	}
 	return p.ssh.Upload(path, []byte(value), 0400)
 }
 

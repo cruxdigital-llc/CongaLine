@@ -60,7 +60,7 @@ func NewRemoteProvider(cfg *provider.Config) (provider.Provider, error) {
 }
 
 func init() {
-	provider.Register("remote", NewRemoteProvider)
+	provider.Register(provider.ProviderRemote, NewRemoteProvider)
 }
 
 func (p *RemoteProvider) Name() string { return "remote" }
@@ -134,10 +134,12 @@ func (p *RemoteProvider) ListAgents(ctx context.Context) ([]provider.AgentConfig
 		}
 		data, err := p.ssh.Download(path)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping agent config %s: %v\n", posixpath.Base(path), err)
 			continue
 		}
 		var cfg provider.AgentConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping agent config %s: %v\n", posixpath.Base(path), err)
 			continue
 		}
 		// Extract name from filename
@@ -306,7 +308,9 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 
 	// 10. Restart router if any channel has credentials so it picks up updated routing.json
 	if common.HasAnyChannel(shared) {
-		p.restartRouter(ctx)
+		if err := p.restartRouter(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to restart router: %v\n", err)
+		}
 	}
 
 	// 11. Save config hash baseline
@@ -361,7 +365,9 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	// Restart router to pick up removed agent from routing.json
 	shared, _ := p.readSharedSecrets()
 	if common.HasAnyChannel(shared) {
-		p.restartRouter(ctx)
+		if err := p.restartRouter(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to restart router: %v\n", err)
+		}
 	}
 	return nil
 }
@@ -690,7 +696,9 @@ func (p *RemoteProvider) RefreshAll(ctx context.Context) error {
 		if err := p.regenerateRouting(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to regenerate routing: %v\n", err)
 		}
-		p.restartRouter(ctx)
+		if err := p.restartRouter(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to restart router: %v\n", err)
+		}
 	}
 
 	spin := ui.NewSpinner("Refreshing all agents...")
@@ -871,15 +879,16 @@ func (p *RemoteProvider) cleanupDockerByPrefix(ctx context.Context) {
 
 // restartRouter removes and recreates the router container so it picks up
 // the latest routing.json (which is a read-only bind mount).
-func (p *RemoteProvider) restartRouter(ctx context.Context) {
+func (p *RemoteProvider) restartRouter(ctx context.Context) error {
 	if p.containerExists(ctx, routerContainer) {
 		if err := p.removeContainer(ctx, routerContainer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove router container: %v\n", err)
+			return fmt.Errorf("failed to remove router container: %w", err)
 		}
 	}
 	if err := p.ensureRouter(ctx, false); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
+		return fmt.Errorf("router not started: %w", err)
 	}
+	return nil
 }
 
 // ensureRouter starts or restarts the router container on the remote host.

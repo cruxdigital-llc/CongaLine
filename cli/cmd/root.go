@@ -71,7 +71,7 @@ var rootCmd = &cobra.Command{
 
 		// Override with flags
 		if flagProvider != "" {
-			cfg.Provider = flagProvider
+			cfg.Provider = provider.ProviderName(flagProvider)
 		}
 		if flagDataDir != "" {
 			cfg.DataDir = flagDataDir
@@ -79,11 +79,11 @@ var rootCmd = &cobra.Command{
 
 		// Default to local (works without cloud credentials)
 		if cfg.Provider == "" {
-			cfg.Provider = "local"
+			cfg.Provider = provider.ProviderLocal
 		}
 
 		// AWS-specific: resolve profile and region for provider init
-		if cfg.Provider == "aws" {
+		if cfg.Provider == provider.ProviderAWS {
 			resolvedProfile, resolvedProfileInfo = resolveProfile()
 			if flagRegion != "" {
 				resolvedRegion = flagRegion

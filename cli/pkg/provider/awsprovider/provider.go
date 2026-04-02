@@ -50,7 +50,7 @@ func NewAWSProvider(cfg *provider.Config) (provider.Provider, error) {
 }
 
 func init() {
-	provider.Register("aws", NewAWSProvider)
+	provider.Register(provider.ProviderAWS, NewAWSProvider)
 }
 
 func (p *AWSProvider) Name() string { return "aws" }
@@ -89,23 +89,11 @@ func (p *AWSProvider) WhoAmI(ctx context.Context) (*provider.Identity, error) {
 }
 
 func (p *AWSProvider) ListAgents(ctx context.Context) ([]provider.AgentConfig, error) {
-	agents, err := discovery.ListAgents(ctx, p.clients.SSM)
-	if err != nil {
-		return nil, err
-	}
-	return convertAgentList(agents), nil
+	return discovery.ListAgents(ctx, p.clients.SSM)
 }
 
 func (p *AWSProvider) GetAgent(ctx context.Context, name string) (*provider.AgentConfig, error) {
-	a, err := discovery.ResolveAgent(ctx, p.clients.SSM, name)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, fmt.Errorf("agent %q not found: %w", name, provider.ErrNotFound)
-		}
-		return nil, err
-	}
-	result := convertAgent(*a)
-	return &result, nil
+	return discovery.ResolveAgent(ctx, p.clients.SSM, name)
 }
 
 func (p *AWSProvider) ResolveAgentByIdentity(ctx context.Context) (*provider.AgentConfig, error) {
@@ -480,7 +468,7 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 		return err
 	}
 
-	var activeAgents []discovery.AgentConfig
+	var activeAgents []provider.AgentConfig
 	for _, a := range agents {
 		if a.Paused {
 			fmt.Printf("Skipping paused agent: %s\n", a.Name)
@@ -506,7 +494,7 @@ func (p *AWSProvider) RefreshAll(ctx context.Context) error {
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, struct {
-		Agents    []discovery.AgentConfig
+		Agents    []provider.AgentConfig
 		AWSRegion string
 	}{activeAgents, p.region}); err != nil {
 		return fmt.Errorf("failed to render refresh-all script: %w", err)
@@ -883,7 +871,7 @@ func (p *AWSProvider) findInstance(ctx context.Context) (string, error) {
 // renderAgentScript parses a Go template script and renders it with the agent's
 // name, type, and Slack identifier. Gateway-only agents (no Slack) render with
 // an empty SlackID; the scripts guard routing updates with [ -n "$SLACK_ID" ].
-func (p *AWSProvider) renderAgentScript(tmplStr, tmplName, agentName string, agent *discovery.AgentConfig) (string, error) {
+func (p *AWSProvider) renderAgentScript(tmplStr, tmplName, agentName string, agent *provider.AgentConfig) (string, error) {
 	tmpl, err := template.New(tmplName).Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse %s template: %w", tmplName, err)
@@ -902,13 +890,13 @@ func (p *AWSProvider) renderAgentScript(tmplStr, tmplName, agentName string, age
 		AgentName string
 		AgentType string
 		SlackID   string
-	}{agentName, agent.Type, slackID}); err != nil {
+	}{agentName, string(agent.Type), slackID}); err != nil {
 		return "", fmt.Errorf("failed to render %s script: %w", tmplName, err)
 	}
 	return buf.String(), nil
 }
 
-func (p *AWSProvider) setAgentPaused(ctx context.Context, name string, agent *discovery.AgentConfig, paused bool) error {
+func (p *AWSProvider) setAgentPaused(ctx context.Context, name string, agent *provider.AgentConfig, paused bool) error {
 	// Read-modify-write: read current JSON, toggle "paused", write back.
 	// This preserves any fields that exist in SSM but aren't in the AgentConfig struct.
 	paramName := fmt.Sprintf("/conga/agents/%s", name)
@@ -933,25 +921,6 @@ func (p *AWSProvider) setAgentPaused(ctx context.Context, name string, agent *di
 		return err
 	}
 	return awsutil.PutParameter(ctx, p.clients.SSM, paramName, string(jsonBytes))
-}
-
-func convertAgent(a discovery.AgentConfig) provider.AgentConfig {
-	return provider.AgentConfig{
-		Name:        a.Name,
-		Type:        provider.AgentType(a.Type),
-		Channels:    a.Channels,
-		GatewayPort: a.GatewayPort,
-		IAMIdentity: a.IAMIdentity,
-		Paused:      a.Paused,
-	}
-}
-
-func convertAgentList(agents []discovery.AgentConfig) []provider.AgentConfig {
-	result := make([]provider.AgentConfig, len(agents))
-	for i, a := range agents {
-		result[i] = convertAgent(a)
-	}
-	return result
 }
 
 func parseKeyValues(output string) map[string]string {

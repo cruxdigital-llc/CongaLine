@@ -146,6 +146,9 @@ func GenerateEnvFile(agent provider.AgentConfig, secrets SharedSecrets, perAgent
 	// Non-channel shared secrets
 	appendEnv("GOOGLE_CLIENT_ID", secrets.GoogleClientID)
 	appendEnv("GOOGLE_CLIENT_SECRET", secrets.GoogleClientSecret)
+	// Base NODE_OPTIONS for heap size. When egress proxy is active, local/remote
+	// providers override this via Docker -e flag to add --require proxy-bootstrap.js.
+	// On AWS, the systemd unit is patched by deploy-egress.sh to add the require flag.
 	appendEnv("NODE_OPTIONS", "--max-old-space-size=1536")
 
 	for name, value := range perAgent {

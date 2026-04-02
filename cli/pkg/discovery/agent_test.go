@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/cruxdigital-llc/conga-line/cli/pkg/channels"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/provider"
 )
 
 func TestChannelBinding_Found(t *testing.T) {
-	a := &AgentConfig{
+	a := &provider.AgentConfig{
 		Name: "test",
 		Type: "user",
 		Channels: []channels.ChannelBinding{
@@ -26,7 +27,7 @@ func TestChannelBinding_Found(t *testing.T) {
 }
 
 func TestChannelBinding_NotFound(t *testing.T) {
-	a := &AgentConfig{
+	a := &provider.AgentConfig{
 		Name: "test",
 		Type: "user",
 		Channels: []channels.ChannelBinding{
@@ -40,7 +41,7 @@ func TestChannelBinding_NotFound(t *testing.T) {
 }
 
 func TestChannelBinding_Empty(t *testing.T) {
-	a := &AgentConfig{Name: "test", Type: "user"}
+	a := &provider.AgentConfig{Name: "test", Type: "user"}
 
 	if a.ChannelBinding("slack") != nil {
 		t.Error("expected nil for agent with no channels")
@@ -56,7 +57,7 @@ func TestParseAgentConfig_WithChannels(t *testing.T) {
 	if cfg.Name != "myteam" {
 		t.Errorf("expected name myteam, got %s", cfg.Name)
 	}
-	if cfg.Type != "team" {
+	if cfg.Type != provider.AgentTypeTeam {
 		t.Errorf("expected type team, got %s", cfg.Type)
 	}
 	if len(cfg.Channels) != 1 {

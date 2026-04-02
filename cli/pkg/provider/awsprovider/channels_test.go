@@ -12,7 +12,7 @@ import (
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	awsutil "github.com/cruxdigital-llc/conga-line/cli/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/cli/pkg/channels"
-	"github.com/cruxdigital-llc/conga-line/cli/pkg/discovery"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/provider"
 
 	// Register slack channel so channels.Get("slack") works
 	_ "github.com/cruxdigital-llc/conga-line/cli/pkg/channels/slack"
@@ -94,7 +94,7 @@ func TestSaveAgentToSSM_WithChannels(t *testing.T) {
 	mock := &mockSSMForChannels{stored: make(map[string]string)}
 	p := &AWSProvider{clients: &awsutil.Clients{SSM: mock}}
 
-	agent := discovery.AgentConfig{
+	agent := provider.AgentConfig{
 		Name:        "testuser",
 		Type:        "user",
 		Channels:    []channels.ChannelBinding{{Platform: "slack", ID: "U123"}},
@@ -135,7 +135,7 @@ func TestSaveAgentToSSM_WithoutChannels(t *testing.T) {
 	mock := &mockSSMForChannels{stored: make(map[string]string)}
 	p := &AWSProvider{clients: &awsutil.Clients{SSM: mock}}
 
-	agent := discovery.AgentConfig{
+	agent := provider.AgentConfig{
 		Name:        "solo",
 		Type:        "user",
 		GatewayPort: 18789,

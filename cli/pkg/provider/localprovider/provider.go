@@ -41,7 +41,7 @@ func NewLocalProvider(cfg *provider.Config) (provider.Provider, error) {
 }
 
 func init() {
-	provider.Register("local", NewLocalProvider)
+	provider.Register(provider.ProviderLocal, NewLocalProvider)
 }
 
 func (p *LocalProvider) Name() string { return "local" }
@@ -83,10 +83,12 @@ func (p *LocalProvider) ListAgents(ctx context.Context) ([]provider.AgentConfig,
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping agent config %s: %v\n", e.Name(), err)
 			continue
 		}
 		var cfg provider.AgentConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping agent config %s: %v\n", e.Name(), err)
 			continue
 		}
 		cfg.Name = strings.TrimSuffix(e.Name(), ".json")
@@ -294,6 +296,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecrets bool) error {
 	cName := containerName(name)
 	netName := networkName(name)
+	var cleanupErrs []string
 
 	// Remove iptables egress rules before stopping container
 	if containerExists(ctx, cName) && networkExists(ctx, netName) {
@@ -305,8 +308,12 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 	}
 
 	if containerExists(ctx, cName) {
-		stopContainer(ctx, cName)
-		removeContainer(ctx, cName)
+		if err := stopContainer(ctx, cName); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("stop container: %v", err))
+		}
+		if err := removeContainer(ctx, cName); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove container: %v", err))
+		}
 	}
 
 	p.stopAgentEgressProxy(ctx, name)
@@ -316,21 +323,36 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 	}
 
 	if networkExists(ctx, netName) {
-		removeNetwork(ctx, netName)
+		if err := removeNetwork(ctx, netName); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove network: %v", err))
+		}
 	}
 
-	os.Remove(filepath.Join(p.agentsDir(), name+".json"))
-	os.Remove(filepath.Join(p.configDir(), name+".env"))
-	os.Remove(filepath.Join(p.configDir(), name+".sha256"))
-	os.Remove(filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", name)))
-	os.Remove(filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", name)))
+	for _, f := range []string{
+		filepath.Join(p.agentsDir(), name+".json"),
+		filepath.Join(p.configDir(), name+".env"),
+		filepath.Join(p.configDir(), name+".sha256"),
+		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", name)),
+		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", name)),
+	} {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove %s: %v", filepath.Base(f), err))
+		}
+	}
 
 	if deleteSecrets {
-		os.RemoveAll(p.agentSecretsDir(name))
+		if err := os.RemoveAll(p.agentSecretsDir(name)); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove secrets: %v", err))
+		}
 	}
 
 	if err := p.regenerateRouting(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
+	}
+
+	if len(cleanupErrs) > 0 {
+		return fmt.Errorf("agent removed with %d cleanup error(s): %s",
+			len(cleanupErrs), strings.Join(cleanupErrs, "; "))
 	}
 	return nil
 }
@@ -447,9 +469,14 @@ func (p *LocalProvider) PauseAgent(ctx context.Context, name string) error {
 		}
 	}
 
+	var cleanupErrs []string
 	if containerExists(ctx, cName) {
-		stopContainer(ctx, cName)
-		removeContainer(ctx, cName)
+		if err := stopContainer(ctx, cName); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("stop container: %v", err))
+		}
+		if err := removeContainer(ctx, cName); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove container: %v", err))
+		}
 	}
 
 	p.stopAgentEgressProxy(ctx, name)
@@ -463,6 +490,10 @@ func (p *LocalProvider) PauseAgent(ctx context.Context, name string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
+	if len(cleanupErrs) > 0 {
+		return fmt.Errorf("agent paused but %d cleanup error(s): %s",
+			len(cleanupErrs), strings.Join(cleanupErrs, "; "))
+	}
 	return nil
 }
 
@@ -987,7 +1018,7 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 
 	// --- Save provider config ---
 	provCfg := &provider.Config{
-		Provider: "local",
+		Provider: provider.ProviderLocal,
 		DataDir:  p.dataDir,
 	}
 	if err := provider.SaveConfig(provider.DefaultConfigPath(), provCfg); err != nil {
