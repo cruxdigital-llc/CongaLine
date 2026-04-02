@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	awsutil "github.com/cruxdigital-llc/conga-line/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/internal/mcpserver"
+	awsutil "github.com/cruxdigital-llc/conga-line/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 	"github.com/spf13/cobra"

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cruxdigital-llc/conga-line/internal/mcpserver"
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	_ "github.com/cruxdigital-llc/conga-line/pkg/channels/slack"
-	"github.com/cruxdigital-llc/conga-line/internal/mcpserver"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/mcptest"
