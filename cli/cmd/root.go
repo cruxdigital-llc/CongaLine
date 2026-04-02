@@ -6,19 +6,19 @@ import (
 	"os"
 	"time"
 
-	awsutil "github.com/cruxdigital-llc/conga-line/cli/internal/aws"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/common"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
+	awsutil "github.com/cruxdigital-llc/conga-line/cli/pkg/aws"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/common"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/ui"
 	"github.com/spf13/cobra"
 
 	// Register channels via init()
-	_ "github.com/cruxdigital-llc/conga-line/cli/internal/channels/slack"
+	_ "github.com/cruxdigital-llc/conga-line/cli/pkg/channels/slack"
 
 	// Register providers via init()
-	_ "github.com/cruxdigital-llc/conga-line/cli/internal/provider/awsprovider"
-	_ "github.com/cruxdigital-llc/conga-line/cli/internal/provider/localprovider"
-	_ "github.com/cruxdigital-llc/conga-line/cli/internal/provider/remoteprovider"
+	_ "github.com/cruxdigital-llc/conga-line/cli/pkg/provider/awsprovider"
+	_ "github.com/cruxdigital-llc/conga-line/cli/pkg/provider/localprovider"
+	_ "github.com/cruxdigital-llc/conga-line/cli/pkg/provider/remoteprovider"
 )
 
 var (
@@ -71,7 +71,7 @@ var rootCmd = &cobra.Command{
 
 		// Override with flags
 		if flagProvider != "" {
-			cfg.Provider = flagProvider
+			cfg.Provider = provider.ProviderName(flagProvider)
 		}
 		if flagDataDir != "" {
 			cfg.DataDir = flagDataDir
@@ -79,11 +79,11 @@ var rootCmd = &cobra.Command{
 
 		// Default to local (works without cloud credentials)
 		if cfg.Provider == "" {
-			cfg.Provider = "local"
+			cfg.Provider = provider.ProviderLocal
 		}
 
 		// AWS-specific: resolve profile and region for provider init
-		if cfg.Provider == "aws" {
+		if cfg.Provider == provider.ProviderAWS {
 			resolvedProfile, resolvedProfileInfo = resolveProfile()
 			if flagRegion != "" {
 				resolvedRegion = flagRegion

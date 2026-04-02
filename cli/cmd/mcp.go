@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	awsutil "github.com/cruxdigital-llc/conga-line/cli/internal/aws"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/mcpserver"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
+	awsutil "github.com/cruxdigital-llc/conga-line/cli/pkg/aws"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/mcpserver"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -29,14 +29,14 @@ var mcpServeCmd = &cobra.Command{
 
 		// Env var overrides for non-interactive MCP context.
 		if v := os.Getenv("CONGA_PROVIDER"); v != "" {
-			cfg.Provider = v
+			cfg.Provider = provider.ProviderName(v)
 		}
 		if cfg.Provider == "" {
-			cfg.Provider = "local"
+			cfg.Provider = provider.ProviderLocal
 		}
 
 		// AWS-specific env vars.
-		if cfg.Provider == "aws" {
+		if cfg.Provider == provider.ProviderAWS {
 			if v := os.Getenv("CONGA_PROFILE"); v != "" {
 				cfg.Profile = v
 			} else if v := os.Getenv("AWS_PROFILE"); v != "" {
@@ -56,7 +56,7 @@ var mcpServeCmd = &cobra.Command{
 		}
 
 		// Remote provider env vars.
-		if cfg.Provider == "remote" {
+		if cfg.Provider == provider.ProviderRemote {
 			if v := os.Getenv("CONGA_SSH_HOST"); v != "" {
 				cfg.SSHHost = v
 			}

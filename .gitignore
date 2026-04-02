@@ -1,19 +1,27 @@
 .idea/
-tfplan
+
+# Terraform
 *.tfstate
 *.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+tfplan
 crash.log
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-terraform/backend.tf
-terraform/terraform.tfvars
+terraform/environments/*/backend.tf
 
 # CLI build artifacts
 cli/conga
 cli/dist/
 bin/
+
+# Terraform provider binary
+cli/cmd/terraform-provider-conga/terraform-provider-conga
 
 # MCP config (user-specific)
 .mcp.json
@@ -25,3 +33,5 @@ conga-policy.yaml
 
 # Other local files
 demo.*
+cli/cli
+cli/terraform-provider-conga

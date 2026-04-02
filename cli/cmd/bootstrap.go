@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/cruxdigital-llc/conga-line/cli/internal/manifest"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/provider"
-	"github.com/cruxdigital-llc/conga-line/cli/internal/ui"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/manifest"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/cli/pkg/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -74,15 +74,15 @@ func bootstrapRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading provider config: %w", err)
 	}
 	if flagProvider != "" {
-		cfg.Provider = flagProvider
+		cfg.Provider = provider.ProviderName(flagProvider)
 	} else if m.Provider != "" {
-		cfg.Provider = m.Provider
+		cfg.Provider = provider.ProviderName(m.Provider)
 	}
 	if flagDataDir != "" {
 		cfg.DataDir = flagDataDir
 	}
 	if cfg.Provider == "" {
-		cfg.Provider = "local"
+		cfg.Provider = provider.ProviderLocal
 	}
 	prov, err = provider.Get(cfg.Provider, cfg)
 	if err != nil {

@@ -90,11 +90,13 @@ resource "conga_secret" "aaron_api_key" {
 }
 
 resource "conga_channel" "slack" {
-  platform       = "slack"
-  bot_token      = var.slack_bot_token
-  signing_secret = var.slack_signing_secret
-  app_token      = var.slack_app_token
-  depends_on     = [conga_environment.main]
+  platform = "slack"
+  secrets = {
+    "slack-bot-token"      = var.slack_bot_token
+    "slack-signing-secret" = var.slack_signing_secret
+    "slack-app-token"      = var.slack_app_token
+  }
+  depends_on = [conga_environment.main]
 }
 
 resource "conga_channel_binding" "aaron_slack" {

@@ -1,0 +1,54 @@
+# --- AWS ---
+aws_region   = "us-east-2"
+aws_profile  = "openclaw"
+project_name = "conga-line"
+
+# Path to repo root (for behavior files, router source, etc.)
+repo_root = "/path/to/congaline"
+
+# --- Infrastructure ---
+instance_type = "r6g.medium"
+alert_email   = ""
+
+# --- Agents ---
+# Define your fleet. Key is the agent name.
+# Ports auto-assigned alphabetically from 18789 if omitted.
+agents = {
+  myagent = {
+    type       = "user"
+    binding_id = "USLACKMEMBERID"  # Slack member ID
+  }
+  myteam = {
+    type       = "team"
+    binding_id = "CSLACKCHANNELID" # Slack channel ID
+  }
+}
+
+# --- Secrets ---
+# Applied to every agent
+global_secrets = {
+  "anthropic-api-key" = ""
+}
+
+# Shared channel secrets (omit to skip Slack setup)
+channel_secrets = {
+  "slack-bot-token"      = ""
+  "slack-signing-secret" = ""
+  "slack-app-token"      = ""
+}
+
+# Optional: per-agent secrets
+# agent_secrets = {
+#   myagent = {
+#     "trello-api-key" = "..."
+#     "trello-token"   = "..."
+#   }
+# }
+
+# --- Egress Policy ---
+egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com"]
+
+# Optional: per-agent egress overrides
+# agent_egress_overrides = {
+#   myagent = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com", "*.trello.com"]
+# }
