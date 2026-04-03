@@ -35,6 +35,15 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - `terraform.tfvars` is gitignored. Copy from `terraform.tfvars.example`
 - S3 bucket names include the account ID suffix to avoid global namespace collisions
 
+### Terraform Provider (`terraform-provider-conga`)
+
+- **Separate repo**: `cruxdigital-llc/terraform-provider-conga` — imports `pkg/` from this repo
+- **Registry**: `registry.terraform.io/providers/cruxdigital-llc/conga`
+- **When to release a new provider version**: Any change to `pkg/` (common, provider, channels, policy, discovery) requires tagging congaline, updating the provider's `go.mod`, and publishing a new provider release. Changes only to `internal/`, `scripts/`, or `terraform/` do NOT require a provider release.
+- **Release flow**: Tag congaline → `go get` + `go mod tidy` in provider repo → push → tag provider → GoReleaser publishes to registry
+- **Local plugin cache**: `~/.terraform.d/plugins/registry.terraform.io/cruxdigital-llc/conga/` can cache stale versions. Delete before `terraform init -upgrade` if terraform can't find a new version.
+- **SSM timeout minimum**: AWS SSM `SendCommand` requires `timeoutSeconds >= 30`. All `runOnInstance` and `uploadFile` calls must use `>= 30*time.Second`.
+
 ## Secrets
 
 - **AWS provider**: Secrets in AWS Secrets Manager under `conga/shared/*` and `conga/agents/<name>/*`
@@ -58,7 +67,9 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - Container memory limit: 2GB per agent (idle ~500MB, spikes to 1-1.5GB during heavy conversations)
 - **Agents are keyed by agent name** (e.g. `myagent`, `leadership`), not Slack member ID or username
 - Two agent types: **user agents** (DM-only, `dmPolicy: "allowlist"`) and **team agents** (channel-based, `groupPolicy: "allowlist"`)
-- Gateway listens on port **18789** inside the container, bound to localhost on the host
+- Gateway listens on port **18789** inside every container (`BaseGatewayPort` in `pkg/common/ports.go`). Each agent gets a unique **host** port (18789, 18791, 18792, etc.) via Docker `-p 127.0.0.1:{hostPort}:18789`. The `agent.GatewayPort` field is the host port, NOT the container port.
+- **Gateway mode is always `"remote"`** (binds `0.0.0.0` inside the container) with `remote.url: "http://localhost:18789"`. This is an OpenClaw setting unrelated to the congaline "remote" provider — it means the gateway accepts connections from outside its network namespace (required for Docker port mapping and inter-container routing).
+- **`allowedOrigins`** must include both `localhost:18789` (for CLI tools inside the container) and `localhost:{hostPort}` (for browser access via SSM/SSH tunnels). Without both, `conga connect` gets "origin not allowed".
 
 ## Planning
 
@@ -89,6 +100,16 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - Config file cannot be made read-only at the filesystem level due to OpenClaw's hot-reload `.tmp` file behavior. Config integrity is enforced via hash-check monitoring.
 - Env file with secrets is on disk (mode 0400). On AWS, encrypted EBS provides additional protection. On local, disk encryption is the user's responsibility.
 - Local provider uses Docker bridge networks (not `--internal`) because `--internal` prevents `-p` port publishing to localhost. Isolation is enforced by separate per-agent networks, localhost-only port binding, and the egress proxy.
+
+## Bootstrap Script Conventions
+
+The AWS bootstrap script (`terraform/modules/infrastructure/user-data.sh.tftpl`) runs on EC2 boot via cloud-init. Key conventions:
+
+- **umask 077** is set globally. Files that container users need must be explicitly `chown`'d: uid 1000 for node containers, uid 101 for Envoy egress proxies. Use `umask 022` subshells for `npm install`.
+- **Terraform template escaping**: Bash `${VAR}` must be written as `$${VAR}` in `.tftpl` files. Only `${aws_region}`, `${project_name}`, `${state_bucket}`, and `${config_check_interval_minutes}` are Terraform interpolations.
+- **Bootstrap sentinel**: `/opt/conga/.bootstrap-complete` is written only on full success. The `terraform_data.bootstrap_ready` resource polls for it via SSM, blocking the congaline module until the host is ready.
+- **Router network connections**: The router must be connected to every agent's Docker network. The `connect-router-networks.sh` helper discovers networks via `docker network ls --filter name=conga-`. It runs at boot, via the router's `ExecStartPost`, and via the `conga-router-networks.service` companion unit.
+- **iptables egress rules**: Applied in agent systemd `ExecStartPost` with a 10-retry IP detection loop. Cleaned up in `ExecStopPost`. Use `systemctl restart` (not `docker restart`) to ensure rules are properly cycled.
 
 ## Debugging
 

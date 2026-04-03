@@ -117,6 +117,10 @@ The binary entry point is at `cmd/conga/main.go` — it imports `internal/cmd` a
 
 The provider interface, policy engine, and channel system are shared by three consumers: the CLI, the MCP server, and the Terraform provider. Putting shared logic in `internal/` or coupling it to a specific interface breaks external consumers. Putting interface-specific code in `pkg/` pollutes the public API.
 
+### Release impact
+
+Changes to `pkg/` affect the external Terraform provider (`cruxdigital-llc/terraform-provider-conga`), which imports these packages. Any `pkg/` change requires: tag congaline → update provider `go.mod` → release new provider version. Changes to `internal/`, `scripts/`, or `terraform/` only affect the CLI binary and bootstrap scripts — no provider release needed.
+
 ## Package Boundaries
 
 | Package | Owns | Does NOT Own |
