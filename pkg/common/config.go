@@ -67,8 +67,8 @@ func BuildRouterEnvContent(shared SharedSecrets) string {
 
 // GenerateAgentFiles produces the openclaw.json and .env file content for an agent.
 // Returns the raw bytes for each file, leaving I/O to the caller.
-func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string) (openclawJSON []byte, envContent []byte, err error) {
-	openclawJSON, err = GenerateOpenClawConfig(cfg, shared, "")
+func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string, gatewayMode string) (openclawJSON []byte, envContent []byte, err error) {
+	openclawJSON, err = GenerateOpenClawConfig(cfg, shared, "", gatewayMode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -80,13 +80,16 @@ func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent
 // Static settings (model, heartbeat, pruning, etc.) are loaded from the embedded
 // openclaw-defaults.json — the single source of truth for OpenClaw config structure.
 // Dynamic fields (gateway, channels, plugins) are overlaid per-agent.
-func GenerateOpenClawConfig(agent provider.AgentConfig, secrets SharedSecrets, gatewayToken string) ([]byte, error) {
+func GenerateOpenClawConfig(agent provider.AgentConfig, secrets SharedSecrets, gatewayToken string, gatewayMode string) ([]byte, error) {
 	var config map[string]any
 	if err := json.Unmarshal(openclawDefaults, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse openclaw-defaults.json: %w", err)
 	}
 
-	config["gateway"] = buildGatewayConfig(agent.GatewayPort, gatewayToken)
+	if gatewayMode == "" {
+		gatewayMode = "local"
+	}
+	config["gateway"] = buildGatewayConfig(agent.GatewayPort, gatewayToken, gatewayMode)
 
 	channelsCfg := map[string]any{}
 	pluginsCfg := map[string]any{}
@@ -158,10 +161,10 @@ func GenerateEnvFile(agent provider.AgentConfig, secrets SharedSecrets, perAgent
 	return buf
 }
 
-func buildGatewayConfig(port int, token string) map[string]any {
+func buildGatewayConfig(port int, token string, mode string) map[string]any {
 	gw := map[string]any{
 		"port": port,
-		"mode": "local",
+		"mode": mode,
 		"bind": "lan",
 		"controlUi": map[string]any{
 			"allowedOrigins": []string{
