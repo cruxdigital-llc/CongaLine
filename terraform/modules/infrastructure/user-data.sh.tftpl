@@ -12,6 +12,7 @@ PROJECT_NAME="${project_name}"
 umask 077
 
 log() { echo "[conga] $*"; }
+BOOTSTRAP_ERRORS=0
 
 # ============================================================
 # 1. OS HARDENING
@@ -81,7 +82,11 @@ get_secret() {
     --secret-id "$1" \
     --query SecretString \
     --output text \
-    --region "$AWS_REGION" 2>/dev/null) || true
+    --region "$AWS_REGION" 2>/dev/null) || {
+    log "WARNING: Failed to retrieve secret $1"
+    echo ""
+    return 0
+  }
   echo "$value"
 }
 
@@ -131,18 +136,24 @@ echo "Conga image pulled"
 # ============================================================
 
 # Download router source from S3
-aws s3 cp s3://${state_bucket}/conga/router/package.json /opt/conga/router/package.json --region "$AWS_REGION"
-aws s3 cp s3://${state_bucket}/conga/router/src/index.js /opt/conga/router/src/index.js --region "$AWS_REGION"
+log "Downloading router source from S3..."
+aws s3 cp s3://${state_bucket}/conga/router/package.json /opt/conga/router/package.json --region "$AWS_REGION" || {
+  log "FATAL: Failed to download router package.json from S3"; exit 1; }
+aws s3 cp s3://${state_bucket}/conga/router/src/index.js /opt/conga/router/src/index.js --region "$AWS_REGION" || {
+  log "FATAL: Failed to download router index.js from S3"; exit 1; }
 
 # Download behavior files from S3
-aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region "$AWS_REGION"
+log "Downloading behavior files from S3..."
+aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region "$AWS_REGION" || {
+  log "WARNING: Failed to sync behavior files from S3 — agents may use stale behavior"; }
 
 # Download policy file from S3 (if uploaded by operator)
 aws s3 cp s3://${state_bucket}/conga/conga-policy.yaml /opt/conga/conga-policy.yaml --region "$AWS_REGION" 2>/dev/null || true
 
-# Install router dependencies
-cd /opt/conga/router && npm install --production
-cd /
+# Install router dependencies (umask 022 so node_modules are readable by container user)
+log "Installing router dependencies..."
+(umask 022 && cd /opt/conga/router && npm install --production) || {
+  log "FATAL: npm install failed for router"; exit 1; }
 
 # Router container runs as 1000:1000 — make source readable
 chown -R 1000:1000 /opt/conga/router
@@ -199,7 +210,10 @@ WantedBy=multi-user.target
 IMGUNIT
 systemctl enable conga-image-refresh.service
 
-# routing.json will be generated after agent discovery (section 6)
+# routing.json will be populated after agent discovery (section 6).
+# Create an empty skeleton now so the router's volume mount succeeds on first boot.
+echo '{"channels": {}, "members": {}}' > /opt/conga/config/routing.json
+chown 1000:1000 /opt/conga/config/routing.json
 
 # Router env file
 cat > /opt/conga/config/router.env << ROUTERENV
@@ -223,6 +237,7 @@ EnvironmentFile=/opt/conga/config/router.env
 ExecStartPre=-/usr/bin/docker rm -f conga-router
 ExecStartPre=/bin/chown -R 1000:1000 /opt/conga/router /opt/conga/config/routing.json
 ExecStart=/usr/bin/docker run --name conga-router --cap-drop ALL --security-opt no-new-privileges --memory 128m --cpus 0.25 --pids-limit 64 --read-only --user 1000:1000 --tmpfs /tmp:rw,noexec,nosuid -v /opt/conga/router:/app:ro -v /opt/conga/config/routing.json:/opt/conga/config/routing.json:ro -e SLACK_APP_TOKEN -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e ROUTER_CONFIG=/opt/conga/config/routing.json node:22-alpine node /app/src/index.js
+ExecStartPost=-/opt/conga/bin/connect-router-networks.sh
 ExecStop=/usr/bin/docker stop conga-router
 StandardOutput=append:/var/log/conga-router.log
 StandardError=append:/var/log/conga-router.log
@@ -240,12 +255,11 @@ cat > /etc/systemd/system/conga-router-networks.service << 'ROUTERNETS'
 [Unit]
 Description=Connect Conga router to agent networks
 After=conga-router.service
-BindsTo=conga-router.service
+PartOf=conga-router.service
 
 [Service]
 Type=oneshot
 ExecStart=/opt/conga/bin/connect-router-networks.sh
-RemainAfterExit=true
 
 [Install]
 WantedBy=conga-router.service
@@ -918,7 +932,7 @@ ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
 ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="$NODE_OPTS" --pids-limit 256 --user 1000:1000 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
-ExecStartPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP || echo "WARNING: failed to add iptables DROP rule for conga-$AGENT_NAME (\$AGENT_IP)" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN || echo "WARNING: failed to add iptables subnet RETURN rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN || echo "WARNING: failed to add iptables conntrack RETURN rule for conga-$AGENT_NAME" >&2; else echo "WARNING: egress iptables rules failed for conga-$AGENT_NAME — container IP (\$AGENT_IP) or subnet (\$NET_CIDR) not found" >&2; fi'
+ExecStartPost=-/bin/bash -c 'AGENT_IP=""; for i in \$(seq 1 10); do AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); [ -n "\$AGENT_IP" ] && break; sleep 1; done; NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP || echo "WARNING: failed to add iptables DROP rule for conga-$AGENT_NAME (\$AGENT_IP)" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN || echo "WARNING: failed to add iptables subnet RETURN rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN || echo "WARNING: failed to add iptables conntrack RETURN rule for conga-$AGENT_NAME" >&2; echo "Egress iptables applied for conga-$AGENT_NAME (\$AGENT_IP)" >&2; else echo "ERROR: egress iptables rules failed for conga-$AGENT_NAME — container IP (\$AGENT_IP) or subnet (\$NET_CIDR) not found after 10s" >&2; fi'
 ExecStopPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -D DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || true; fi'
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
 StandardOutput=append:/var/log/conga-$AGENT_NAME.log
@@ -1245,11 +1259,12 @@ cat > /opt/conga/bin/connect-router-networks.sh << 'CONNECTSCRIPT'
 #!/bin/bash
 # Connect the conga-router container to every agent's Docker network.
 # Idempotent — safe to call repeatedly (already-connected is a no-op).
+# Discovers networks by listing Docker networks named conga-* (works on
+# all providers; doesn't depend on agent config file locations).
 sleep 2  # give the container a moment to start
-for f in /opt/conga/agents/*.json; do
-  [ -f "$f" ] || continue
-  AGENT=$(basename "$f" .json)
-  docker network connect "conga-$AGENT" conga-router 2>/dev/null || true
+for NET in $(docker network ls --filter name=conga- --format '{{.Name}}' 2>/dev/null); do
+  case "$NET" in conga-router) continue;; esac
+  docker network connect "$NET" conga-router 2>/dev/null || true
 done
 CONNECTSCRIPT
 chmod +x /opt/conga/bin/connect-router-networks.sh
@@ -1264,10 +1279,27 @@ echo "Router connected to all agent networks"
 for AGENT_NAME in $ALL_AGENT_NAMES; do
   systemctl enable "conga-$AGENT_NAME.service"
   systemctl start "conga-$AGENT_NAME.service"
-  echo "Waiting for conga-$AGENT_NAME to stabilize..."
-  sleep 30
+  log "Waiting for conga-$AGENT_NAME..."
+  AGENT_STARTED=false
+  for i in $(seq 1 60); do
+    if docker inspect -f '{{.State.Running}}' "conga-$AGENT_NAME" 2>/dev/null | grep -q true; then
+      log "Agent $AGENT_NAME container running"
+      AGENT_STARTED=true
+      break
+    fi
+    sleep 2
+  done
+  if [ "$AGENT_STARTED" = "false" ]; then
+    log "ERROR: Agent $AGENT_NAME failed to start within 120s"
+    ((BOOTSTRAP_ERRORS++)) || true
+  fi
 done
 
+if [ $BOOTSTRAP_ERRORS -gt 0 ]; then
+  log "FATAL: Bootstrap completed with $BOOTSTRAP_ERRORS error(s) — sentinel NOT written"
+  echo "=== Conga Bootstrap FAILED: $(date -u) ==="
+  exit 1
+fi
 touch /opt/conga/.bootstrap-complete
 echo "=== Conga Bootstrap Complete: $(date -u) ==="
 echo "Router: conga-router (Socket Mode → HTTP forwarding)"

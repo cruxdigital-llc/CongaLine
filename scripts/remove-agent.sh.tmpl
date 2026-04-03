@@ -3,10 +3,47 @@ CONTAINER_ID="{{.ContainerID}}"
 
 echo "=== Removing agent: $CONTAINER_ID ==="
 
-systemctl stop conga-$CONTAINER_ID || true
-systemctl disable conga-$CONTAINER_ID || true
-rm -f /etc/systemd/system/conga-$CONTAINER_ID.service
+# Clean up iptables rules BEFORE removing the container (need IP while it exists)
+AGENT_IP=$(docker inspect -f '{{`{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}`}}' "conga-$CONTAINER_ID" 2>/dev/null || echo "")
+if [ -n "$AGENT_IP" ]; then
+  echo "Cleaning up iptables rules for $CONTAINER_ID ($AGENT_IP)"
+  iptables -D DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
+  NET_CIDR=$(docker network inspect -f '{{`{{range .IPAM.Config}}{{.Subnet}}{{end}}`}}' "conga-$CONTAINER_ID" 2>/dev/null || echo "")
+  [ -n "$NET_CIDR" ] && iptables -D DOCKER-USER -s "$AGENT_IP" -d "$NET_CIDR" -j RETURN 2>/dev/null || true
+  iptables -D DOCKER-USER -s "$AGENT_IP" -j DROP 2>/dev/null || true
+fi
+
+# Stop and remove systemd unit
+systemctl stop "conga-$CONTAINER_ID" 2>/dev/null || true
+systemctl disable "conga-$CONTAINER_ID" 2>/dev/null || true
+rm -f "/etc/systemd/system/conga-$CONTAINER_ID.service"
 systemctl daemon-reload
-docker network rm conga-$CONTAINER_ID || true
+
+# Remove containers (agent + egress proxy)
+docker rm -f "conga-$CONTAINER_ID" 2>/dev/null || true
+docker rm -f "conga-egress-$CONTAINER_ID" 2>/dev/null || true
+
+# Disconnect router from agent network, then remove the network
+docker network disconnect "conga-$CONTAINER_ID" conga-router 2>/dev/null || true
+docker network rm "conga-$CONTAINER_ID" 2>/dev/null || true
+
+# Remove config files (preserve data directory — may contain user data)
+rm -f "/opt/conga/config/$CONTAINER_ID.env"
+rm -f "/opt/conga/config/$CONTAINER_ID.type"
+rm -f "/opt/conga/config/${CONTAINER_ID}-config.json.sha256"
+rm -f "/opt/conga/config/egress-$CONTAINER_ID.yaml"
+rm -f "/opt/conga/config/egress-$CONTAINER_ID.mode"
+
+# Remove agent from routing.json
+if [ -f /opt/conga/config/routing.json ]; then
+  WEBHOOK_URL="http://conga-$CONTAINER_ID:18789/slack/events"
+  jq --arg url "$WEBHOOK_URL" \
+    '(.members |= with_entries(select(.value != $url))) |
+     (.channels |= with_entries(select(.value != $url)))' \
+    /opt/conga/config/routing.json > "/tmp/routing-rm-$CONTAINER_ID.json" && \
+    mv "/tmp/routing-rm-$CONTAINER_ID.json" /opt/conga/config/routing.json && \
+    chown 1000:1000 /opt/conga/config/routing.json
+  echo "Removed $CONTAINER_ID from routing.json"
+fi
 
 echo "=== Agent $CONTAINER_ID removed from instance ==="
