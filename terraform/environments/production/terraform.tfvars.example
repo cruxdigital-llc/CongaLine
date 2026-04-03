@@ -10,45 +10,56 @@ repo_root = "/path/to/congaline"
 instance_type = "r6g.medium"
 alert_email   = ""
 
-# --- Agents ---
-# Define your fleet. Key is the agent name.
-# Ports auto-assigned alphabetically from 18789 if omitted.
-agents = {
-  myagent = {
-    type       = "user"
-    binding_id = "USLACKMEMBERID"  # Slack member ID
-  }
-  myteam = {
-    type       = "team"
-    binding_id = "CSLACKCHANNELID" # Slack channel ID
-  }
-}
+# --- Global Egress Policy ---
+egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com"]
 
-# --- Secrets ---
+# --- Global Secrets ---
 # Applied to every agent
 global_secrets = {
   "anthropic-api-key" = ""
 }
 
-# Shared channel secrets (omit to skip Slack setup)
-channel_secrets = {
-  "slack-bot-token"      = ""
-  "slack-signing-secret" = ""
-  "slack-app-token"      = ""
+# --- Agents ---
+# Define your fleet. Key is the agent name.
+# Ports auto-assigned alphabetically from 18789 if omitted.
+agents = {
+  myagent = {
+    type = "user"
+    # Optional: per-agent egress override (inherits global if omitted)
+    # egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com", "*.trello.com"]
+    # Optional: per-agent secrets
+    # secrets = {
+    #   "trello-api-key" = "..."
+    #   "trello-token"   = "..."
+    # }
+  }
+  myteam = {
+    type = "team"
+  }
 }
 
-# Optional: per-agent secrets
-# agent_secrets = {
-#   myagent = {
-#     "trello-api-key" = "..."
-#     "trello-token"   = "..."
-#   }
-# }
-
-# --- Egress Policy ---
-egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com"]
-
-# Optional: per-agent egress overrides
-# agent_egress_overrides = {
-#   myagent = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com", "*.trello.com"]
-# }
+# --- Channels ---
+# Each channel has shared secrets and per-agent bindings.
+# Bindings map agent name => config with required `id` key.
+# Omit entirely to run in gateway-only mode (no messaging platform).
+channels = {
+  slack = {
+    secrets = {
+      "slack-bot-token"      = ""
+      "slack-signing-secret" = ""
+      "slack-app-token"      = ""
+    }
+    bindings = {
+      myagent = { id = "USLACKMEMBERID" }  # Slack member ID
+      myteam  = { id = "CSLACKCHANNELID" } # Slack channel ID
+    }
+  }
+  # telegram = {
+  #   secrets = {
+  #     "telegram-bot-token" = ""
+  #   }
+  #   bindings = {
+  #     myagent = { id = "123456789" }
+  #   }
+  # }
+}

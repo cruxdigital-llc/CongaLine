@@ -7,9 +7,10 @@ variable "image" {
 variable "agents" {
   description = "Map of agents to provision. Key is agent name. Ports auto-assigned alphabetically from 18789 if omitted."
   type = map(object({
-    type         = string           # "user" or "team"
-    gateway_port = optional(number) # auto-assigned if null
-    binding_id   = string           # Slack member ID (user) or channel ID (team)
+    type                   = string                      # "user" or "team"
+    gateway_port           = optional(number)            # auto-assigned if null
+    egress_allowed_domains = optional(list(string))      # per-agent override; null = inherit global
+    secrets                = optional(map(string), {})   # per-agent secrets
   }))
 }
 
@@ -20,28 +21,24 @@ variable "global_secrets" {
   default     = {}
 }
 
-variable "channel_secrets" {
-  description = "Shared secrets for the messaging channel (e.g. slack-bot-token, slack-signing-secret, slack-app-token)"
-  type        = map(string)
-  sensitive   = true
-  default     = {}
+variable "channels" {
+  description = "Messaging channels. Map of platform => { secrets, bindings }. Bindings map agent name => config with required `id` key."
+  type = map(object({
+    secrets  = map(string)
+    bindings = optional(map(map(string)), {})
+  }))
+  default = {}
 }
 
-variable "agent_secrets" {
-  description = "Per-agent secrets. Map of agent_name => map of secret_name => value."
-  type        = map(map(string))
-  sensitive   = true
-  default     = {}
+
+variable "egress_mode" {
+  description = "Global egress enforcement mode"
+  type        = string
+  default     = "enforce"
 }
 
 variable "egress_allowed_domains" {
   description = "Global egress allowed domains"
   type        = list(string)
   default     = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com"]
-}
-
-variable "agent_egress_overrides" {
-  description = "Per-agent egress domain overrides. Map of agent_name => list of allowed domains."
-  type        = map(list(string))
-  default     = {}
 }

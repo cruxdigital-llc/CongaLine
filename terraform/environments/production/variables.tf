@@ -48,9 +48,10 @@ variable "image" {
 variable "agents" {
   description = "Map of agents to provision. Ports auto-assigned alphabetically from 18789 if omitted."
   type = map(object({
-    type         = string
-    gateway_port = optional(number)
-    binding_id   = string
+    type                   = string
+    gateway_port           = optional(number)
+    egress_allowed_domains = optional(list(string))
+    secrets                = optional(map(string), {})
   }))
 }
 
@@ -61,28 +62,24 @@ variable "global_secrets" {
   default     = {}
 }
 
-variable "channel_secrets" {
-  description = "Shared secrets for the messaging channel (e.g. slack-bot-token, slack-signing-secret, slack-app-token)"
-  type        = map(string)
-  sensitive   = true
-  default     = {}
+variable "channels" {
+  description = "Messaging channels. Map of platform => { secrets, bindings }."
+  type = map(object({
+    secrets  = map(string)
+    bindings = optional(map(map(string)), {})
+  }))
+  default = {}
 }
 
-variable "agent_secrets" {
-  description = "Per-agent secrets. Map of agent_name => map of secret_name => value."
-  type        = map(map(string))
-  sensitive   = true
-  default     = {}
+
+variable "egress_mode" {
+  description = "Global egress enforcement mode"
+  type        = string
+  default     = "enforce"
 }
 
 variable "egress_allowed_domains" {
   description = "Global egress allowed domains. Supports wildcards (e.g. *.slack.com)."
   type        = list(string)
   default     = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com"]
-}
-
-variable "agent_egress_overrides" {
-  description = "Per-agent egress domain overrides. Replaces the global allowlist for that agent."
-  type        = map(list(string))
-  default     = {}
 }
