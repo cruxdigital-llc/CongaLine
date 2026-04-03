@@ -89,6 +89,11 @@ if [ -f "/opt/conga/config/egress-$AGENT_NAME.yaml" ]; then
       iptables -I DOCKER-USER -s "$AGENT_IP" -d "$NET_CIDR" -j RETURN
     iptables -C DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || \
       iptables -I DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+    # Allow DNS (Docker embedded resolver forwards to VPC resolver outside the subnet)
+    iptables -C DOCKER-USER -s "$AGENT_IP" -p udp --dport 53 -j RETURN 2>/dev/null || \
+      iptables -I DOCKER-USER -s "$AGENT_IP" -p udp --dport 53 -j RETURN
+    iptables -C DOCKER-USER -s "$AGENT_IP" -p tcp --dport 53 -j RETURN 2>/dev/null || \
+      iptables -I DOCKER-USER -s "$AGENT_IP" -p tcp --dport 53 -j RETURN
     echo "Egress iptables: DROP rules applied for conga-$AGENT_NAME ($AGENT_IP)"
   else
     echo "ERROR: Could not apply egress iptables rules — container IP or subnet not found"

@@ -59,6 +59,8 @@ if docker inspect "$AGENT_CONTAINER" >/dev/null 2>&1; then
   AGENT_IP=$(docker inspect -f "{{`{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}`}}" "$AGENT_CONTAINER" 2>/dev/null || echo "")
   NET_CIDR=$(docker network inspect -f '{{`{{range .IPAM.Config}}{{.Subnet}}{{end}}`}}' "$AGENT_NET" 2>/dev/null || echo "")
   if [ -n "$AGENT_IP" ] && [ -n "$NET_CIDR" ]; then
+    iptables -D DOCKER-USER -s "$AGENT_IP" -p tcp --dport 53 -j RETURN 2>/dev/null || true
+    iptables -D DOCKER-USER -s "$AGENT_IP" -p udp --dport 53 -j RETURN 2>/dev/null || true
     iptables -D DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
     iptables -D DOCKER-USER -s "$AGENT_IP" -d "$NET_CIDR" -j RETURN 2>/dev/null || true
     iptables -D DOCKER-USER -s "$AGENT_IP" -j DROP 2>/dev/null || true
@@ -149,6 +151,11 @@ if [ -n "$AGENT_IP" ] && [ -n "$NET_CIDR" ]; then
     iptables -I DOCKER-USER -s "$AGENT_IP" -d "$NET_CIDR" -j RETURN
   iptables -C DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || \
     iptables -I DOCKER-USER -s "$AGENT_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+  # Allow DNS (Docker embedded resolver forwards to VPC resolver outside the subnet)
+  iptables -C DOCKER-USER -s "$AGENT_IP" -p udp --dport 53 -j RETURN 2>/dev/null || \
+    iptables -I DOCKER-USER -s "$AGENT_IP" -p udp --dport 53 -j RETURN
+  iptables -C DOCKER-USER -s "$AGENT_IP" -p tcp --dport 53 -j RETURN 2>/dev/null || \
+    iptables -I DOCKER-USER -s "$AGENT_IP" -p tcp --dport 53 -j RETURN
   echo "Egress iptables: DROP rules applied for $AGENT_NAME ($AGENT_IP)"
 else
   echo "ERROR: Could not apply egress iptables rules — container IP ($AGENT_IP) or subnet ($NET_CIDR) not found"
