@@ -439,6 +439,12 @@ func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error 
 		return err
 	}
 
+	// Regenerate openclaw.json via the Go code path so gateway mode,
+	// channel bindings, and allowlist entries stay in sync with SSM state.
+	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, *agent); err != nil {
+		return fmt.Errorf("failed to regenerate config for %s: %w", agentName, err)
+	}
+
 	tmpl, err := template.New("refresh").Parse(scripts.RefreshUserScript)
 	if err != nil {
 		return fmt.Errorf("failed to parse refresh template: %w", err)
