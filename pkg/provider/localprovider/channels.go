@@ -316,8 +316,16 @@ func (p *LocalProvider) regenerateAgentConfig(ctx context.Context, cfg provider.
 		return err
 	}
 
+	// Also write .env into the data directory for runtimes that read it there.
+	dataEnvPath := filepath.Join(dataDir, ".env")
+	os.Remove(dataEnvPath)                      //nolint:errcheck
+	os.WriteFile(dataEnvPath, envContent, 0400) //nolint:errcheck
+
 	// Best-effort: chown fails on macOS where uid 1000 doesn't exist (Docker Desktop remaps).
 	exec.CommandContext(ctx, "chown", "-R", "1000:1000", dataDir).Run() //nolint:errcheck
+
+	// Update config integrity baseline so RefreshAgent doesn't see a violation.
+	p.saveConfigBaseline(ctx, cfg.Name)
 	return nil
 }
 
