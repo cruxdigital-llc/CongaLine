@@ -60,4 +60,8 @@ type Channel interface {
 
 	// BehaviorTemplateVars returns template substitution vars for behavior files.
 	BehaviorTemplateVars(agentType string, binding ChannelBinding) map[string]string
+
+	// SetupGuide returns a brief guide explaining how to obtain the
+	// credentials needed for this channel. Displayed before prompting for secrets.
+	SetupGuide() string
 }

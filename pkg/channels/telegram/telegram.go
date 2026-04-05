@@ -121,3 +121,18 @@ func (t *Telegram) WebhookPath() string { return "/telegram/events" }
 func (t *Telegram) BehaviorTemplateVars(agentType string, binding channels.ChannelBinding) map[string]string {
 	return map[string]string{"TELEGRAM_ID": binding.ID}
 }
+
+func (t *Telegram) SetupGuide() string {
+	return `To set up Telegram, you'll need a bot token from BotFather:
+
+  1. Open Telegram and message @BotFather
+  2. Send /newbot and follow the prompts to name your bot
+  3. Copy the bot token (looks like 123456789:ABCdefGHI...)
+  4. Optionally, generate a random webhook secret for HMAC verification
+
+To find user IDs for binding agents:
+  - Message @userinfobot in Telegram to get your numeric ID
+  - For group chats, add @RawDataBot to the group and check the chat ID
+
+You'll need these values:`
+}
