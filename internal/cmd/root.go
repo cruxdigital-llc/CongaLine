@@ -14,6 +14,7 @@ import (
 
 	// Register channels via init()
 	_ "github.com/cruxdigital-llc/conga-line/pkg/channels/slack"
+	_ "github.com/cruxdigital-llc/conga-line/pkg/channels/telegram"
 
 	// Register providers via init()
 	_ "github.com/cruxdigital-llc/conga-line/pkg/provider/awsprovider"
