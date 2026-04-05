@@ -22,6 +22,8 @@ func (r *Runtime) PluginConfig(platform string, enabled bool) map[string]any {
 	return ch.OpenClawPluginConfig(enabled)
 }
 
+func (r *Runtime) WebhookPort() int { return 0 } // same as gateway port
+
 func (r *Runtime) WebhookPath(platform string) string {
 	ch, ok := channels.Get(platform)
 	if !ok {

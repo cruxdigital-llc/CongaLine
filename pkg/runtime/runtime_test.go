@@ -144,6 +144,13 @@ func testRuntimeContract(t *testing.T, rt runtime.Runtime) {
 		}
 	})
 
+	t.Run("WebhookPort is non-negative", func(t *testing.T) {
+		port := rt.WebhookPort()
+		if port < 0 {
+			t.Fatalf("WebhookPort() must be >= 0, got %d", port)
+		}
+	})
+
 	t.Run("WebhookPath returns valid path for slack", func(t *testing.T) {
 		path := rt.WebhookPath("slack")
 		if path == "" {

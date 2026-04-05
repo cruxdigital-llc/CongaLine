@@ -31,9 +31,14 @@ func (r *Runtime) GenerateEnvFile(params runtime.EnvParams) []byte {
 		}
 	}
 
+	// Set WEBHOOK_SECRET to the Slack signing secret so the Hermes webhook
+	// adapter can verify HMAC signatures from the Conga router.
+	if v := params.Secrets.Values["slack-signing-secret"]; v != "" {
+		appendEnv("WEBHOOK_SECRET", v)
+	}
+
 	// Allow all users by default — access is controlled by the gateway token
 	// (API_SERVER_KEY) set in config.yaml, not user allowlists.
-	// API server enablement and host binding are in config.yaml (platforms.api_server).
 	appendEnv("GATEWAY_ALLOW_ALL_USERS", "true")
 
 	// Per-agent secrets (ANTHROPIC_API_KEY, etc.)

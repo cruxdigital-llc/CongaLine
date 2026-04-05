@@ -92,6 +92,12 @@ type Runtime interface {
 	// channel events to this runtime's container.
 	WebhookPath(platform string) string
 
+	// WebhookPort returns the container-internal port for receiving channel
+	// events from the router. Returns 0 to use the same port as the gateway
+	// (ContainerSpec.ContainerPort). Hermes uses a separate webhook adapter
+	// on port 8644 while its API server is on 8642.
+	WebhookPort() int
+
 	// --- Egress Proxy ---
 
 	// SupportsNodeProxy returns true if this runtime needs the

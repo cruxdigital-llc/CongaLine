@@ -14,16 +14,22 @@ type RoutingConfig struct {
 	Members  map[string]string `json:"members"`
 }
 
-// WebhookPathResolver returns the webhook path for a given agent runtime and
-// channel platform. Used by GenerateRoutingJSON to construct per-runtime URLs.
-// When nil, the channel's default WebhookPath() is used.
-type WebhookPathResolver func(agentRuntime, platform string) string
+// WebhookTarget contains the port and path for delivering channel events to a container.
+type WebhookTarget struct {
+	Port int    // Container-internal port for webhook delivery (0 = use agent's GatewayPort)
+	Path string // HTTP path (e.g., "/slack/events" or "/webhooks/slack")
+}
+
+// WebhookTargetResolver returns the webhook target for a given agent runtime
+// and channel platform. Used by GenerateRoutingJSON to construct per-runtime URLs.
+// When nil, the channel's default WebhookPath() and agent's GatewayPort are used.
+type WebhookTargetResolver func(agentRuntime, platform string) WebhookTarget
 
 // GenerateRoutingJSON builds routing.json from a list of agents.
 // The resolver maps (runtime, platform) → webhook path so that different
 // runtimes receive events at their expected endpoints.
 // Pass nil for resolver to use each channel's default webhook path.
-func GenerateRoutingJSON(agents []provider.AgentConfig, resolver WebhookPathResolver) ([]byte, error) {
+func GenerateRoutingJSON(agents []provider.AgentConfig, resolver WebhookTargetResolver) ([]byte, error) {
 	cfg := RoutingConfig{
 		Channels: make(map[string]string),
 		Members:  make(map[string]string),
@@ -39,14 +45,19 @@ func GenerateRoutingJSON(agents []provider.AgentConfig, resolver WebhookPathReso
 				continue
 			}
 
-			// Resolve the webhook path: runtime-specific if resolver provided,
-			// otherwise fall back to the channel's default.
+			// Resolve the webhook target: runtime-specific if resolver provided,
+			// otherwise fall back to the channel's default path and agent's port.
+			port := a.GatewayPort
 			webhookPath := ch.WebhookPath()
 			if resolver != nil {
-				webhookPath = resolver(a.Runtime, binding.Platform)
+				target := resolver(a.Runtime, binding.Platform)
+				webhookPath = target.Path
+				if target.Port != 0 {
+					port = target.Port
+				}
 			}
 
-			url := fmt.Sprintf("http://conga-%s:%d%s", a.Name, a.GatewayPort, webhookPath)
+			url := fmt.Sprintf("http://conga-%s:%d%s", a.Name, port, webhookPath)
 
 			switch string(a.Type) {
 			case "user":

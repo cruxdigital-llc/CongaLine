@@ -109,11 +109,11 @@ func TestGenerateRoutingJSON_MixedRuntimes(t *testing.T) {
 			Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U0002222222"}}, GatewayPort: 18790},
 	}
 
-	resolver := func(agentRuntime, platform string) string {
+	resolver := func(agentRuntime, platform string) WebhookTarget {
 		if agentRuntime == "hermes" {
-			return "/webhooks/" + platform
+			return WebhookTarget{Port: 8644, Path: "/webhooks/" + platform}
 		}
-		return "/slack/events"
+		return WebhookTarget{Path: "/slack/events"}
 	}
 
 	data, err := GenerateRoutingJSON(agents, resolver)
@@ -130,8 +130,8 @@ func TestGenerateRoutingJSON_MixedRuntimes(t *testing.T) {
 	if got := cfg.Members["U0001111111"]; got != "http://conga-ocagent:18789/slack/events" {
 		t.Errorf("OpenClaw route = %q, want /slack/events path", got)
 	}
-	// Hermes agent should get /webhooks/slack
-	if got := cfg.Members["U0002222222"]; got != "http://conga-hermes1:18790/webhooks/slack" {
-		t.Errorf("Hermes route = %q, want /webhooks/slack path", got)
+	// Hermes agent should get port 8644 + /webhooks/slack
+	if got := cfg.Members["U0002222222"]; got != "http://conga-hermes1:8644/webhooks/slack" {
+		t.Errorf("Hermes route = %q, want http://conga-hermes1:8644/webhooks/slack", got)
 	}
 }

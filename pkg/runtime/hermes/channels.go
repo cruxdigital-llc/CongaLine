@@ -15,6 +15,8 @@ func (r *Runtime) PluginConfig(platform string, enabled bool) map[string]any {
 	return nil
 }
 
+func (r *Runtime) WebhookPort() int { return 8644 } // webhook adapter port (separate from API server 8642)
+
 func (r *Runtime) WebhookPath(platform string) string {
 	return "/webhooks/" + platform
 }

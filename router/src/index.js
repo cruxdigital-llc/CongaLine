@@ -91,23 +91,31 @@ function computeSlackSignature(timestamp, body) {
   return `v0=${signature}`;
 }
 
-// Forward an event to the target container via HTTP POST
-// Sends in Events API HTTP format with proper Slack signature headers
+// Forward an event to the target container via HTTP POST.
+// Adapts headers based on the target path:
+// - /slack/events (OpenClaw): Slack-native signature headers
+// - /webhooks/* (Hermes): generic webhook signature headers
 async function forwardEvent(target, payload) {
   const body = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signature = computeSlackSignature(timestamp, body);
+
+  const headers = { 'Content-Type': 'application/json' };
+
+  const url = new URL(target);
+  if (url.pathname.startsWith('/webhooks/')) {
+    // Hermes webhook adapter: uses X-Webhook-Signature with HMAC-SHA256 of body
+    const hmac = createHmac('sha256', signingSecret).update(body).digest('hex');
+    headers['X-Webhook-Signature'] = hmac;
+    headers['X-Webhook-Timestamp'] = timestamp;
+    headers['X-Webhook-Source'] = 'slack';
+  } else {
+    // OpenClaw: Slack-native signature format (v0:timestamp:body)
+    headers['x-slack-signature'] = computeSlackSignature(timestamp, body);
+    headers['x-slack-request-timestamp'] = timestamp;
+  }
 
   try {
-    const res = await fetch(target, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-slack-signature': signature,
-        'x-slack-request-timestamp': timestamp,
-      },
-      body,
-    });
+    const res = await fetch(target, { method: 'POST', headers, body });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.error(`[router] Forward failed: ${res.status} → ${target} ${text}`);
@@ -190,7 +198,7 @@ client.on('disconnected', () => {
 });
 
 // Start
-console.log('[router] Starting OpenClaw Slack event router...');
+console.log('[router] Starting Conga Line Slack event router...');
 client.start().catch(err => {
   console.error('[router] Fatal startup error:', err);
   process.exit(1);
