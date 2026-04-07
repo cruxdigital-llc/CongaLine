@@ -109,6 +109,10 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
+		// Show runtime if set
+		if cfg, err := prov.GetAgent(ctx, agentName); err == nil && cfg.Runtime != "" {
+			fmt.Printf("Runtime:    %s\n", cfg.Runtime)
+		}
 		fmt.Printf("Container:  %s\n", status.Container.State)
 		fmt.Printf("Service:    %s\n", status.ServiceState)
 		fmt.Printf("Readiness:  %s\n", status.ReadyPhase)
@@ -131,6 +135,16 @@ var statusCmd = &cobra.Command{
 		}
 		if status.Container.PIDs > 0 {
 			fmt.Printf("PIDs:       %d\n", status.Container.PIDs)
+		}
+		if len(status.Container.Ports) > 0 {
+			fmt.Println("Ports:")
+			for _, p := range status.Container.Ports {
+				label := p.Service
+				if label == "" {
+					label = fmt.Sprintf("port/%d", p.ContainerPort)
+				}
+				fmt.Printf("  %d → localhost:%d  (%s)\n", p.ContainerPort, p.HostPort, label)
+			}
 		}
 		return nil
 	},

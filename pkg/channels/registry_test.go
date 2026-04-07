@@ -18,6 +18,7 @@ func (t *testChannel) AgentEnvVars(map[string]string) map[string]string         
 func (t *testChannel) RouterEnvVars(map[string]string) map[string]string                 { return nil }
 func (t *testChannel) WebhookPath() string                                               { return "" }
 func (t *testChannel) BehaviorTemplateVars(string, ChannelBinding) map[string]string     { return nil }
+func (t *testChannel) SetupGuide() string                                                { return "" }
 
 func TestRegisterAndGet(t *testing.T) {
 	// Save and restore registry state

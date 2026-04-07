@@ -9,6 +9,13 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 )
 
+// SharedSecrets holds the shared secrets needed to generate agent config and env files.
+type SharedSecrets struct {
+	Values             map[string]string // keyed by secret name: "slack-bot-token" → value
+	GoogleClientID     string
+	GoogleClientSecret string
+}
+
 // AgentType distinguishes user (DM-only) from team (channel-based) agents.
 type AgentType string
 
@@ -21,6 +28,7 @@ const (
 type AgentConfig struct {
 	Name        string                    `json:"name"`
 	Type        AgentType                 `json:"type"`
+	Runtime     string                    `json:"runtime,omitempty"` // "openclaw", "hermes" (default: "openclaw")
 	Channels    []channels.ChannelBinding `json:"channels,omitempty"`
 	GatewayPort int                       `json:"gateway_port"`
 	IAMIdentity string                    `json:"iam_identity,omitempty"`
@@ -55,6 +63,14 @@ type ContainerStatus struct {
 	MemoryUsage  string        `json:"memory_usage,omitempty"`
 	CPUPercent   string        `json:"cpu_percent,omitempty"`
 	PIDs         int           `json:"pids"`
+	Ports        []PortMapping `json:"ports,omitempty"`
+}
+
+// PortMapping describes a container port mapped to the host.
+type PortMapping struct {
+	ContainerPort int    `json:"container_port"`
+	HostPort      int    `json:"host_port"`
+	Service       string `json:"service"` // "gateway", "webhook", etc.
 }
 
 // SecretEntry represents a stored secret.

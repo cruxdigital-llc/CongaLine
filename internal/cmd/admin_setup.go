@@ -46,6 +46,15 @@ func adminSetupRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Pass --runtime flag through to Setup via RuntimeOverride.
+	// The provider's Setup() checks this before prompting interactively.
+	if flagRuntime != "" {
+		if cfg == nil {
+			cfg = &provider.SetupConfig{}
+		}
+		cfg.RuntimeOverride = flagRuntime
+	}
+
 	if err := prov.Setup(ctx, cfg); err != nil {
 		return err
 	}

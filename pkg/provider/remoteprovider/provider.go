@@ -906,12 +906,13 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context, restart bool) error {
 
 	routerEnvPath := posixpath.Join(p.remoteConfigDir(), "router.env")
 	routingPath := posixpath.Join(p.remoteConfigDir(), "routing.json")
+	slackRouterDir := posixpath.Join(p.remoteRouterDir(), "slack")
 
 	// Check router source exists
 	_, err := p.ssh.Run(ctx, fmt.Sprintf("test -f %s",
-		shellQuote(posixpath.Join(p.remoteRouterDir(), "src", "index.js"))))
+		shellQuote(posixpath.Join(slackRouterDir, "src", "index.js"))))
 	if err != nil {
-		return fmt.Errorf("router source not found on remote host at %s", p.remoteRouterDir())
+		return fmt.Errorf("slack router source not found on remote host at %s", slackRouterDir)
 	}
 	// Check router env exists
 	_, err = p.ssh.Run(ctx, fmt.Sprintf("test -f %s", shellQuote(routerEnvPath)))
@@ -920,11 +921,11 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context, restart bool) error {
 	}
 
 	// Install npm dependencies if node_modules is missing
-	nodeModules := posixpath.Join(p.remoteRouterDir(), "node_modules")
+	nodeModules := posixpath.Join(slackRouterDir, "node_modules")
 	if _, err := p.ssh.Run(ctx, fmt.Sprintf("test -d %s", shellQuote(nodeModules))); err != nil {
 		fmt.Println("Installing router dependencies...")
 		installCmd := fmt.Sprintf("docker run --rm -v %s:/app -w /app node:22-alpine npm install --production 2>&1",
-			shellQuote(p.remoteRouterDir()))
+			shellQuote(slackRouterDir))
 		if out, err := p.ssh.Run(ctx, installCmd); err != nil {
 			return fmt.Errorf("npm install failed: %v\n%s", err, out)
 		}
@@ -933,7 +934,7 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context, restart bool) error {
 	fmt.Println("Starting router...")
 	if err := p.runRouterContainer(ctx, routerContainerOpts{
 		EnvFile:     routerEnvPath,
-		RouterDir:   p.remoteRouterDir(),
+		RouterDir:   slackRouterDir,
 		RoutingJSON: routingPath,
 	}); err != nil {
 		return fmt.Errorf("failed to start router: %w", err)
@@ -1024,7 +1025,7 @@ func (p *RemoteProvider) regenerateRouting(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	data, err := common.GenerateRoutingJSON(agents)
+	data, err := common.GenerateRoutingJSON(agents, nil)
 	if err != nil {
 		return err
 	}

@@ -9,10 +9,35 @@ import (
 	"time"
 )
 
-// checkConfigIntegrity verifies openclaw.json hasn't been tampered with.
+// configFileForAgent returns the config file path for the given agent,
+// using the runtime's config file name if available, falling back to
+// checking both openclaw.json and config.yaml on disk.
+func (p *LocalProvider) configFileForAgent(ctx context.Context, agentName string) string {
+	dataDir := p.dataSubDir(agentName)
+
+	// Try to resolve via the runtime
+	if cfg, err := p.GetAgent(ctx, agentName); err == nil {
+		if rt, err := p.runtimeForAgent(*cfg); err == nil {
+			return filepath.Join(dataDir, rt.ConfigFileName())
+		}
+	}
+
+	// Fallback: check which config file exists on disk
+	for _, name := range []string{"config.yaml", "openclaw.json"} {
+		path := filepath.Join(dataDir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	// Last resort
+	return filepath.Join(dataDir, "openclaw.json")
+}
+
+// checkConfigIntegrity verifies the agent's config file hasn't been tampered with.
 // Returns nil if hash matches or no baseline exists. Returns error on mismatch.
-func (p *LocalProvider) checkConfigIntegrity(agentName string) error {
-	configPath := filepath.Join(p.dataSubDir(agentName), "openclaw.json")
+func (p *LocalProvider) checkConfigIntegrity(ctx context.Context, agentName string) error {
+	configPath := p.configFileForAgent(ctx, agentName)
 	baselinePath := filepath.Join(p.configDir(), agentName+".sha256")
 
 	// Read current config
@@ -31,16 +56,16 @@ func (p *LocalProvider) checkConfigIntegrity(agentName string) error {
 	}
 
 	if string(baselineData) != currentHash {
-		return fmt.Errorf("CONFIG INTEGRITY VIOLATION: %s/openclaw.json has been modified (expected %s, got %s)",
+		return fmt.Errorf("CONFIG INTEGRITY VIOLATION: %s config has been modified (expected %s, got %s)",
 			agentName, string(baselineData), currentHash)
 	}
 
 	return nil
 }
 
-// saveConfigBaseline stores the SHA256 hash of the current openclaw.json.
-func (p *LocalProvider) saveConfigBaseline(agentName string) error {
-	configPath := filepath.Join(p.dataSubDir(agentName), "openclaw.json")
+// saveConfigBaseline stores the SHA256 hash of the current agent config file.
+func (p *LocalProvider) saveConfigBaseline(ctx context.Context, agentName string) error {
+	configPath := p.configFileForAgent(ctx, agentName)
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return err
@@ -53,7 +78,8 @@ func (p *LocalProvider) saveConfigBaseline(agentName string) error {
 
 // RunIntegrityCheck checks all agent configs and logs results.
 func (p *LocalProvider) RunIntegrityCheck() error {
-	agents, err := p.ListAgents(context.Background())
+	ctx := context.Background()
+	agents, err := p.ListAgents(ctx)
 	if err != nil {
 		return err
 	}
@@ -67,7 +93,7 @@ func (p *LocalProvider) RunIntegrityCheck() error {
 
 	now := time.Now().Format(time.RFC3339)
 	for _, a := range agents {
-		if err := p.checkConfigIntegrity(a.Name); err != nil {
+		if err := p.checkConfigIntegrity(ctx, a.Name); err != nil {
 			fmt.Fprintf(f, "%s ALERT %s: %v\n", now, a.Name, err)
 			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
 		} else {

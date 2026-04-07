@@ -128,3 +128,21 @@ func (s *Slack) WebhookPath() string { return "/slack/events" }
 func (s *Slack) BehaviorTemplateVars(agentType string, binding channels.ChannelBinding) map[string]string {
 	return map[string]string{"SLACK_ID": binding.ID}
 }
+
+func (s *Slack) SetupGuide() string {
+	return `To set up Slack, you'll need to create a Slack app:
+
+  1. Go to https://api.slack.com/apps and click "Create New App"
+  2. Choose "From scratch", pick a name and workspace
+  3. Under "OAuth & Permissions", add these Bot Token Scopes:
+     app_mentions:read, channels:history, channels:read,
+     chat:write, groups:history, groups:read, im:history,
+     im:read, im:write, users:read
+  4. Install the app to your workspace
+  5. Copy the "Bot User OAuth Token" (starts with xoxb-)
+  6. Under "Basic Information", copy the "Signing Secret"
+  7. Under "Socket Mode", enable it and create an App-Level Token
+     with the "connections:write" scope (starts with xapp-)
+
+You'll need these three values:`
+}

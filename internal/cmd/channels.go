@@ -83,6 +83,15 @@ func channelsAddRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unknown channel platform %q", platform)
 	}
 
+	// Show setup guide before prompting (skip in JSON/non-interactive mode)
+	if !ui.JSONInputActive {
+		if guide := ch.SetupGuide(); guide != "" {
+			fmt.Println()
+			fmt.Println(guide)
+			fmt.Println()
+		}
+	}
+
 	// Collect secrets
 	secrets := map[string]string{}
 	for _, def := range ch.SharedSecrets() {

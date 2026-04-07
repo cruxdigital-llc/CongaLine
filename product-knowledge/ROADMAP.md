@@ -101,7 +101,7 @@ The organizing principle: local → remote → enterprise is a promotion pipelin
 ### Operational
 - [ ] Per-user SSO permission sets (CongaUser vs CongaAdmin)
 - [ ] Per-user custom SSM documents (each user can only use their own port)
-- [ ] Rewrite Slack router in Go (replace Node.js `router/src/index.js`, land in `channels/slack/`)
+- [ ] Rewrite Slack router in Go (replace Node.js `router/slack/src/index.js`, land in `channels/slack/`)
 - [ ] Update AWS bootstrap scripts (`add-user.sh.tmpl`, `add-team.sh.tmpl`) for `channels` JSON format
 - [ ] Add second channel implementation (Discord/Telegram) to validate Channel interface
 - [ ] Self-service container restart via signal file

@@ -7,24 +7,38 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
+
+	// Import runtime implementations so they register via init().
+	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/hermes"
+	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 )
 
 const (
-	egressProxyImage = "conga-egress-proxy"
-	routerContainer  = "conga-router"
+	egressProxyImage        = "conga-egress-proxy"
+	routerContainer         = "conga-router"
+	telegramRouterContainer = "conga-telegram-router"
 )
+
+// allRouterContainers returns the names of all router containers.
+func allRouterContainers() []string {
+	return []string{routerContainer, telegramRouterContainer}
+}
 
 // LocalProvider implements provider.Provider using local Docker.
 type LocalProvider struct {
@@ -42,6 +56,31 @@ func NewLocalProvider(cfg *provider.Config) (provider.Provider, error) {
 
 func init() {
 	provider.Register(provider.ProviderLocal, NewLocalProvider)
+}
+
+// runtimeForAgent resolves the Runtime for the given agent config.
+func (p *LocalProvider) runtimeForAgent(agent provider.AgentConfig) (runtime.Runtime, error) {
+	name := runtime.ResolveRuntime(agent.Runtime, p.getConfigValue("runtime"))
+	return runtime.Get(name)
+}
+
+// webhookTargetResolver returns a function that resolves webhook targets per-runtime.
+func (p *LocalProvider) webhookTargetResolver() common.WebhookTargetResolver {
+	globalDefault := p.getConfigValue("runtime")
+	return func(agentRuntime, platform string) common.WebhookTarget {
+		name := runtime.ResolveRuntime(agentRuntime, globalDefault)
+		if rt, err := runtime.Get(name); err == nil {
+			return common.WebhookTarget{
+				Port: rt.WebhookPort(),
+				Path: rt.WebhookPath(platform),
+			}
+		}
+		// Fallback to channel's default
+		if ch, ok := channels.Get(platform); ok {
+			return common.WebhookTarget{Path: ch.WebhookPath()}
+		}
+		return common.WebhookTarget{Path: "/" + platform + "/events"}
+	}
 }
 
 func (p *LocalProvider) Name() string { return "local" }
@@ -134,7 +173,13 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return err
 	}
 
-	// 2. Read secrets and generate config files
+	// 2. Resolve runtime
+	rt, err := p.runtimeForAgent(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve runtime: %w", err)
+	}
+
+	// 3. Read secrets and generate config files
 	shared, err := p.readSharedSecrets()
 	if err != nil {
 		return fmt.Errorf("failed to read shared secrets: %w", err)
@@ -144,27 +189,28 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to read agent secrets: %w", err)
 	}
 
-	openClawJSON, err := common.GenerateOpenClawConfig(cfg, shared, "")
+	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
+		Agent:   cfg,
+		Secrets: shared,
+		Model:   p.getConfigValue("model"),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
 	}
 
 	dataDir := p.dataSubDir(cfg.Name)
-	// Pre-create the full directory structure that OpenClaw expects
-	// (matches AWS bootstrap: mkdir -p {workspace,memory,logs,agents,canvas,cron,devices,identity,media})
-	for _, sub := range []string{"data/workspace", "memory", "logs", "agents", "canvas", "cron", "devices", "identity", "media"} {
-		os.MkdirAll(filepath.Join(dataDir, sub), 0755)
+	if err := rt.CreateDirectories(dataDir); err != nil {
+		return fmt.Errorf("failed to create data directories: %w", err)
 	}
-	// Create empty MEMORY.md so OpenClaw doesn't error on first read
-	memoryPath := filepath.Join(dataDir, "data", "workspace", "MEMORY.md")
-	if _, err := os.Stat(memoryPath); os.IsNotExist(err) {
-		os.WriteFile(memoryPath, []byte("# Memory\n"), 0644)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, rt.ConfigFileName()), configBytes, 0644); err != nil {
 		return err
 	}
 
-	envContent := common.GenerateEnvFile(cfg, shared, perAgent)
+	envContent := rt.GenerateEnvFile(runtime.EnvParams{
+		Agent:    cfg,
+		Secrets:  shared,
+		PerAgent: perAgent,
+	})
 	if err := os.MkdirAll(p.configDir(), 0700); err != nil {
 		return err
 	}
@@ -176,18 +222,34 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return err
 	}
 
-	// 3. Deploy behavior files
+	// Also write .env into the data directory — some runtimes (Hermes) read
+	// secrets from their own .env file inside the data volume rather than
+	// relying solely on Docker --env-file injection.
+	// Note: This is written BEFORE the container starts, so no race with
+	// the Hermes entrypoint (which only copies .env.example if .env is missing).
+	dataEnvPath := filepath.Join(dataDir, ".env")
+	os.Remove(dataEnvPath) //nolint:errcheck // may not exist yet
+	if err := os.WriteFile(dataEnvPath, envContent, 0400); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write .env to data directory: %v\n", err)
+	}
+
+	// 4. Deploy behavior files
 	if err := p.deployBehavior(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
 	}
 
-	// 4. Read image
+	// 5. Read image
 	image := p.getConfigValue("image")
 	if image == "" {
-		image = "ghcr.io/openclaw/openclaw:latest"
+		image = rt.DefaultImage()
+	}
+	if image == "" {
+		return fmt.Errorf("no Docker image configured for runtime %q — set via 'conga admin setup' or --image flag", rt.Name())
 	}
 
-	// 5. Load egress policy — proxy always deployed (deny-all when no policy)
+	spec := rt.ContainerSpec(cfg)
+
+	// 6. Load egress policy — proxy always deployed (deny-all when no policy)
 	egressPolicy, policyErr := policy.LoadEgressPolicy(p.dataDir, cfg.Name)
 	if policyErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to load egress policy: %v\n", policyErr)
@@ -198,7 +260,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "No egress policy configured — proxy will deny all outbound traffic. Use 'conga policy set-egress' to allow domains.\n")
 	}
 
-	// 6. Create Docker network
+	// 7. Create Docker network
 	netName := networkName(cfg.Name)
 	if !networkExists(ctx, netName) {
 		fmt.Printf("Creating network %s...\n", netName)
@@ -212,7 +274,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to start egress proxy: %w", err)
 	}
 
-	// 8. Start container
+	// 8. Start container and apply iptables
 	cName := containerName(cfg.Name)
 	if containerExists(ctx, cName) {
 		if err := stopContainer(ctx, cName); err != nil {
@@ -228,13 +290,16 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	// handles ownership mapping transparently via its VM layer.
 	exec.CommandContext(ctx, "chown", "-R", "1000:1000", dataDir).Run() //nolint:errcheck
 
-	// Write proxy bootstrap script for Node.js CONNECT tunneling
-	bootstrapPath := filepath.Join(p.configDir(), "proxy-bootstrap.js")
-	if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove old proxy bootstrap %s: %w", bootstrapPath, err)
-	}
-	if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
-		return fmt.Errorf("failed to write proxy bootstrap: %w", err)
+	// Write proxy bootstrap script for Node.js CONNECT tunneling (if runtime needs it)
+	var bootstrapPath string
+	if rt.SupportsNodeProxy() {
+		bootstrapPath = filepath.Join(p.configDir(), "proxy-bootstrap.js")
+		if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove old proxy bootstrap %s: %w", bootstrapPath, err)
+		}
+		if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
+			return fmt.Errorf("failed to write proxy bootstrap: %w", err)
+		}
 	}
 
 	// Ensure no stale container exists before starting.
@@ -248,10 +313,12 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		Network:            netName,
 		EnvFile:            envPath,
 		DataDir:            dataDir,
+		ContainerDataPath:  rt.ContainerDataPath(),
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
 		EgressProxyName:    egressProxyName,
 		ProxyBootstrapPath: bootstrapPath,
+		Spec:               spec,
 	}); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
@@ -275,20 +342,17 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 10. Ensure router is running and connected (only if any channel has credentials)
+	// 10. Ensure routers are running and connected (only if any channel has credentials)
 	if common.HasAnyChannel(shared) {
 		if err := p.ensureRouter(ctx, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
 		}
-		if containerExists(ctx, routerContainer) {
-			if err := connectNetwork(ctx, netName, routerContainer); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to connect router to agent network: %v\n", err)
-			}
-		}
+		p.ensureTelegramRouter(ctx, false)
+		connectRoutersToNetwork(ctx, netName)
 	}
 
 	// 11. Save config hash baseline
-	p.saveConfigBaseline(cfg.Name)
+	p.saveConfigBaseline(ctx, cfg.Name)
 
 	return nil
 }
@@ -318,9 +382,7 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 
 	p.stopAgentEgressProxy(ctx, name)
 
-	if containerExists(ctx, routerContainer) {
-		disconnectNetwork(ctx, netName, routerContainer)
-	}
+	disconnectRoutersFromNetwork(ctx, netName)
 
 	if networkExists(ctx, netName) {
 		if err := removeNetwork(ctx, netName); err != nil {
@@ -389,8 +451,51 @@ func (p *LocalProvider) GetStatus(ctx context.Context, agentName string) (*provi
 			status.Container.CPUPercent = stats.CPUPercent
 			status.Container.MemoryUsage = stats.MemoryUsage
 		}
+
+		// Collect port mappings and label with service names
+		ports := containerPorts(ctx, cName)
+		if agentCfg, labelErr := p.GetAgent(ctx, agentName); labelErr == nil {
+			if rt, rtErr := p.runtimeForAgent(*agentCfg); rtErr == nil {
+				spec := rt.ContainerSpec(*agentCfg)
+				webhookPort := rt.WebhookPort()
+				for i := range ports {
+					switch ports[i].ContainerPort {
+					case spec.ContainerPort:
+						ports[i].Service = "gateway"
+					default:
+						if webhookPort != 0 && ports[i].ContainerPort == webhookPort {
+							ports[i].Service = "webhook"
+						}
+					}
+				}
+			}
+		}
+		status.Container.Ports = ports
+
 		logs, _ := containerLogs(ctx, cName, 50)
-		status.ReadyPhase = detectReadyPhase(logs)
+		if agentCfg, agentErr := p.GetAgent(ctx, agentName); agentErr == nil {
+			if rt, rtErr := p.runtimeForAgent(*agentCfg); rtErr == nil {
+				hasSlack := agentCfg.ChannelBinding("slack") != nil
+				phase := rt.DetectReady(logs, hasSlack)
+
+				// If log-based detection is inconclusive (e.g., runtime logs to
+				// files not stdout), try the HTTP health endpoint instead.
+				if !phase.IsReady && rt.HealthEndpoint() != "" {
+					if checkHealthEndpoint(agentCfg.GatewayPort, rt.HealthEndpoint()) {
+						phase = runtime.ReadyPhase{Phase: "ready", Message: "Ready", IsReady: true}
+					}
+				}
+
+				status.ReadyPhase = phase.Phase
+				if phase.HasError {
+					status.Errors = append(status.Errors, phase.Message)
+				}
+			} else {
+				status.ReadyPhase = detectReadyPhase(logs)
+			}
+		} else {
+			status.ReadyPhase = detectReadyPhase(logs)
+		}
 
 		// Re-apply iptables egress rules if they were lost (e.g., after reboot or IP change).
 		p.ensureEgressIptables(ctx, agentName)
@@ -426,7 +531,12 @@ func (p *LocalProvider) ensureEgressIptables(ctx context.Context, agentName stri
 
 	if !checkEgressIptablesRules(ctx, ip, cidr) {
 		if err := addEgressIptablesRules(ctx, ip, cidr); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to re-apply egress iptables rules for %s: %v\n", agentName, err)
+			// Silence on macOS — iptables runs inside Docker Desktop's VM via nsenter,
+			// which fails without CAP_SYS_ADMIN (we drop all capabilities). This is
+			// expected and harmless: Docker Desktop networking already isolates containers.
+			if goruntime.GOOS != "darwin" {
+				fmt.Fprintf(os.Stderr, "Warning: failed to re-apply egress iptables rules for %s: %v\n", agentName, err)
+			}
 		}
 	}
 }
@@ -481,9 +591,7 @@ func (p *LocalProvider) PauseAgent(ctx context.Context, name string) error {
 
 	p.stopAgentEgressProxy(ctx, name)
 
-	if containerExists(ctx, routerContainer) {
-		disconnectNetwork(ctx, netName, routerContainer)
-	}
+	disconnectRoutersFromNetwork(ctx, netName)
 
 	// Regenerate routing (excludes paused agents)
 	if err := p.regenerateRouting(ctx); err != nil {
@@ -546,43 +654,68 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return fmt.Errorf("agent %s is paused. Use `conga admin unpause %s` first", agentName, agentName)
 	}
 
+	rt, err := p.runtimeForAgent(*cfg)
+	if err != nil {
+		return fmt.Errorf("failed to resolve runtime: %w", err)
+	}
+
 	shared, _ := p.readSharedSecrets()
 	perAgent, _ := p.readAgentSecrets(agentName)
 
 	// Check config integrity before trusting the existing token
 	dataDir := p.dataSubDir(agentName)
 	existingToken := ""
-	if err := p.checkConfigIntegrity(agentName); err != nil {
+	if err := p.checkConfigIntegrity(ctx, agentName); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Generating fresh gateway token instead of preserving existing one.\n")
 		existingToken, _ = generateToken()
 	} else {
-		existingToken = readExistingGatewayToken(filepath.Join(dataDir, "openclaw.json"))
+		configPath := filepath.Join(dataDir, rt.ConfigFileName())
+		if data, readErr := os.ReadFile(configPath); readErr == nil {
+			existingToken = rt.ReadGatewayToken(data)
+		}
 	}
 
-	// Regenerate openclaw.json with current config format
-	openClawJSON, err := common.GenerateOpenClawConfig(*cfg, shared, existingToken)
+	// Regenerate config with current config format
+	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
+		Agent:        *cfg,
+		Secrets:      shared,
+		GatewayToken: existingToken,
+		Model:        p.getConfigValue("model"),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
 	}
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create data directory %s: %w", dataDir, err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, rt.ConfigFileName()), configBytes, 0644); err != nil {
 		return err
 	}
 
 	// Update baseline hash after writing new config
-	p.saveConfigBaseline(agentName)
+	p.saveConfigBaseline(ctx, agentName)
 
 	// Regenerate env file
-	envContent := common.GenerateEnvFile(*cfg, shared, perAgent)
+	envContent := rt.GenerateEnvFile(runtime.EnvParams{
+		Agent:    *cfg,
+		Secrets:  shared,
+		PerAgent: perAgent,
+	})
 	envPath := filepath.Join(p.configDir(), agentName+".env")
 	if err := os.Remove(envPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove old env file %s: %w", envPath, err)
 	}
 	if err := os.WriteFile(envPath, envContent, 0400); err != nil {
 		return err
+	}
+
+	// Also write .env into the data directory for runtimes that read it there.
+	// Written before container restart, so no race with entrypoint scripts.
+	dataEnvPath := filepath.Join(dataDir, ".env")
+	os.Remove(dataEnvPath) //nolint:errcheck // may not exist yet
+	if err := os.WriteFile(dataEnvPath, envContent, 0400); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write .env to data directory: %v\n", err)
 	}
 
 	// Load egress policy — proxy always deployed (deny-all when no policy)
@@ -621,16 +754,19 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 
 	image := p.getConfigValue("image")
 	if image == "" {
-		image = "ghcr.io/openclaw/openclaw:latest"
+		image = rt.DefaultImage()
 	}
+	if image == "" {
+		return fmt.Errorf("no Docker image configured for runtime %q", rt.Name())
+	}
+
+	spec := rt.ContainerSpec(*cfg)
 
 	// Recreate network. TODO: consider keeping the network if egress policy
 	// hasn't changed — currently we always recreate for a clean slate, which
 	// causes brief connectivity loss during refresh.
 	if networkExists(ctx, netName) {
-		if containerExists(ctx, routerContainer) {
-			disconnectNetwork(ctx, netName, routerContainer)
-		}
+		disconnectRoutersFromNetwork(ctx, netName)
 		if err := removeNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
@@ -644,13 +780,16 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return fmt.Errorf("failed to start egress proxy: %w", err)
 	}
 
-	// Write proxy bootstrap script for Node.js CONNECT tunneling
-	bootstrapPath := filepath.Join(p.configDir(), "proxy-bootstrap.js")
-	if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove old proxy bootstrap %s: %w", bootstrapPath, err)
-	}
-	if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
-		return fmt.Errorf("failed to write proxy bootstrap: %w", err)
+	// Write proxy bootstrap script for Node.js CONNECT tunneling (if runtime needs it)
+	var bootstrapPath string
+	if rt.SupportsNodeProxy() {
+		bootstrapPath = filepath.Join(p.configDir(), "proxy-bootstrap.js")
+		if err := os.Remove(bootstrapPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove old proxy bootstrap %s: %w", bootstrapPath, err)
+		}
+		if err := os.WriteFile(bootstrapPath, []byte(policy.ProxyBootstrapJS()), 0444); err != nil {
+			return fmt.Errorf("failed to write proxy bootstrap: %w", err)
+		}
 	}
 
 	// Ensure all files are owned by the container user before starting.
@@ -667,10 +806,12 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		Network:            netName,
 		EnvFile:            envPath,
 		DataDir:            dataDir,
+		ContainerDataPath:  rt.ContainerDataPath(),
 		GatewayPort:        cfg.GatewayPort,
 		Image:              image,
 		EgressProxyName:    refreshEgressProxyName,
 		ProxyBootstrapPath: bootstrapPath,
+		Spec:               spec,
 	}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
 	}
@@ -689,12 +830,8 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 	}
 
-	// Reconnect router
-	if containerExists(ctx, routerContainer) {
-		if err := connectNetwork(ctx, netName, routerContainer); err != nil {
-			return fmt.Errorf("failed to reconnect router to network %s: %w", netName, err)
-		}
-	}
+	// Reconnect routers
+	connectRoutersToNetwork(ctx, netName)
 	return nil
 }
 
@@ -734,34 +871,26 @@ func (p *LocalProvider) Connect(ctx context.Context, agentName string, localPort
 	}
 
 	// Try to extract the gateway token from the running container's config.
-	// OpenClaw auto-generates the token at first boot and writes it back.
+	rt, rtErr := p.runtimeForAgent(*cfg)
 	cName := containerName(agentName)
 	token := ""
 
-	// Read from the data dir (OpenClaw writes token back to config on disk)
-	configPath := filepath.Join(p.dataSubDir(agentName), "openclaw.json")
-	if data, err := os.ReadFile(configPath); err == nil {
-		var config map[string]interface{}
-		if err := json.Unmarshal(data, &config); err == nil {
-			if gw, ok := config["gateway"].(map[string]interface{}); ok {
-				if t, ok := gw["token"].(string); ok && t != "" {
-					token = t
-				}
-				if auth, ok := gw["auth"].(map[string]interface{}); ok {
-					if t, ok := auth["token"].(string); ok && t != "" {
-						token = t
-					}
-				}
-			}
+	// Read from the data dir (runtime writes token back to config on disk)
+	if rtErr == nil {
+		configPath := filepath.Join(p.dataSubDir(agentName), rt.ConfigFileName())
+		if data, err := os.ReadFile(configPath); err == nil {
+			token = rt.ReadGatewayToken(data)
 		}
 	}
 
 	// Fallback: try docker exec to read it from inside the container
-	if token == "" && containerExists(ctx, cName) {
-		output, err := dockerRun(ctx, "exec", cName, "node", "-e",
-			`try{const c=require('/home/node/.openclaw/openclaw.json');console.log(c.gateway?.token||c.gateway?.auth?.token||'')}catch(e){console.log('')}`)
-		if err == nil {
-			token = strings.TrimSpace(output)
+	if token == "" && containerExists(ctx, cName) && rtErr == nil {
+		if execCmd := rt.GatewayTokenDockerExec(); execCmd != nil {
+			args := append([]string{"exec", cName}, execCmd...)
+			output, err := dockerRun(ctx, args...)
+			if err == nil {
+				token = strings.TrimSpace(output)
+			}
 		}
 	}
 
@@ -799,7 +928,8 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		filepath.Join(p.dataDir, "data"),
 		p.configDir(),
 		p.routerDir(),
-		filepath.Join(p.routerDir(), "src"),
+		filepath.Join(p.routerDir(), "slack", "src"),
+		filepath.Join(p.routerDir(), "telegram", "src"),
 		p.behaviorDir(),
 		p.logsDir(),
 		p.egressProxyDir(),
@@ -835,11 +965,83 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 	}
 	if repoPath != "" {
 		// Validate the path has router/ and behavior/ directories
-		if _, err := os.Stat(filepath.Join(repoPath, "router", "src", "index.js")); err != nil {
-			return fmt.Errorf("invalid repo path: %s/router/src/index.js not found", repoPath)
+		if _, err := os.Stat(filepath.Join(repoPath, "router", "slack", "src", "index.js")); err != nil {
+			return fmt.Errorf("invalid repo path: %s/router/slack/src/index.js not found", repoPath)
 		}
 		p.setConfigValue("repo_path", repoPath)
 		changed++
+	}
+
+	// --- Runtime ---
+	// Resolution: --runtime flag (RuntimeOverride) > JSON/config Runtime > persisted > prompt
+	rtName := p.getConfigValue("runtime")
+	if cfg != nil && cfg.RuntimeOverride != "" {
+		rtName = cfg.RuntimeOverride
+	} else if cfg != nil && cfg.Runtime != "" {
+		rtName = cfg.Runtime
+	}
+	rtStatus := "set"
+	if rtName == "" {
+		rtStatus = "not set (default: openclaw)"
+	}
+	fmt.Printf("\n[config] runtime — Agent runtime (%s)\n", rtStatus)
+	if rtName != "" {
+		// Already resolved from flag, config, or persisted value — skip prompt
+	} else if cfg != nil {
+		rtName = "openclaw"
+	} else {
+		defaultRT := "openclaw"
+		newRT, err := ui.TextPromptWithDefault("  Runtime (openclaw, hermes)", defaultRT)
+		if err != nil {
+			return err
+		}
+		if newRT != "" {
+			rtName = newRT
+		}
+	}
+	if rtName != "" {
+		// Validate the runtime name
+		if _, err := runtime.Get(runtime.RuntimeName(rtName)); err != nil {
+			return fmt.Errorf("invalid runtime %q: %w", rtName, err)
+		}
+		p.setConfigValue("runtime", rtName)
+		changed++
+	}
+
+	// --- Model (non-OpenClaw runtimes only) ---
+	// OpenClaw has its model baked into openclaw-defaults.json.
+	// Other runtimes need the user to specify which LLM to use.
+	if rtName != "" && rtName != "openclaw" {
+		model := p.getConfigValue("model")
+		if cfg != nil && cfg.Image != "" {
+			// cfg doesn't have a model field yet; skip for non-interactive
+		}
+		modelStatus := "set"
+		if model == "" {
+			modelStatus = "not set"
+		}
+		fmt.Printf("\n[config] model — LLM model for %s runtime (%s)\n", rtName, modelStatus)
+		if cfg != nil {
+			if model == "" {
+				model = "anthropic/claude-sonnet-4-20250514"
+			}
+		} else if model == "" || ui.Confirm("  Update this value?") {
+			defaultModel := "anthropic/claude-sonnet-4-20250514"
+			if model != "" {
+				defaultModel = model
+			}
+			newModel, err := ui.TextPromptWithDefault("  Model (provider/name)", defaultModel)
+			if err != nil {
+				return err
+			}
+			if newModel != "" {
+				model = newModel
+			}
+		}
+		if model != "" {
+			p.setConfigValue("model", model)
+			changed++
+		}
 	}
 
 	// --- Docker image ---
@@ -847,21 +1049,26 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 	if cfg != nil && cfg.Image != "" {
 		image = cfg.Image
 	}
+	// Resolve default image from runtime if not explicitly set
+	if image == "" {
+		if rt, rtErr := runtime.Get(runtime.RuntimeName(rtName)); rtErr == nil && rt.DefaultImage() != "" {
+			image = rt.DefaultImage()
+		}
+	}
 	imageStatus := "set"
 	if image == "" {
 		imageStatus = "not set"
 	}
-	fmt.Printf("\n[config] image — OpenClaw Docker image (%s)\n", imageStatus)
+	fmt.Printf("\n[config] image — Agent Docker image (%s)\n", imageStatus)
 	if cfg != nil {
-		if image == "" {
-			image = "ghcr.io/openclaw/openclaw:2026.3.11"
-		}
+		// Non-interactive: image already resolved from config + runtime default above
 	} else if image == "" || ui.Confirm("  Update this value?") {
-		defaultImage := "ghcr.io/openclaw/openclaw:2026.3.11"
-		if image != "" {
-			defaultImage = image
+		defaultImage := image
+		prompt := "  Docker image"
+		if defaultImage == "" {
+			prompt = fmt.Sprintf("  Docker image for %s runtime (required)", rtName)
 		}
-		newImage, err := ui.TextPromptWithDefault("  Docker image", defaultImage)
+		newImage, err := ui.TextPromptWithDefault(prompt, defaultImage)
 		if err != nil {
 			return err
 		}
@@ -957,9 +1164,16 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 
 	// --- Pull images ---
 	if image != "" {
-		fmt.Printf("\nPulling OpenClaw image %s...\n", image)
+		fmt.Printf("\nPulling agent image %s...\n", image)
 		spin := ui.NewSpinner("Pulling Docker image...")
 		err := pullImage(ctx, image)
+		if err != nil {
+			// Retry with --platform linux/amd64 (handles images without native arm64 support)
+			spin.Stop()
+			fmt.Println("  Retrying with --platform linux/amd64...")
+			spin = ui.NewSpinner("Pulling Docker image (amd64)...")
+			_, err = dockerRun(ctx, "pull", "--platform", "linux/amd64", image)
+		}
 		spin.Stop()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to pull image: %v\nYou can pull it manually: docker pull %s\n", err, image)
@@ -1049,7 +1263,9 @@ func (p *LocalProvider) CycleHost(ctx context.Context) error {
 			stopContainer(ctx, containerName(a.Name))
 		}
 	}
-	stopContainer(ctx, routerContainer)
+	for _, rc := range allRouterContainers() {
+		stopContainer(ctx, rc)
+	}
 
 	fmt.Println("Restarting...")
 
@@ -1150,6 +1366,26 @@ func (p *LocalProvider) cleanupDockerByPrefix(ctx context.Context) {
 
 // --- infrastructure helpers ---
 
+// connectRoutersToNetwork connects all running router containers to a network.
+func connectRoutersToNetwork(ctx context.Context, netName string) {
+	for _, rc := range allRouterContainers() {
+		if containerExists(ctx, rc) {
+			if err := connectNetwork(ctx, netName, rc); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to connect %s to %s network: %v\n", rc, netName, err)
+			}
+		}
+	}
+}
+
+// disconnectRoutersFromNetwork disconnects all router containers from a network.
+func disconnectRoutersFromNetwork(ctx context.Context, netName string) {
+	for _, rc := range allRouterContainers() {
+		if containerExists(ctx, rc) {
+			disconnectNetwork(ctx, netName, rc)
+		}
+	}
+}
+
 // ensureRouter starts or restarts the router container.
 // If restart is true and the router is already running, it is replaced to pick up config changes.
 func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
@@ -1166,10 +1402,11 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 
 	routerEnvPath := filepath.Join(p.configDir(), "router.env")
 	routingPath := filepath.Join(p.configDir(), "routing.json")
+	slackRouterDir := filepath.Join(p.routerDir(), "slack")
 
 	// Check required files exist
-	if _, err := os.Stat(filepath.Join(p.routerDir(), "src", "index.js")); err != nil {
-		return fmt.Errorf("router source not found at %s", p.routerDir())
+	if _, err := os.Stat(filepath.Join(slackRouterDir, "src", "index.js")); err != nil {
+		return fmt.Errorf("slack router source not found at %s", slackRouterDir)
 	}
 	if _, err := os.Stat(routerEnvPath); err != nil {
 		return fmt.Errorf("router.env not found — run 'conga channels add' first")
@@ -1178,7 +1415,7 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 	fmt.Println("Starting router...")
 	if err := runRouterContainer(ctx, routerContainerOpts{
 		EnvFile:     routerEnvPath,
-		RouterDir:   p.routerDir(),
+		RouterDir:   slackRouterDir,
 		RoutingJSON: routingPath,
 	}); err != nil {
 		return fmt.Errorf("failed to start router: %w", err)
@@ -1196,6 +1433,105 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 	}
 
 	fmt.Println("  Router started.")
+	return nil
+}
+
+// ensureTelegramRouter starts or restarts the Telegram router container.
+// Only starts if Telegram credentials are configured.
+func (p *LocalProvider) ensureTelegramRouter(ctx context.Context, restart bool) error {
+	// Check if Telegram is configured
+	shared, err := p.readSharedSecrets()
+	if err != nil {
+		return nil // no secrets = no Telegram
+	}
+	ch, ok := channels.Get("telegram")
+	if !ok || !ch.HasCredentials(shared.Values) {
+		return nil // Telegram not configured
+	}
+
+	if containerExists(ctx, telegramRouterContainer) {
+		state, err := inspectState(ctx, telegramRouterContainer)
+		if err == nil && state.Running && !restart {
+			return nil
+		}
+		if err := removeContainer(ctx, telegramRouterContainer); err != nil {
+			return fmt.Errorf("failed to remove existing telegram router container: %w", err)
+		}
+	}
+
+	// Write Telegram router env file
+	telegramEnvPath := filepath.Join(p.configDir(), "telegram-router.env")
+	envContent := ""
+	for k, v := range ch.RouterEnvVars(shared.Values) {
+		envContent += fmt.Sprintf("%s=%s\n", k, v)
+	}
+	// Also include signing secret for HMAC verification on forwarded events
+	if v := shared.Values["slack-signing-secret"]; v != "" {
+		envContent += fmt.Sprintf("SLACK_SIGNING_SECRET=%s\n", v)
+	}
+	// Pass the first Telegram-bound agent's gateway token so the router
+	// can authenticate with the agent's API server.
+	agents, _ := p.ListAgents(ctx)
+	for _, a := range agents {
+		if a.ChannelBinding("telegram") != nil {
+			if rt, rtErr := p.runtimeForAgent(a); rtErr == nil {
+				configPath := filepath.Join(p.dataSubDir(a.Name), rt.ConfigFileName())
+				if data, readErr := os.ReadFile(configPath); readErr == nil {
+					if token := rt.ReadGatewayToken(data); token != "" {
+						envContent += fmt.Sprintf("AGENT_API_KEY=%s\n", token)
+						break
+					}
+				}
+			}
+		}
+	}
+	if err := os.Remove(telegramEnvPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.WriteFile(telegramEnvPath, []byte(envContent), 0400); err != nil {
+		return err
+	}
+
+	// Check router source exists
+	telegramRouterDir := filepath.Join(p.routerDir(), "telegram")
+	if _, err := os.Stat(filepath.Join(telegramRouterDir, "src", "index.js")); err != nil {
+		return fmt.Errorf("telegram router source not found at %s — run 'conga admin setup' first", telegramRouterDir)
+	}
+
+	routingPath := filepath.Join(p.configDir(), "routing.json")
+
+	fmt.Println("Starting Telegram router...")
+	args := []string{
+		"run", "-d",
+		"--name", telegramRouterContainer,
+		"--env-file", telegramEnvPath,
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges",
+		"--memory", "128m",
+		"--read-only",
+		"--tmpfs", "/tmp:rw,noexec,nosuid",
+		"--user", "1000:1000",
+		"-v", fmt.Sprintf("%s:/app:ro", telegramRouterDir),
+		"-v", fmt.Sprintf("%s:/opt/conga/config/telegram-routing.json:ro", routingPath),
+	}
+	args = append(args, "node:22-alpine", "node", "/app/src/index.js")
+
+	if _, err := dockerRun(ctx, args...); err != nil {
+		return fmt.Errorf("failed to start telegram router: %w", err)
+	}
+
+	// Connect to all agent networks
+	agents, err = p.ListAgents(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list agents for telegram router network connections: %v\n", err)
+	}
+	for _, a := range agents {
+		if err := connectNetwork(ctx, networkName(a.Name), telegramRouterContainer); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to connect telegram router to %s network: %v\n", a.Name, err)
+		}
+	}
+
+	fmt.Println("  Telegram router started.")
 	return nil
 }
 
@@ -1312,7 +1648,7 @@ func (p *LocalProvider) regenerateRouting(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	data, err := common.GenerateRoutingJSON(agents)
+	data, err := common.GenerateRoutingJSON(agents, p.webhookTargetResolver())
 	if err != nil {
 		return err
 	}
@@ -1333,7 +1669,12 @@ func (p *LocalProvider) deployBehavior(cfg provider.AgentConfig) error {
 		return err
 	}
 
-	targetDir := filepath.Join(p.dataSubDir(cfg.Name), "data", "workspace")
+	// Use the runtime's workspace path for behavior file deployment.
+	workspaceSub := "data/workspace" // default (OpenClaw)
+	if rt, rtErr := p.runtimeForAgent(cfg); rtErr == nil {
+		workspaceSub = rt.WorkspacePath()
+	}
+	targetDir := filepath.Join(p.dataSubDir(cfg.Name), workspaceSub)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return err
 	}
@@ -1377,6 +1718,18 @@ func (p *LocalProvider) setConfigValue(key, value string) error {
 }
 
 // --- utility functions ---
+
+// checkHealthEndpoint makes an HTTP GET to localhost:{port}{path} and returns
+// true if the response is 200. Used as a fast, reliable alternative to log parsing.
+func checkHealthEndpoint(port int, path string) bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d%s", port, path))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
 
 func detectReadyPhase(logs string) string {
 	phase := "starting"
@@ -1438,7 +1791,7 @@ func detectRepoRoot() string {
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "router", "src", "index.js")); err == nil {
+			if _, err := os.Stat(filepath.Join(dir, "router", "slack", "src", "index.js")); err == nil {
 				return dir
 			}
 		}
