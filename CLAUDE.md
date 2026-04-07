@@ -81,7 +81,7 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 ## Slack Architecture
 
 - **Slack is optional** — agents can run in gateway-only mode (web UI) without any Slack configuration
-- **Single shared Slack app** — one Slack app for all agents. The Slack event router (`router/src/index.js`) holds the single Socket Mode connection and fans out events to per-agent containers via HTTP webhook.
+- **Single shared Slack app** — one Slack app for all agents. The Slack event router (`router/slack/src/index.js`) holds the single Socket Mode connection and fans out events to per-agent containers via HTTP webhook. Telegram has its own router at `router/telegram/src/index.js`.
 - **Containers use HTTP webhook mode** (`mode: "http"`) — they never connect to Slack directly. The router forwards events with signed HTTP requests.
 - `signingSecret` and `botToken` are in `openclaw.json` under `channels.slack` (only when Slack is configured)
 - `SLACK_APP_TOKEN` is held only by the router (in `router.env`) — containers do not need it

@@ -928,7 +928,8 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		filepath.Join(p.dataDir, "data"),
 		p.configDir(),
 		p.routerDir(),
-		filepath.Join(p.routerDir(), "src"),
+		filepath.Join(p.routerDir(), "slack", "src"),
+		filepath.Join(p.routerDir(), "telegram", "src"),
 		p.behaviorDir(),
 		p.logsDir(),
 		p.egressProxyDir(),
@@ -964,8 +965,8 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 	}
 	if repoPath != "" {
 		// Validate the path has router/ and behavior/ directories
-		if _, err := os.Stat(filepath.Join(repoPath, "router", "src", "index.js")); err != nil {
-			return fmt.Errorf("invalid repo path: %s/router/src/index.js not found", repoPath)
+		if _, err := os.Stat(filepath.Join(repoPath, "router", "slack", "src", "index.js")); err != nil {
+			return fmt.Errorf("invalid repo path: %s/router/slack/src/index.js not found", repoPath)
 		}
 		p.setConfigValue("repo_path", repoPath)
 		changed++
@@ -1401,10 +1402,11 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 
 	routerEnvPath := filepath.Join(p.configDir(), "router.env")
 	routingPath := filepath.Join(p.configDir(), "routing.json")
+	slackRouterDir := filepath.Join(p.routerDir(), "slack")
 
 	// Check required files exist
-	if _, err := os.Stat(filepath.Join(p.routerDir(), "src", "index.js")); err != nil {
-		return fmt.Errorf("router source not found at %s", p.routerDir())
+	if _, err := os.Stat(filepath.Join(slackRouterDir, "src", "index.js")); err != nil {
+		return fmt.Errorf("slack router source not found at %s", slackRouterDir)
 	}
 	if _, err := os.Stat(routerEnvPath); err != nil {
 		return fmt.Errorf("router.env not found — run 'conga channels add' first")
@@ -1413,7 +1415,7 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 	fmt.Println("Starting router...")
 	if err := runRouterContainer(ctx, routerContainerOpts{
 		EnvFile:     routerEnvPath,
-		RouterDir:   p.routerDir(),
+		RouterDir:   slackRouterDir,
 		RoutingJSON: routingPath,
 	}); err != nil {
 		return fmt.Errorf("failed to start router: %w", err)
@@ -1789,7 +1791,7 @@ func detectRepoRoot() string {
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "router", "src", "index.js")); err == nil {
+			if _, err := os.Stat(filepath.Join(dir, "router", "slack", "src", "index.js")); err == nil {
 				return dir
 			}
 		}

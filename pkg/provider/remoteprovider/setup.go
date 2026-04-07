@@ -125,7 +125,7 @@ if [ "$(id -u)" != "0" ]; then
         exit 1
     fi
 fi
-$SUDO mkdir -p %s/{agents,secrets/{shared,agents},config,data,router/src,behavior,egress-proxy,logs}
+$SUDO mkdir -p %s/{agents,secrets/{shared,agents},config,data,router/{slack,telegram}/src,behavior,egress-proxy,logs}
 $SUDO chown -R %s:%s %s
 chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 `, p.remoteDir, sshUser, sshUser, p.remoteDir, p.remoteDir, p.remoteDir, p.remoteDir, p.remoteDir)
@@ -162,8 +162,8 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		}
 	}
 	if repoPath != "" {
-		if _, err := os.Stat(filepath.Join(repoPath, "router", "src", "index.js")); err != nil {
-			return fmt.Errorf("invalid repo path: %s/router/src/index.js not found", repoPath)
+		if _, err := os.Stat(filepath.Join(repoPath, "router", "slack", "src", "index.js")); err != nil {
+			return fmt.Errorf("invalid repo path: %s/router/slack/src/index.js not found", repoPath)
 		}
 		p.setConfigValue("repo_path", repoPath)
 		changed++
@@ -419,7 +419,7 @@ func detectRepoRoot() string {
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "router", "src", "index.js")); err == nil {
+			if _, err := os.Stat(filepath.Join(dir, "router", "slack", "src", "index.js")); err == nil {
 				return dir
 			}
 		}

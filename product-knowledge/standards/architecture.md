@@ -148,7 +148,7 @@ Slack is decoupled from the core via the `Channel` interface (`pkg/channels/`):
 - Validation delegated to `ch.ValidateBinding()` — each channel owns its ID format
 - Secrets declared via `ch.SharedSecrets()` — each channel owns its secret names
 - `SharedSecrets.Values map[string]string` keyed by secret name, not Slack-specific fields
-- Router (`router/src/index.js`) remains Slack-specific (Socket Mode, event parsing)
+- Router (`router/slack/src/index.js`) remains Slack-specific (Socket Mode, event parsing). Each channel platform gets its own router subdirectory under `router/`.
 - Gateway-only mode works with zero channel bindings (no `channels` section in openclaw.json)
 
 ### Standard: New Code Must Not Deepen Slack Coupling
@@ -186,7 +186,7 @@ Each channel package owns:
 - **Secrets** — platform-specific token names and setup prompts
 - **OpenClaw config generation** — produce the `channels.{platform}` section of `openclaw.json`
 
-The existing `router/src/index.js` (Node.js Slack router) is the current `channels/slack/` implementation. When the router is rewritten in Go (see ROADMAP.md backlog), it should land in `channels/slack/` rather than being generalized prematurely.
+The existing `router/slack/src/index.js` (Node.js Slack router) is the current `channels/slack/` implementation. When the router is rewritten in Go (see ROADMAP.md backlog), it should land in `channels/slack/` rather than being generalized prematurely.
 
 "Channels" is OpenClaw's own term for messaging platform integrations. The `channels` section of `openclaw.json` is the top-level key containing per-platform config (Slack, Telegram, Discord, WhatsApp, Signal, iMessage, MS Teams, Matrix, webchat). Our `channels/` directory maps directly: `channels/slack/` generates the `channels.slack` config, `channels/telegram/` would generate `channels.telegram`, etc.
 

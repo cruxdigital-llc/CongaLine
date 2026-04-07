@@ -127,7 +127,7 @@ fi
 docker pull "$CONGA_IMAGE"
 docker pull node:22-alpine
 
-mkdir -p /opt/conga/{bin,config,scripts,router/src}
+mkdir -p /opt/conga/{bin,config,scripts,router/slack/src}
 
 echo "Conga image pulled"
 
@@ -137,10 +137,10 @@ echo "Conga image pulled"
 
 # Download router source from S3
 log "Downloading router source from S3..."
-aws s3 cp s3://${state_bucket}/conga/router/package.json /opt/conga/router/package.json --region "$AWS_REGION" || {
-  log "FATAL: Failed to download router package.json from S3"; exit 1; }
-aws s3 cp s3://${state_bucket}/conga/router/src/index.js /opt/conga/router/src/index.js --region "$AWS_REGION" || {
-  log "FATAL: Failed to download router index.js from S3"; exit 1; }
+aws s3 cp s3://${state_bucket}/conga/router/slack/package.json /opt/conga/router/slack/package.json --region "$AWS_REGION" || {
+  log "FATAL: Failed to download slack router package.json from S3"; exit 1; }
+aws s3 cp s3://${state_bucket}/conga/router/slack/src/index.js /opt/conga/router/slack/src/index.js --region "$AWS_REGION" || {
+  log "FATAL: Failed to download slack router index.js from S3"; exit 1; }
 
 # Download behavior files from S3
 log "Downloading behavior files from S3..."

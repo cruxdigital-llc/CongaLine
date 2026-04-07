@@ -457,7 +457,7 @@ docker run -d \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --memory 128m \
-  -v /opt/conga/router:/app:ro \
+  -v /opt/conga/router/slack:/app:ro \
   -v /opt/conga/config/routing.json:/opt/conga/config/routing.json:ro \
   node:22-alpine node /app/src/index.js
 
