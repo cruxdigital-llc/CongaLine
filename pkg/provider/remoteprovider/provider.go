@@ -572,6 +572,11 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 
 	p.saveConfigBaseline(agentName)
 
+	// Deploy behavior files (agent-specific or defaults)
+	if err := p.deployBehavior(*cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
+	}
+
 	envContent := common.GenerateEnvFile(*cfg, shared, perAgent)
 	envPath := posixpath.Join(p.remoteConfigDir(), agentName+".env")
 	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s", shellQuote(envPath)))
@@ -1044,20 +1049,46 @@ func (p *RemoteProvider) deployBehavior(cfg provider.AgentConfig) error {
 		return nil
 	}
 
-	files, err := common.ComposeBehaviorFiles(behaviorDir, cfg)
+	// TODO: resolve workspace path from runtime for Hermes support
+	workspaceDir := posixpath.Join(p.remoteDataSubDir(cfg.Name), "data", "workspace")
+	p.ssh.MkdirAll(workspaceDir, 0755)
+
+	// Read previous manifest from remote workspace
+	var prev *common.OverlayManifest
+	if data, err := p.ssh.Download(posixpath.Join(workspaceDir, ".conga-overlay-manifest.json")); err == nil {
+		prev = common.ParseOverlayManifest(data)
+	}
+
+	hashWorkspaceFile := func(rel string) (string, error) {
+		data, err := p.ssh.Download(posixpath.Join(workspaceDir, rel))
+		if err != nil {
+			return "", err
+		}
+		return common.HashFileContent(data), nil
+	}
+
+	files, toDelete, next, err := common.ComposeAgentWorkspaceFiles(behaviorDir, cfg, prev, hashWorkspaceFile)
 	if err != nil {
 		return err
 	}
 
-	targetDir := posixpath.Join(p.remoteDataSubDir(cfg.Name), "data", "workspace")
-	p.ssh.MkdirAll(targetDir, 0755)
-
-	for name, content := range files {
-		if err := p.ssh.Upload(posixpath.Join(targetDir, name), content, 0644); err != nil {
+	for name, f := range files {
+		remotePath := posixpath.Join(workspaceDir, name)
+		p.ssh.MkdirAll(posixpath.Dir(remotePath), 0755)
+		if err := p.ssh.Upload(remotePath, f.Content, 0644); err != nil {
 			return err
 		}
 	}
-	return nil
+	for _, relPath := range toDelete {
+		p.ssh.Run(context.Background(), fmt.Sprintf("rm -f %q", posixpath.Join(workspaceDir, relPath)))
+	}
+
+	// Write manifest
+	manifestData, err := common.MarshalOverlayManifest(next)
+	if err != nil {
+		return err
+	}
+	return p.ssh.Upload(posixpath.Join(workspaceDir, ".conga-overlay-manifest.json"), manifestData, 0644)
 }
 
 func (p *RemoteProvider) getConfigValue(key string) string {
