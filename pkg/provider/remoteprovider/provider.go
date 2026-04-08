@@ -1080,7 +1080,7 @@ func (p *RemoteProvider) deployBehavior(cfg provider.AgentConfig) error {
 		}
 	}
 	for _, relPath := range toDelete {
-		p.ssh.Run(context.Background(), fmt.Sprintf("rm -f %q", posixpath.Join(workspaceDir, relPath)))
+		p.ssh.Run(context.Background(), fmt.Sprintf("rm -f %s", shellQuote(posixpath.Join(workspaceDir, relPath))))
 	}
 
 	// Write manifest

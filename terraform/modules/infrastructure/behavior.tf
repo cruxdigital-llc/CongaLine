@@ -27,6 +27,9 @@ resource "aws_s3_object" "deploy_behavior_helper" {
 }
 
 # Restart all agents when behavior files or the deploy helper change.
+# NOTE: This restarts every agent, not just the ones whose files changed.
+# Acceptable for small fleets (2-5 agents); for larger deployments,
+# consider scoping restarts to affected agents only.
 # The ExecStartPre in each agent's systemd unit syncs from S3 and runs
 # deploy-behavior.sh, so a restart is sufficient to pick up changes.
 locals {
