@@ -50,24 +50,27 @@ resource "terraform_data" "behavior_refresh" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
       echo "Behavior files changed — restarting all agents..."
+      INSTANCE_ID="${aws_instance.conga.id}"
+      REGION="${var.aws_region}"
+      PROFILE="${var.aws_profile}"
+      TMPJSON=$(mktemp)
+      printf '{"InstanceIds":["%s"],"DocumentName":"AWS-RunShellScript","TimeoutSeconds":120,"Parameters":{"commands":["systemctl list-units --type=service --state=running --no-legend conga-*.service | grep -v router | cut -d\\\\  -f1 | while read svc; do echo Restarting $svc; systemctl restart $svc; sleep 2; done; echo DONE"]}}' "$INSTANCE_ID" > "$TMPJSON"
       RESULT=$(aws ssm send-command \
-        --instance-ids "${aws_instance.conga.id}" \
-        --document-name "AWS-RunShellScript" \
-        --parameters '{"commands":["for svc in $(systemctl list-units --type=service --state=running --no-legend conga-*.service | awk \x27{print $1}\x27 | grep -v router); do echo \"Restarting $svc...\"; systemctl restart $svc; sleep 2; done; echo DONE"]}' \
-        --timeout-seconds 120 \
-        --region "${var.aws_region}" \
-        --profile "${var.aws_profile}" \
+        --cli-input-json "file://$TMPJSON" \
+        --region "$REGION" \
+        --profile "$PROFILE" \
         --output text --query "Command.CommandId" 2>/dev/null)
+      rm -f "$TMPJSON"
       if [ -z "$RESULT" ]; then
         echo "WARNING: Failed to send restart command — agents will pick up changes on next manual restart"
         exit 0
       fi
-      sleep 15
+      sleep 30
       OUTPUT=$(aws ssm get-command-invocation \
         --command-id "$RESULT" \
-        --instance-id "${aws_instance.conga.id}" \
-        --region "${var.aws_region}" \
-        --profile "${var.aws_profile}" \
+        --instance-id "$INSTANCE_ID" \
+        --region "$REGION" \
+        --profile "$PROFILE" \
         --output text --query "[Status, StandardOutputContent]" 2>/dev/null)
       echo "$OUTPUT"
       if echo "$OUTPUT" | grep -q "DONE"; then
