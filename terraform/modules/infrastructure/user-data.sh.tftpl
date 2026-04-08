@@ -268,9 +268,11 @@ systemctl enable conga-router-networks.service
 
 echo "Router configured"
 
-# Download behavior deployment helper from S3 (canonical source: scripts/deploy-behavior.sh.tmpl)
+# Download behavior deployment helpers from S3
 aws s3 cp s3://${state_bucket}/conga/scripts/deploy-behavior.sh /opt/conga/bin/deploy-behavior.sh --region "$AWS_REGION"
 chmod +x /opt/conga/bin/deploy-behavior.sh
+aws s3 cp s3://${state_bucket}/conga/scripts/pre-start.sh /opt/conga/bin/pre-start.sh --region "$AWS_REGION"
+chmod +x /opt/conga/bin/pre-start.sh
 
 # ============================================================
 # 6. DISCOVER AND SETUP AGENTS FROM SSM
@@ -928,7 +930,7 @@ Requires=docker.service
 [Service]
 Type=simple
 EnvironmentFile=/opt/conga/config/$AGENT_NAME.env
-ExecStartPre=/bin/bash -c 'aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region ${aws_region} 2>/dev/null || true; aws s3 cp s3://${state_bucket}/conga/scripts/deploy-behavior.sh /opt/conga/bin/deploy-behavior.sh --region ${aws_region} 2>/dev/null || true; chmod +x /opt/conga/bin/deploy-behavior.sh 2>/dev/null || true; /opt/conga/bin/deploy-behavior.sh $AGENT_NAME \$(cat /opt/conga/config/$AGENT_NAME.type 2>/dev/null || echo user) 2>/dev/null || true; chown -R 1000:1000 /opt/conga/data/$AGENT_NAME/data/workspace 2>/dev/null || true'
+ExecStartPre=/opt/conga/bin/pre-start.sh $AGENT_NAME ${aws_region} ${state_bucket}
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
 ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="$NODE_OPTS" --pids-limit 256 --user 1000:1000 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router

@@ -157,7 +157,7 @@ func TestComposeAgentWorkspaceFiles_AgentOverridesUSERmd(t *testing.T) {
 	}
 }
 
-func TestComposeAgentWorkspaceFiles_OnlyKnownFilesRead(t *testing.T) {
+func TestComposeAgentWorkspaceFiles_IgnoresUnknownBehaviorFiles(t *testing.T) {
 	dir := setupBehaviorDir(t)
 	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
 

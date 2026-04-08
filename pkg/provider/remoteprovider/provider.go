@@ -218,7 +218,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	}
 
 	// 3. Deploy behavior files
-	if err := p.deployBehavior(cfg); err != nil {
+	if err := p.deployBehavior(ctx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
 	}
 
@@ -573,7 +573,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	p.saveConfigBaseline(agentName)
 
 	// Deploy behavior files (agent-specific or defaults)
-	if err := p.deployBehavior(*cfg); err != nil {
+	if err := p.deployBehavior(ctx, *cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
 	}
 
@@ -1038,7 +1038,7 @@ func (p *RemoteProvider) regenerateRouting(ctx context.Context) error {
 	return p.ssh.Upload(posixpath.Join(p.remoteConfigDir(), "routing.json"), data, 0644)
 }
 
-func (p *RemoteProvider) deployBehavior(cfg provider.AgentConfig) error {
+func (p *RemoteProvider) deployBehavior(ctx context.Context, cfg provider.AgentConfig) error {
 	// Read behavior files from local repo (stored in remote-config.json repo_path)
 	repoPath := p.getConfigValue("repo_path")
 	if repoPath == "" {
@@ -1080,7 +1080,7 @@ func (p *RemoteProvider) deployBehavior(cfg provider.AgentConfig) error {
 		}
 	}
 	for _, relPath := range toDelete {
-		p.ssh.Run(context.Background(), fmt.Sprintf("rm -f %s", shellQuote(posixpath.Join(workspaceDir, relPath))))
+		p.ssh.Run(ctx, fmt.Sprintf("rm -f %s", shellQuote(posixpath.Join(workspaceDir, relPath))))
 	}
 
 	// Write manifest

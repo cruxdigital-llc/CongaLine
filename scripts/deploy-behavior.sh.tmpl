@@ -40,7 +40,7 @@ if [ -f "$AGENT_DIR/USER.md" ]; then
   cp "$AGENT_DIR/USER.md" "$WORKSPACE/USER.md"
 elif [ -f "$DEFAULT_DIR/$AGENT_RUNTIME/$AGENT_TYPE/USER.md.tmpl" ]; then
   # Legacy {{AGENT_NAME}} form — can be dropped once all USER.md.tmpl
-  # files are migrated to {{.AgentName}}.
+  # files in behavior/default/*/USER.md.tmpl are migrated to {{.AgentName}}.
   sed -e "s|{{.AgentName}}|$AGENT_NAME|g" \
       -e "s|{{AGENT_NAME}}|$AGENT_NAME|g" \
       -e "s|{{.SlackChannel}}|$SLACK_ID|g" \

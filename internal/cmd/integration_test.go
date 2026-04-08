@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -356,15 +355,4 @@ egress:
 	t.Run("teardown", func(t *testing.T) {
 		mustRunCLI(t, append(base, "admin", "teardown", "--force")...)
 	})
-}
-
-// jsonContains checks if a JSON string contains a key with the expected value.
-func jsonContains(t *testing.T, jsonStr, key string) bool {
-	t.Helper()
-	var data interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-		// Not valid JSON — fall back to string contains
-		return strings.Contains(jsonStr, key)
-	}
-	return strings.Contains(jsonStr, key)
 }
