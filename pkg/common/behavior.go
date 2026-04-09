@@ -54,7 +54,7 @@ func resolveBehaviorFiles(behaviorDir string, agent provider.AgentConfig) Behavi
 		if data, err := os.ReadFile(tmplPath); err == nil {
 			content := string(data)
 			content = strings.ReplaceAll(content, "{{.AgentName}}", agent.Name)
-			content = strings.ReplaceAll(content, "{{AGENT_NAME}}", agent.Name) // legacy compat
+			content = strings.ReplaceAll(content, "{{AGENT_NAME}}", agent.Name) // legacy compat — drop once all .tmpl files use {{.AgentName}}
 
 			for _, binding := range agent.Channels {
 				ch, ok := channels.Get(binding.Platform)
@@ -117,6 +117,13 @@ func ComposeAgentWorkspaceFiles(
 
 // ComposeBehaviorFiles is the legacy entry point.
 // Deprecated: use ComposeAgentWorkspaceFiles instead.
+//
+// NOTE: Return type changed from map[string][]byte to BehaviorFiles
+// (map[string]BehaviorFile) in the per-agent-config-overlay feature.
+// No external Go callers exist; safe to remove in a future release.
+// This wrapper skips manifest generation and deletion reconciliation.
+// The AWS deploy path (deploy-behavior.sh) handles file resolution
+// independently in shell.
 func ComposeBehaviorFiles(behaviorDir string, agent provider.AgentConfig) (BehaviorFiles, error) {
 	files := resolveBehaviorFiles(behaviorDir, agent)
 	if len(files) == 0 {

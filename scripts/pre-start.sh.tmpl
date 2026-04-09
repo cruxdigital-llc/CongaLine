@@ -1,0 +1,40 @@
+#!/bin/bash
+# pre-start.sh — ExecStartPre helper for agent systemd units.
+# Syncs behavior files from S3 and deploys them to the agent's workspace.
+# Called before each container start to ensure behavior files are current.
+#
+# Usage: /opt/conga/bin/pre-start.sh <agent_name> <aws_region> <state_bucket>
+#   state_bucket: S3 bucket name (optional — looked up from SSM if omitted)
+set -euo pipefail
+
+AGENT_NAME="$1"
+AWS_REGION="${2:-us-east-2}"
+STATE_BUCKET="${3:-}"
+
+if [ -z "$STATE_BUCKET" ]; then
+  STATE_BUCKET=$(aws ssm get-parameter --name /conga/config/state-bucket --query Parameter.Value --output text --region "$AWS_REGION" 2>/dev/null || echo "")
+fi
+
+if [ -z "$STATE_BUCKET" ]; then
+  echo "WARNING: could not determine state bucket — skipping behavior sync" >&2
+  exit 0
+fi
+
+# Sync behavior files from S3
+aws s3 sync "s3://$STATE_BUCKET/conga/behavior/" /opt/conga/behavior/ --region "$AWS_REGION" 2>/dev/null || true
+
+# Update the deploy helper itself
+aws s3 cp "s3://$STATE_BUCKET/conga/scripts/deploy-behavior.sh" /opt/conga/bin/deploy-behavior.sh --region "$AWS_REGION" 2>/dev/null || true
+chmod +x /opt/conga/bin/deploy-behavior.sh 2>/dev/null || true
+
+# Deploy behavior files to the agent's workspace
+AGENT_TYPE=$(cat "/opt/conga/config/$AGENT_NAME.type" 2>/dev/null || echo "user")
+AGENT_RUNTIME=$(cat "/opt/conga/config/$AGENT_NAME.runtime" 2>/dev/null || echo "openclaw")
+/opt/conga/bin/deploy-behavior.sh "$AGENT_NAME" "$AGENT_TYPE" "$AGENT_RUNTIME" 2>/dev/null || true
+
+# Fix ownership — workspace uid depends on runtime
+if [ "$AGENT_RUNTIME" = "hermes" ]; then
+  chown -R 0:0 "/opt/conga/data/$AGENT_NAME/workspace" 2>/dev/null || true
+else
+  chown -R 1000:1000 "/opt/conga/data/$AGENT_NAME/data/workspace" 2>/dev/null || true
+fi

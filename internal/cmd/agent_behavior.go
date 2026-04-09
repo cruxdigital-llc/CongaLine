@@ -104,16 +104,31 @@ func readLocalConfigValue(dataDir, key string) string {
 
 // syncBehaviorToDeployed copies the repo's behavior/ tree to the deployed
 // location (~/.conga/behavior/) so that the next refresh picks up changes.
+// Also removes files from the deployed location that no longer exist in the repo.
 func syncBehaviorToDeployed(dataDir string) {
 	repoPath := readLocalConfigValue(dataDir, "repo_path")
 	if repoPath == "" {
 		return
 	}
+
+	// Warn if legacy behavior/overrides/ directory still has files
+	legacyDir := filepath.Join(repoPath, "behavior", "overrides")
+	if entries, err := os.ReadDir(legacyDir); err == nil {
+		for _, e := range entries {
+			if e.Name() != ".gitkeep" && e.Name() != "README.md" {
+				fmt.Fprintf(os.Stderr, "Warning: behavior/overrides/ is deprecated. Move files to behavior/agents/ instead.\n")
+				break
+			}
+		}
+	}
+
 	src := filepath.Join(repoPath, "behavior", "agents")
 	dst := filepath.Join(dataDir, "behavior", "agents")
 	if _, err := os.Stat(src); err != nil {
 		return
 	}
+
+	// Copy src -> dst
 	filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -132,6 +147,33 @@ func syncBehaviorToDeployed(dataDir string) {
 		os.WriteFile(target, content, 0644)
 		return nil
 	})
+
+	// Remove files from dst that no longer exist in src
+	if _, err := os.Stat(dst); err != nil {
+		return
+	}
+	var emptyDirs []string
+	filepath.WalkDir(dst, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// Collect dirs for post-walk cleanup (deepest first via append order)
+			if path != dst {
+				emptyDirs = append(emptyDirs, path)
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(dst, path)
+		if _, err := os.Stat(filepath.Join(src, rel)); os.IsNotExist(err) {
+			os.Remove(path)
+		}
+		return nil
+	})
+	// Remove empty directories deepest-first
+	for i := len(emptyDirs) - 1; i >= 0; i-- {
+		os.Remove(emptyDirs[i]) // fails silently if non-empty
+	}
 }
 
 // validateBehaviorFileName rejects names containing path separators or
@@ -145,6 +187,9 @@ func validateBehaviorFileName(name string) error {
 
 func agentBehaviorListRun(cmd *cobra.Command, args []string) error {
 	agentName := args[0]
+	if err := validateAgentName(agentName); err != nil {
+		return err
+	}
 	dir := filepath.Join(agentBehaviorDir(), agentName)
 
 	entries, err := os.ReadDir(dir)
@@ -183,6 +228,9 @@ func agentBehaviorAddRun(cmd *cobra.Command, args []string) error {
 	agentName := args[0]
 	srcPath := args[1]
 
+	if err := validateAgentName(agentName); err != nil {
+		return err
+	}
 	agentCfg, err := prov.GetAgent(ctx, agentName)
 	if err != nil {
 		return fmt.Errorf("agent %q not found: %w", agentName, err)
@@ -202,6 +250,12 @@ func agentBehaviorAddRun(cmd *cobra.Command, args []string) error {
 	}
 	if !strings.HasSuffix(strings.ToLower(targetName), ".md") {
 		return fmt.Errorf("behavior files must be .md (got %q)", targetName)
+	}
+	switch targetName {
+	case "SOUL.md", "AGENTS.md", "USER.md":
+		// ok
+	default:
+		return fmt.Errorf("unsupported behavior file %q: only SOUL.md, AGENTS.md, USER.md are accepted", targetName)
 	}
 
 	rt := runtime.ResolveRuntime(agentCfg.Runtime, "")
@@ -241,6 +295,9 @@ func agentBehaviorRmRun(cmd *cobra.Command, args []string) error {
 	agentName := args[0]
 	name := args[1]
 
+	if err := validateAgentName(agentName); err != nil {
+		return err
+	}
 	if err := validateBehaviorFileName(name); err != nil {
 		return err
 	}
@@ -271,6 +328,9 @@ func agentBehaviorShowRun(cmd *cobra.Command, args []string) error {
 	agentName := args[0]
 	name := args[1]
 
+	if err := validateAgentName(agentName); err != nil {
+		return err
+	}
 	if err := validateBehaviorFileName(name); err != nil {
 		return err
 	}
@@ -291,6 +351,9 @@ func agentBehaviorDiffRun(cmd *cobra.Command, args []string) error {
 
 	agentName := args[0]
 
+	if err := validateAgentName(agentName); err != nil {
+		return err
+	}
 	agentCfg, err := prov.GetAgent(ctx, agentName)
 	if err != nil {
 		return fmt.Errorf("agent %q not found: %w", agentName, err)
