@@ -5,9 +5,11 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -485,4 +487,107 @@ func setupRemoteTestEnv(t *testing.T) (dataDir, agentName string, sshPort int, k
 // remoteBaseArgs returns the common CLI args for remote provider commands.
 func remoteBaseArgs(dataDir string) []string {
 	return []string{"--provider", "remote", "--data-dir", dataDir}
+}
+
+// --- Coverage expansion helpers ---
+
+// containsAny returns true if s contains any of the given substrings (case-insensitive).
+func containsAny(s string, subs ...string) bool {
+	lower := strings.ToLower(s)
+	for _, sub := range subs {
+		if strings.Contains(lower, strings.ToLower(sub)) {
+			return true
+		}
+	}
+	return false
+}
+
+// readFileOnRemote reads a file from inside the SSH container (the "remote host").
+func readFileOnRemote(t *testing.T, remotePath string) string {
+	t.Helper()
+	out, err := exec.Command("docker", "exec", sshContainerName, "cat", remotePath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to read %s on remote: %v\n%s", remotePath, err, out)
+	}
+	return string(out)
+}
+
+// extractJSONField extracts a top-level field value from a JSON string.
+func extractJSONField(t *testing.T, jsonStr, field string) string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &m); err != nil {
+		t.Fatalf("failed to parse JSON: %v\n%s", err, jsonStr)
+	}
+	v, ok := m[field]
+	if !ok {
+		t.Fatalf("field %q not found in JSON", field)
+	}
+	return fmt.Sprint(v)
+}
+
+// assertRouterRunning asserts the conga-router container is running, with retries.
+func assertRouterRunning(t *testing.T) {
+	t.Helper()
+	for i := 0; i < 5; i++ {
+		out, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", "conga-router").Output()
+		if err == nil && strings.TrimSpace(string(out)) == "true" {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatal("conga-router is not running after 10s")
+}
+
+// assertRouterNotExists asserts no conga-router container exists.
+func assertRouterNotExists(t *testing.T) {
+	t.Helper()
+	err := exec.Command("docker", "inspect", "conga-router").Run()
+	if err == nil {
+		t.Fatal("conga-router container still exists")
+	}
+}
+
+// cleanupRouter force-removes the conga-router container.
+func cleanupRouter() {
+	exec.Command("docker", "rm", "-f", "conga-router").Run()
+}
+
+// waitForGateway polls the gateway health endpoint inside the container
+// until it responds (OpenClaw's gateway needs a few seconds to start).
+func waitForGateway(t *testing.T, agentName string) {
+	t.Helper()
+	cName := "conga-" + agentName
+	for i := 0; i < 15; i++ {
+		out, err := dockerExec(t, cName, "wget", "-q", "-O-", "--timeout=2", "http://localhost:18789")
+		if err == nil && len(out) > 0 {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("gateway not ready in container %s after 30s", cName)
+}
+
+// findFreePort asks the OS for a free TCP port and returns it.
+func findFreePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to find free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
+
+// httpGetStatus makes an HTTP GET and returns the status code.
+func httpGetStatus(t *testing.T, url string) int {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("HTTP GET %s failed: %v", url, err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
 }

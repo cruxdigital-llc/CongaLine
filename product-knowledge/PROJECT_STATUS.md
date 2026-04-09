@@ -172,13 +172,28 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
 - [x] Implementation: 4 test functions (48 subtests), test helpers, CI job
 - [x] Verification: all checks pass, persona + standards gate approved
 
-### 25. Remote Provider Integration Tests — Planning
+### 25. Remote Provider Integration Tests — Implemented, Expansion Planned
 *Lead: QA + Architect*
 *See `specs/2026-04-07_feature_remote-provider-integration-tests/` for full trace*
 - [x] Requirements defined
 - [x] Plan defined
-- [ ] Spec
-- [ ] Implementation
+- [x] Spec defined
+- [x] Implementation: 3 test functions (42 subtests), test helpers, CI job
+- [x] Verification: all tests pass (44s)
+
+### 26. Remote Integration Test Coverage Expansion — Verified Complete
+*Lead: QA + Architect*
+*See `specs/2026-04-08_feature_remote-integration-coverage-expansion/` for full trace*
+- [x] Requirements defined
+- [x] Plan defined
+- [x] Spec defined
+- [x] Persona review passed (QA + Architect approve)
+- [x] Standards gate passed (0 violations, 0 warnings)
+- [x] Implementation: 4 test functions (36 subtests), 8 new helpers
+  - [x] Phase 1: Error paths (6 subtests)
+  - [x] Phase 2: Multi-agent (12 subtests) — port allocation, routing, RefreshAll, isolation
+  - [x] Phase 3: Channel management (14 subtests) — AddChannel, Bind, Unbind, Remove
+  - [x] Phase 4: Connect / SSH tunnel (4 subtests — ConnectInfo verification)
 - [ ] Verification
 
 ### Backlog / Upcoming
