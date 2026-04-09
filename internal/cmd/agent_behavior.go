@@ -152,9 +152,17 @@ func syncBehaviorToDeployed(dataDir string) {
 	if _, err := os.Stat(dst); err != nil {
 		return
 	}
+	var emptyDirs []string
 	filepath.WalkDir(dst, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			// Collect dirs for post-walk cleanup (deepest first via append order)
+			if path != dst {
+				emptyDirs = append(emptyDirs, path)
+			}
+			return nil
 		}
 		rel, _ := filepath.Rel(dst, path)
 		if _, err := os.Stat(filepath.Join(src, rel)); os.IsNotExist(err) {
@@ -162,6 +170,10 @@ func syncBehaviorToDeployed(dataDir string) {
 		}
 		return nil
 	})
+	// Remove empty directories deepest-first
+	for i := len(emptyDirs) - 1; i >= 0; i-- {
+		os.Remove(emptyDirs[i]) // fails silently if non-empty
+	}
 }
 
 // validateBehaviorFileName rejects names containing path separators or

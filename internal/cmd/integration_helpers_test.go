@@ -108,9 +108,6 @@ func setupTestEnv(t *testing.T) (dataDir, agentName string) {
 
 	dataDir = filepath.Join(t.TempDir(), ".conga")
 	hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(t.Name())))
-	if len(hash) > 8 {
-		hash = hash[:8]
-	}
 	agentName = "itest-" + hash
 
 	t.Cleanup(func() {
@@ -122,6 +119,18 @@ func setupTestEnv(t *testing.T) (dataDir, agentName string) {
 	})
 
 	return dataDir, agentName
+}
+
+// setupPolicyTestEnv creates an isolated test environment for tests that
+// don't need Docker (e.g. policy validation). Only creates a temp data dir.
+func setupPolicyTestEnv(t *testing.T) (dataDir string) {
+	t.Helper()
+	dataDir = filepath.Join(t.TempDir(), ".conga")
+	t.Cleanup(func() {
+		runCLI(t, "--provider", "local", "--data-dir", dataDir,
+			"admin", "teardown", "--force")
+	})
+	return dataDir
 }
 
 // repoRoot returns the congaline repo root.
@@ -267,6 +276,7 @@ func makeHTTPRequest(t *testing.T, agentName, url string) (int, error) {
 	t.Helper()
 	// The setTimeout ensures the process exits even if the HTTPS CONNECT
 	// hangs at the socket level (which timeout: on the request won't catch).
+	safeURL := strings.ReplaceAll(url, "'", "\\'")
 	script := fmt.Sprintf(`
 		setTimeout(() => { process.stderr.write('timeout'); process.exit(1); }, 5000);
 		const https = require('https');
@@ -276,7 +286,7 @@ func makeHTTPRequest(t *testing.T, agentName, url string) (int, error) {
 		});
 		req.on('timeout', () => { req.destroy(); process.stderr.write('timeout'); process.exit(1); });
 		req.on('error', (e) => { process.stderr.write(e.message); process.exit(1); });
-	`, url)
+	`, safeURL)
 	cName := "conga-" + agentName
 	out, err := dockerExec(t, cName, "node", "-e", script)
 	if err != nil {

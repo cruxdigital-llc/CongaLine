@@ -45,7 +45,8 @@ locals {
     for f in sort(keys(local.behavior_files)) :
     md5(file("${var.repo_root}/behavior/${f}"))
   ]))
-  deploy_helper_hash = md5(file("${var.repo_root}/scripts/deploy-behavior.sh.tmpl"))
+  deploy_helper_hash    = md5(file("${var.repo_root}/scripts/deploy-behavior.sh.tmpl"))
+  pre_start_helper_hash = md5(file("${var.repo_root}/scripts/pre-start.sh.tmpl"))
 }
 
 resource "terraform_data" "behavior_refresh" {
@@ -56,7 +57,7 @@ resource "terraform_data" "behavior_refresh" {
     terraform_data.bootstrap_ready,
   ]
 
-  triggers_replace = "${local.behavior_content_hash}-${local.deploy_helper_hash}"
+  triggers_replace = "${local.behavior_content_hash}-${local.deploy_helper_hash}-${local.pre_start_helper_hash}"
 
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]

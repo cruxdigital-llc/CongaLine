@@ -51,8 +51,21 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Pull test image
-        run: docker pull ghcr.io/openclaw/openclaw:2026.3.11
+      - name: Cache Docker images
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-images
+          key: docker-openclaw-2026.3.11
+
+      - name: Load or pull test image
+        run: |
+          if [ -f /tmp/docker-images/openclaw.tar ]; then
+            docker load -i /tmp/docker-images/openclaw.tar
+          else
+            docker pull ghcr.io/openclaw/openclaw:2026.3.11
+            mkdir -p /tmp/docker-images
+            docker save ghcr.io/openclaw/openclaw:2026.3.11 -o /tmp/docker-images/openclaw.tar
+          fi
 
       - name: Build egress proxy image
         run: docker build -t conga-egress-proxy deploy/egress-proxy/
