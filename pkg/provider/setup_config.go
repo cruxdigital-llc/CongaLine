@@ -19,7 +19,7 @@ type SetupConfig struct {
 	// Config values
 	RemoteDir       string `json:"remote_dir,omitempty"` // Remote base directory (default: /opt/conga)
 	Runtime         string `json:"runtime,omitempty"`    // "openclaw", "hermes"
-	RuntimeOverride string `json:"-"`                 // Set by --runtime flag; not serialized
+	RuntimeOverride string `json:"-"`                    // Set by --runtime flag; not serialized
 	RepoPath        string `json:"repo_path,omitempty"`
 	Image           string `json:"image,omitempty"`
 
