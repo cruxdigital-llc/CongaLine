@@ -28,5 +28,10 @@ bin/
 # User-specific policy config
 conga-policy.yaml
 
+# Per-agent behavior files (may contain client/project-sensitive data)
+# Examples are checked in; real agent configs are gitignored.
+behavior/agents/*/
+!behavior/agents/_example/
+
 # Other local files
 demo.*

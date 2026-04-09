@@ -696,6 +696,11 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	// Update baseline hash after writing new config
 	p.saveConfigBaseline(ctx, agentName)
 
+	// Deploy behavior files (agent-specific or defaults)
+	if err := p.deployBehavior(*cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: behavior file deployment failed: %v\n", err)
+	}
+
 	// Regenerate env file
 	envContent := rt.GenerateEnvFile(runtime.EnvParams{
 		Agent:    *cfg,
@@ -1664,27 +1669,43 @@ func (p *LocalProvider) deployBehavior(cfg provider.AgentConfig) error {
 		return nil
 	}
 
-	files, err := common.ComposeBehaviorFiles(behaviorDir, cfg)
-	if err != nil {
-		return err
-	}
-
-	// Use the runtime's workspace path for behavior file deployment.
+	// Resolve workspace path from the runtime.
 	workspaceSub := "data/workspace" // default (OpenClaw)
 	if rt, rtErr := p.runtimeForAgent(cfg); rtErr == nil {
 		workspaceSub = rt.WorkspacePath()
 	}
-	targetDir := filepath.Join(p.dataSubDir(cfg.Name), workspaceSub)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	workspaceDir := filepath.Join(p.dataSubDir(cfg.Name), workspaceSub)
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
 		return err
 	}
 
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(targetDir, name), content, 0644); err != nil {
+	prev := common.ReadOverlayManifest(workspaceDir)
+	hashWorkspaceFile := func(rel string) (string, error) {
+		data, err := os.ReadFile(filepath.Join(workspaceDir, rel))
+		if err != nil {
+			return "", err
+		}
+		return common.HashFileContent(data), nil
+	}
+
+	files, toDelete, next, err := common.ComposeAgentWorkspaceFiles(behaviorDir, cfg, prev, hashWorkspaceFile)
+	if err != nil {
+		return err
+	}
+
+	for relPath, f := range files {
+		target := filepath.Join(workspaceDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, f.Content, 0644); err != nil {
 			return err
 		}
 	}
-	return nil
+	for _, relPath := range toDelete {
+		os.Remove(filepath.Join(workspaceDir, relPath))
+	}
+	return common.WriteOverlayManifest(workspaceDir, next)
 }
 
 func (p *LocalProvider) getConfigValue(key string) string {

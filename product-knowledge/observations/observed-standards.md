@@ -3,6 +3,22 @@
 *This file is populated automatically by the `pattern-observer` module during normal workflow execution.*
 *Items here are reviewed and promoted (or discarded) during `/glados/recombobulate`.*
 
+### 2026-04-07 - Workspace path resolution must go through Runtime interface
+- **Source**: Explicit user direction — "focus on OpenClaw, scaffold Hermes"
+- **Context**: Per-agent overlay feature required writing files to the agent workspace. Workspace path differs by runtime (OpenClaw: `data/workspace`, Hermes: `workspace`).
+- **Proposed Standard**: "All code that resolves an agent's workspace path must call `runtime.Runtime.WorkspacePath()` rather than hardcoding the path. The local provider's `deployBehavior` established this pattern."
+- **Suggested Severity**: must
+- **Confidence**: High
+- **Status**: pending
+
+### 2026-04-07 - Protected path lists must be maintained per runtime
+- **Source**: Repeated pattern — both runtimes have mutable-state directories, but they differ
+- **Context**: OpenClaw has `agents/`, `canvas/`, `cron/`, etc. Hermes has `skills/`. The overlay feature needed to enforce a deny list to avoid clobbering agent-mutable state.
+- **Proposed Standard**: "When a new runtime is added, its mutable-state directories must be registered in `runtimeProtectedPaths` (pkg/common/overlay.go) and the bash superset regex in deploy-behavior.sh.tmpl."
+- **Suggested Severity**: must
+- **Confidence**: High
+- **Status**: pending
+
 ---
 
 <!-- Add observations below this line -->

@@ -8,62 +8,54 @@ import (
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
-// BehaviorFiles maps filename -> content for an agent's behavior directory.
-type BehaviorFiles map[string][]byte
+// BehaviorFile holds content and metadata for a single behavior file.
+type BehaviorFile struct {
+	Content []byte
+	Source  string // "default" or "agent"
+}
 
-// ComposeBehaviorFiles assembles behavior files for an agent.
-// Priority: overrides/{agent_name}/ > base/ > {agent_type}/
+// BehaviorFiles maps workspace-relative filename -> file for an agent's behavior directory.
+type BehaviorFiles map[string]BehaviorFile
+
+// resolveBehaviorFiles assembles behavior files for an agent.
 //
-// For SOUL.md and AGENTS.md: override > base, concatenate with type-specific if exists.
-// For USER.md: override > render type template with agent name and Slack ID.
+// Resolution order (all files):
+//  1. agents/<agent_name>/<file> — agent-specific override (full replacement)
+//  2. default/<runtime>/<type>/<file> — runtime+type-specific default
 //
-// behaviorDir is the root of the behavior/ tree.
-func ComposeBehaviorFiles(behaviorDir string, agent provider.AgentConfig) (BehaviorFiles, error) {
+// USER.md.tmpl is rendered with agent template variables before deployment.
+func resolveBehaviorFiles(behaviorDir string, agent provider.AgentConfig) BehaviorFiles {
 	files := make(BehaviorFiles)
 	agentType := string(agent.Type)
 
-	// SOUL.md and AGENTS.md: same composition logic
+	agentDir := filepath.Join(behaviorDir, "agents", agent.Name)
+	rtName := string(runtime.ResolveRuntime(agent.Runtime, ""))
+	defaultDir := filepath.Join(behaviorDir, "default", rtName, agentType)
+
+	// SOUL.md and AGENTS.md: agent-specific > runtime+type default
 	for _, name := range []string{"SOUL.md", "AGENTS.md"} {
-		// Check override first
-		overridePath := filepath.Join(behaviorDir, "overrides", agent.Name, name)
-		if data, err := os.ReadFile(overridePath); err == nil {
-			files[name] = data
+		if data, err := os.ReadFile(filepath.Join(agentDir, name)); err == nil {
+			files[name] = BehaviorFile{Content: data, Source: "agent"}
 			continue
 		}
-
-		// Base + type-specific concatenation
-		var content []byte
-		basePath := filepath.Join(behaviorDir, "base", name)
-		if data, err := os.ReadFile(basePath); err == nil {
-			content = data
-		}
-
-		typePath := filepath.Join(behaviorDir, agentType, name)
-		if data, err := os.ReadFile(typePath); err == nil {
-			if len(content) > 0 {
-				content = append(content, '\n')
-			}
-			content = append(content, data...)
-		}
-
-		if len(content) > 0 {
-			files[name] = content
+		if data, err := os.ReadFile(filepath.Join(defaultDir, name)); err == nil {
+			files[name] = BehaviorFile{Content: data, Source: "default"}
 		}
 	}
 
-	// USER.md: override > template rendering
-	overridePath := filepath.Join(behaviorDir, "overrides", agent.Name, "USER.md")
-	if data, err := os.ReadFile(overridePath); err == nil {
-		files["USER.md"] = data
+	// USER.md: agent-specific > render runtime+type template
+	if data, err := os.ReadFile(filepath.Join(agentDir, "USER.md")); err == nil {
+		files["USER.md"] = BehaviorFile{Content: data, Source: "agent"}
 	} else {
-		tmplPath := filepath.Join(behaviorDir, agentType, "USER.md.tmpl")
+		tmplPath := filepath.Join(defaultDir, "USER.md.tmpl")
 		if data, err := os.ReadFile(tmplPath); err == nil {
 			content := string(data)
-			content = strings.ReplaceAll(content, "{{AGENT_NAME}}", agent.Name)
+			content = strings.ReplaceAll(content, "{{.AgentName}}", agent.Name)
+			content = strings.ReplaceAll(content, "{{AGENT_NAME}}", agent.Name) // legacy compat
 
-			// Gather template vars from all channel bindings
 			for _, binding := range agent.Channels {
 				ch, ok := channels.Get(binding.Platform)
 				if !ok {
@@ -74,13 +66,61 @@ func ComposeBehaviorFiles(behaviorDir string, agent provider.AgentConfig) (Behav
 				}
 			}
 
-			files["USER.md"] = []byte(content)
+			files["USER.md"] = BehaviorFile{Content: []byte(content), Source: "default"}
+		}
+	}
+
+	return files
+}
+
+// ComposeAgentWorkspaceFiles assembles all behavior files for an agent and
+// computes deletion reconciliation against the previous manifest.
+//
+// hashWorkspaceFile is called to hash existing workspace files for deletion
+// reconciliation. Pass nil if not needed (e.g. first provision).
+func ComposeAgentWorkspaceFiles(
+	behaviorDir string,
+	agent provider.AgentConfig,
+	prevManifest *OverlayManifest,
+	hashWorkspaceFile func(rel string) (string, error),
+) (files BehaviorFiles, toDelete []string, next OverlayManifest, err error) {
+	files = resolveBehaviorFiles(behaviorDir, agent)
+
+	// Validate agent-specific files against protected paths
+	rt := runtime.ResolveRuntime(agent.Runtime, "")
+	for name := range files {
+		if files[name].Source == "agent" && IsProtectedPath(name, rt) {
+			return nil, nil, OverlayManifest{}, fmt.Errorf("agent behavior file %s is on the protected path list", name)
 		}
 	}
 
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no behavior files found in %s", behaviorDir)
+		return nil, nil, OverlayManifest{}, fmt.Errorf("no behavior files found in %s", behaviorDir)
 	}
 
+	toDelete = reconcileDeletions(prevManifest, files, hashWorkspaceFile)
+	next = buildManifest(files)
+
+	var agentCount int
+	for _, f := range next.Files {
+		if f.Source == "agent" {
+			agentCount++
+		}
+	}
+	defaultCount := len(next.Files) - agentCount
+	if agentCount > 0 {
+		fmt.Fprintf(os.Stderr, "behavior: %d agent-specific, %d default\n", agentCount, defaultCount)
+	}
+
+	return files, toDelete, next, nil
+}
+
+// ComposeBehaviorFiles is the legacy entry point.
+// Deprecated: use ComposeAgentWorkspaceFiles instead.
+func ComposeBehaviorFiles(behaviorDir string, agent provider.AgentConfig) (BehaviorFiles, error) {
+	files := resolveBehaviorFiles(behaviorDir, agent)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no behavior files found in %s", behaviorDir)
+	}
 	return files, nil
 }
