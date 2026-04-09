@@ -3,7 +3,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -301,6 +303,305 @@ egress:
 		if err == nil {
 			t.Error("expected request to example.com to be blocked in enforce mode")
 		}
+	})
+
+	t.Run("teardown", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "teardown", "--force")...)
+	})
+}
+
+// TestRemoteErrorPaths verifies the CLI returns meaningful errors for
+// invalid operations through the remote provider's SSH code paths.
+func TestRemoteErrorPaths(t *testing.T) {
+	dataDir, agentName, sshPort, keyPath, remoteDir := setupRemoteTestEnv(t)
+	base := remoteBaseArgs(dataDir)
+	root := repoRoot(t)
+
+	t.Run("setup", func(t *testing.T) {
+		cfg := fmt.Sprintf(
+			`{"ssh_host":"127.0.0.1","ssh_port":%d,"ssh_user":"root","ssh_key_path":%q,"image":%q,"repo_path":%q,"remote_dir":%q}`,
+			sshPort, keyPath, testImage, root, remoteDir)
+		mustRunCLI(t, append(base, "admin", "setup", "--json", cfg)...)
+	})
+
+	t.Run("add-user", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "add-user", agentName)...)
+		assertContainerRunning(t, agentName)
+	})
+
+	t.Run("remove-nonexistent", func(t *testing.T) {
+		_, stderr, err := runCLI(t, append(base, "admin", "remove-agent", "nonexistent-agent", "--force", "--delete-secrets")...)
+		if err == nil {
+			t.Fatal("expected error removing non-existent agent")
+		}
+		combined := stderr + err.Error()
+		if !containsAny(combined, "nonexistent-agent", "not found", "does not exist", "no such") {
+			t.Errorf("error should mention agent name or not found, got: %s", combined)
+		}
+	})
+
+	t.Run("refresh-nonexistent", func(t *testing.T) {
+		_, _, err := runCLI(t, append(base, "refresh", "--agent", "nonexistent-agent")...)
+		if err == nil {
+			t.Fatal("expected error refreshing non-existent agent")
+		}
+	})
+
+	t.Run("pause-nonexistent", func(t *testing.T) {
+		_, _, err := runCLI(t, append(base, "admin", "pause", "nonexistent-agent")...)
+		if err == nil {
+			t.Fatal("expected error pausing non-existent agent")
+		}
+	})
+
+	t.Run("bind-channel-no-platform", func(t *testing.T) {
+		_, _, err := runCLI(t, append(base, "channels", "bind", agentName, "nonexistent:U123")...)
+		if err == nil {
+			t.Fatal("expected error binding unknown channel platform")
+		}
+	})
+
+	t.Run("teardown", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "teardown", "--force")...)
+	})
+}
+
+// TestRemoteMultiAgent provisions 2 agents simultaneously and verifies
+// port allocation, routing.json, network isolation, RefreshAll, and
+// independent lifecycle management.
+func TestRemoteMultiAgent(t *testing.T) {
+	dataDir, _, sshPort, keyPath, remoteDir := setupRemoteTestEnv(t)
+	base := remoteBaseArgs(dataDir)
+	root := repoRoot(t)
+	hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(t.Name())))
+	if len(hash) > 8 {
+		hash = hash[:8]
+	}
+	agentA := "rtest-" + hash + "-a"
+	agentB := "rtest-" + hash + "-b"
+
+	// Register cleanup for both agents
+	t.Cleanup(func() { cleanupTestContainers(agentB) })
+	t.Cleanup(func() { cleanupTestContainers(agentA) })
+
+	t.Run("setup", func(t *testing.T) {
+		cfg := fmt.Sprintf(
+			`{"ssh_host":"127.0.0.1","ssh_port":%d,"ssh_user":"root","ssh_key_path":%q,"image":%q,"repo_path":%q,"remote_dir":%q}`,
+			sshPort, keyPath, testImage, root, remoteDir)
+		mustRunCLI(t, append(base, "admin", "setup", "--json", cfg)...)
+	})
+
+	t.Run("add-user-alpha", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "add-user", agentA)...)
+		assertContainerRunning(t, agentA)
+	})
+
+	t.Run("add-team-beta", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "add-team", agentB)...)
+		assertContainerRunning(t, agentB)
+	})
+
+	t.Run("list-agents", func(t *testing.T) {
+		out := mustRunCLI(t, append(base, "admin", "list-agents", "--output", "json")...)
+		if !strings.Contains(out, agentA) || !strings.Contains(out, agentB) {
+			t.Errorf("list-agents should contain both agents:\n%s", out)
+		}
+	})
+
+	t.Run("verify-unique-ports", func(t *testing.T) {
+		cfgA := readFileOnRemote(t, filepath.Join(remoteDir, "agents", agentA+".json"))
+		cfgB := readFileOnRemote(t, filepath.Join(remoteDir, "agents", agentB+".json"))
+		portA := extractJSONField(t, cfgA, "gateway_port")
+		portB := extractJSONField(t, cfgB, "gateway_port")
+		if portA == portB {
+			t.Errorf("agents should have unique gateway ports, both got %s", portA)
+		}
+	})
+
+	t.Run("verify-routing-exists", func(t *testing.T) {
+		// Routing.json is generated but empty without channel bindings —
+		// verify it exists and is valid JSON.
+		routing := readFileOnRemote(t, filepath.Join(remoteDir, "config", "routing.json"))
+		if !strings.Contains(routing, "channels") || !strings.Contains(routing, "members") {
+			t.Errorf("routing.json should be valid with channels/members keys:\n%s", routing)
+		}
+	})
+
+	t.Run("verify-network-isolation", func(t *testing.T) {
+		netA, _ := exec.Command("docker", "network", "inspect", "conga-"+agentA).Output()
+		netB, _ := exec.Command("docker", "network", "inspect", "conga-"+agentB).Output()
+		if strings.Contains(string(netA), "conga-"+agentB) {
+			t.Error("agent A's network should not contain agent B's container")
+		}
+		if strings.Contains(string(netB), "conga-"+agentA) {
+			t.Error("agent B's network should not contain agent A's container")
+		}
+	})
+
+	t.Run("refresh-all", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "refresh-all", "--force")...)
+		assertContainerRunning(t, agentA)
+		assertContainerRunning(t, agentB)
+	})
+
+	t.Run("remove-alpha", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "remove-agent", agentA, "--force", "--delete-secrets")...)
+		assertContainerNotExists(t, agentA)
+	})
+
+	t.Run("verify-beta-survives", func(t *testing.T) {
+		assertContainerRunning(t, agentB)
+	})
+
+	t.Run("verify-alpha-network-gone", func(t *testing.T) {
+		err := exec.Command("docker", "network", "inspect", "conga-"+agentA).Run()
+		if err == nil {
+			t.Error("agent A's Docker network should have been removed")
+		}
+	})
+
+	t.Run("teardown", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "teardown", "--force")...)
+	})
+}
+
+// TestRemoteChannelManagement exercises all 5 channel Provider methods
+// (AddChannel, RemoveChannel, ListChannels, BindChannel, UnbindChannel)
+// through the remote provider's SSH paths with dummy Slack credentials.
+func TestRemoteChannelManagement(t *testing.T) {
+	dataDir, agentName, sshPort, keyPath, remoteDir := setupRemoteTestEnv(t)
+	base := remoteBaseArgs(dataDir)
+	root := repoRoot(t)
+
+	t.Cleanup(func() { cleanupRouter() })
+
+	t.Run("setup", func(t *testing.T) {
+		cfg := fmt.Sprintf(
+			`{"ssh_host":"127.0.0.1","ssh_port":%d,"ssh_user":"root","ssh_key_path":%q,"image":%q,"repo_path":%q,"remote_dir":%q}`,
+			sshPort, keyPath, testImage, root, remoteDir)
+		mustRunCLI(t, append(base, "admin", "setup", "--json", cfg)...)
+	})
+
+	t.Run("add-user", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "add-user", agentName)...)
+		assertContainerRunning(t, agentName)
+	})
+
+	t.Run("channels-add-slack", func(t *testing.T) {
+		cfg := `{"slack-bot-token":"xoxb-fake-000","slack-signing-secret":"fakesigningsecret","slack-app-token":"xapp-fake-000"}`
+		mustRunCLI(t, append(base, "channels", "add", "slack", "--json", cfg)...)
+	})
+
+	t.Run("channels-list", func(t *testing.T) {
+		out := mustRunCLI(t, append(base, "channels", "list", "--output", "json")...)
+		if !strings.Contains(out, "slack") {
+			t.Errorf("channels list should contain slack:\n%s", out)
+		}
+	})
+
+	t.Run("verify-router-started", func(t *testing.T) {
+		assertRouterRunning(t)
+	})
+
+	t.Run("channels-bind", func(t *testing.T) {
+		mustRunCLI(t, append(base, "channels", "bind", agentName, "slack:U00FAKEUSER")...)
+	})
+
+	t.Run("verify-openclaw-config", func(t *testing.T) {
+		assertFileContent(t, agentName, "/home/node/.openclaw/openclaw.json", "signingSecret")
+	})
+
+	t.Run("verify-routing-entry", func(t *testing.T) {
+		routing := readFileOnRemote(t, filepath.Join(remoteDir, "config", "routing.json"))
+		if !strings.Contains(routing, "U00FAKEUSER") {
+			t.Errorf("routing.json should contain member ID U00FAKEUSER:\n%s", routing)
+		}
+		if !strings.Contains(routing, "conga-"+agentName) {
+			t.Errorf("routing.json should route to agent container:\n%s", routing)
+		}
+	})
+
+	t.Run("channels-unbind", func(t *testing.T) {
+		mustRunCLI(t, append(base, "channels", "unbind", agentName, "slack", "--force")...)
+	})
+
+	t.Run("verify-routing-cleared", func(t *testing.T) {
+		routing := readFileOnRemote(t, filepath.Join(remoteDir, "config", "routing.json"))
+		if strings.Contains(routing, "U00FAKEUSER") {
+			t.Errorf("routing.json should no longer contain U00FAKEUSER:\n%s", routing)
+		}
+	})
+
+	t.Run("channels-remove", func(t *testing.T) {
+		mustRunCLI(t, append(base, "channels", "remove", "slack", "--force")...)
+	})
+
+	t.Run("channels-list-empty", func(t *testing.T) {
+		out := mustRunCLI(t, append(base, "channels", "list", "--output", "json")...)
+		if strings.Contains(out, `"configured":true`) {
+			t.Errorf("channels list should show no configured channels:\n%s", out)
+		}
+	})
+
+	t.Run("verify-router-stopped", func(t *testing.T) {
+		assertRouterNotExists(t)
+	})
+
+	t.Run("teardown", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "teardown", "--force")...)
+	})
+}
+
+// TestRemoteConnect verifies that Connect() opens an SSH tunnel and the
+// gateway responds with HTTP 200 on the forwarded local port.
+//
+// LIMITATION: In the test setup, the SSH container and Docker host are separate
+// entities. The SSH tunnel forwards local → SSH-container:port, but the agent's
+// gateway port (18789) is mapped to the HOST's localhost, not the SSH container's
+// localhost. In a real deployment the SSH host IS the Docker host, so this works.
+// To test end-to-end, we'd need to either:
+//   - Run Docker-in-Docker inside the SSH container, or
+//   - Forward to the container's IP on the Docker network instead of localhost
+//
+// For now, we test that Connect() returns valid ConnectInfo (URL, port, token)
+// without verifying HTTP through the tunnel.
+func TestRemoteConnect(t *testing.T) {
+	dataDir, agentName, sshPort, keyPath, remoteDir := setupRemoteTestEnv(t)
+	base := remoteBaseArgs(dataDir)
+	root := repoRoot(t)
+
+	t.Run("setup", func(t *testing.T) {
+		cfg := fmt.Sprintf(
+			`{"ssh_host":"127.0.0.1","ssh_port":%d,"ssh_user":"root","ssh_key_path":%q,"image":%q,"repo_path":%q,"remote_dir":%q}`,
+			sshPort, keyPath, testImage, root, remoteDir)
+		mustRunCLI(t, append(base, "admin", "setup", "--json", cfg)...)
+	})
+
+	t.Run("add-user", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "add-user", agentName)...)
+		assertContainerRunning(t, agentName)
+	})
+
+	t.Run("connect-returns-info", func(t *testing.T) {
+		// Initialize the provider by running a status command
+		mustRunCLI(t, append(base, "status", "--agent", agentName, "--output", "json")...)
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		freePort := findFreePort(t)
+		info, err := prov.Connect(ctx, agentName, freePort)
+		cancel() // Close the tunnel immediately — we just test the setup
+		if err != nil {
+			t.Fatalf("Connect failed: %v", err)
+		}
+
+		if info.LocalPort != freePort {
+			t.Errorf("expected local port %d, got %d", freePort, info.LocalPort)
+		}
+		if !strings.HasPrefix(info.URL, fmt.Sprintf("http://localhost:%d", freePort)) {
+			t.Errorf("URL should start with http://localhost:%d, got %s", freePort, info.URL)
+		}
+		t.Logf("Connect returned URL=%s Port=%d Token=%q", info.URL, info.LocalPort, info.Token)
 	})
 
 	t.Run("teardown", func(t *testing.T) {
