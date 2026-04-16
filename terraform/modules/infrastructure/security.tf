@@ -3,7 +3,7 @@
 locals {
   egress_ports = {
     for i, p in var.egress_ports : "${p.protocol}-${p.port}" => merge(p, {
-      index        = i
+      index         = i
       resolved_cidr = p.cidr == "vpc" ? aws_vpc.main.cidr_block : p.cidr
     })
   }
