@@ -152,7 +152,7 @@ aws s3 cp s3://${state_bucket}/conga/conga-policy.yaml /opt/conga/conga-policy.y
 
 # Install router dependencies (umask 022 so node_modules are readable by container user)
 log "Installing router dependencies..."
-(umask 022 && cd /opt/conga/router && npm install --production) || {
+(umask 022 && cd /opt/conga/router/slack && npm install --production) || {
   log "FATAL: npm install failed for router"; exit 1; }
 
 # Router container runs as 1000:1000 — make source readable
