@@ -196,6 +196,21 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
   - [x] Phase 4: Connect / SSH tunnel (4 subtests — ConnectInfo verification)
 - [ ] Verification
 
+### 27. DM Agent Routing — Planning
+*Lead: Architect + QA + PM*
+*See `specs/2026-04-16_feature_dm-agent-routing/` for full trace*
+- [x] Requirements defined
+- [x] Plan defined (8 phases)
+- [ ] Spec (next: `/glados/spec-feature`)
+- [ ] Phase 1: Go data model — `Description`/`DMAccess` on AgentConfig, `DMRouting` in RoutingConfig
+- [ ] Phase 2: Team agent DM acceptance — conditional `dmPolicy: "allowlist"` in runtime config
+- [ ] Phase 3: Enrollment CLI — `conga channels enroll/unenroll`
+- [ ] Phase 4: Agent descriptions — `--description` flag, post-hoc update command
+- [ ] Phase 5: Router classifier module — Haiku-based intent classification
+- [ ] Phase 6: Router integration — modified resolveTarget, thread cache, clarification flow
+- [ ] Phase 7: Router secret — `ANTHROPIC_API_KEY` + `SLACK_BOT_TOKEN` in router env
+- [ ] Phase 8: Tests — unit, integration, E2E
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
