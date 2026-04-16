@@ -211,6 +211,21 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent m
 - [ ] Phase 6 — AWS bootstrap shell: ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; the `regenerateAgentConfigOnInstance` upload path carries the result).
 - [ ] Phase 8 — Provider release (per CLAUDE.md `pkg/` change protocol): operator step, post-merge.
 
+### 28. DM Agent Routing — Planning
+*Lead: Architect + QA + PM*
+*See `specs/2026-04-16_feature_dm-agent-routing/` for full trace*
+- [x] Requirements defined
+- [x] Plan defined (8 phases)
+- [ ] Spec (next: `/glados/spec-feature`)
+- [ ] Phase 1: Go data model — `Description`/`DMAccess` on AgentConfig, `DMRouting` in RoutingConfig
+- [ ] Phase 2: Team agent DM acceptance — conditional `dmPolicy: "allowlist"` in runtime config
+- [ ] Phase 3: Enrollment CLI — `conga channels enroll/unenroll`
+- [ ] Phase 4: Agent descriptions — `--description` flag, post-hoc update command
+- [ ] Phase 5: Router classifier module — Haiku-based intent classification
+- [ ] Phase 6: Router integration — modified resolveTarget, thread cache, clarification flow
+- [ ] Phase 7: Router secret — `ANTHROPIC_API_KEY` + `SLACK_BOT_TOKEN` in router env
+- [ ] Phase 8: Tests — unit, integration, E2E
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
