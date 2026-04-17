@@ -26,17 +26,16 @@ Enable transparent, intelligent DM routing so that when any enrolled user messag
 
 1. **Transparent routing**: Multi-agent user DMs the bot and the correct agent responds without any special syntax or user action.
 2. **No regressions**: Single-agent users (personal-only, Scenario A) see zero behavioral change.
-3. **Team-only access**: Users without a personal agent but enrolled in team agent DM access can DM the bot and reach their team agent (Scenarios D, E).
+3. **Team-only access**: Users who are members of a channel bound to a team agent can DM the bot and reach that team agent (Scenarios D, E).
 4. **Thread continuity**: Once a DM thread is routed to an agent, all replies in that thread stay with the same agent.
 5. **Graceful uncertainty**: When the classifier cannot confidently determine which agent should handle a message, the system asks the user for clarification and pins the session to the chosen agent.
-6. **Fallback resilience**: If the classifier is unavailable (API down, no key configured), messages still route to a default agent — never dropped.
-7. **Explicit enrollment**: Admin explicitly grants DM access per-user per-team-agent via CLI. No implicit access from channel membership.
-8. **Backward compatible**: Deployments without an Anthropic API key behave identically to today. The `dmRouting` config section is additive and ignored by older routers.
+6. **Fallback resilience**: If the classifier is unavailable (endpoint down, no key configured), messages still route to a default agent — never dropped.
+7. **Automatic access from channel membership**: DM access is derived from Slack channel membership — no manual enrollment. When a user joins/leaves a channel bound to a team agent, their DM routing updates automatically.
+8. **Backward compatible**: Deployments without a classifier configured behave identically to today.
 
 ## Non-Goals (v1)
 
-- Automatic enrollment from Slack channel membership (requires Slack API calls)
-- Batch enrollment CLI (per-user is sufficient)
+- Manual enrollment CLI (channel membership is the source of truth)
 - LLM routing for channel messages (channels already map 1:1 to team agents)
 - Personal agent as orchestrator/mediator pattern (may come in v2)
 - Cross-platform support beyond Slack (Telegram DM routing is a future extension)
@@ -44,17 +43,28 @@ Enable transparent, intelligent DM routing so that when any enrolled user messag
 ## Constraints
 
 - Router must remain lightweight — the classifier is a single API call, not a new service
-- No new npm dependencies in the router (use native `fetch` for Anthropic API)
-- Team agents currently have `dmPolicy: "disabled"` — must be conditionally enabled for enrolled users
+- No new npm dependencies in the router (use native `fetch` for OpenAI-compatible API)
+- Team agents currently have `dmPolicy: "disabled"` — must be conditionally enabled for users in bound channels
 - Changes to `pkg/` require a Terraform provider release
 - The Slack app needs `chat:write` scope for ephemeral clarification messages (already in the recommended scopes)
+- The Slack app needs `channels:read` and `groups:read` scopes for channel membership queries
+- Events `member_joined_channel` and `member_left_channel` must be subscribed in the app manifest
 
-## Enrollment Model
+## DM Access Model
 
-- Admin runs `conga channels enroll <team-agent> <user-id>` to grant DM access
-- Admin runs `conga channels unenroll <team-agent> <user-id>` to revoke
-- Stored as `DMAccess []string` on the team agent's `AgentConfig`
-- Enrollment triggers: regenerate team agent's `openclaw.json` (enable `dmPolicy: "allowlist"`), regenerate `routing.json` (populate `dmRouting` section), refresh containers
+DM access is derived automatically from Slack channel membership:
+- If a user is a member of a channel bound to a team agent, they can DM that agent
+- The router resolves membership at startup via `conversations.members` API and maintains it via `member_joined_channel` / `member_left_channel` events
+- No admin enrollment commands needed — channel membership is the source of truth
+- Bot must be a member of each bound channel to query its members
+
+## Classifier Model
+
+The classifier determines which agent should handle a DM when a user has access to multiple agents.
+
+- **Default**: Anthropic Haiku via the Anthropic Messages API (requires `ANTHROPIC_API_KEY` in router env)
+- **Self-hosted option**: Set `CLASSIFIER_URL` to any OpenAI-compatible endpoint (e.g. Ollama on a local GPU server). When set, the router uses this endpoint instead of Anthropic — no API key needed.
+- **Neither configured**: Multi-agent DMs fall back to the default agent. Single-agent DMs still route directly.
 
 ## Personas
 
