@@ -32,3 +32,17 @@
 - **Files created**:
   - [requirements.md](requirements.md) — 5 user scenarios, 8 success criteria, non-goals
   - [plan.md](plan.md) — 8-phase implementation plan with persona review checklist
+
+### 2026-04-16 — Plan Revision (Spark infrastructure session)
+- **Decision reversal**: Replace manual enrollment with automatic channel membership resolution
+  - DM access derived from Slack channel membership via `conversations.members` API
+  - Router maintains membership maps via `member_joined_channel` / `member_left_channel` events
+  - Eliminates `conga channels enroll/unenroll` CLI commands and `DMAccess` field
+  - Rationale: manual enrollment drifts from reality, channel membership is the source of truth
+- **Decision**: Configurable classifier endpoint — defaults to Anthropic Haiku, supports any OpenAI-compatible endpoint via `CLASSIFIER_URL` env var
+  - Enables self-hosted models (e.g. Ollama on DGX Spark) for privacy-sensitive deployments
+  - DM content stays on controlled infrastructure when using self-hosted classifier
+  - CongaLine users get Haiku by default — no extra infrastructure required
+- **Files updated**:
+  - [requirements.md](requirements.md) — revised enrollment model, classifier model, success criteria
+  - [plan.md](plan.md) — Phase 3 replaced (enrollment CLI → membership resolution), Phase 5/7 updated for configurable endpoint
