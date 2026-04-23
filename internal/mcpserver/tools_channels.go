@@ -2,9 +2,11 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -248,6 +250,16 @@ func (s *Server) toolChannelsUnbind() server.ServerTool {
 			defer cancel()
 
 			if err := s.prov.UnbindChannel(ctx, agentName, platform, id); err != nil {
+				// Parity with the CLI: when empty-id unbind hits a multi-bound
+				// agent, surface an enumerated error that lists the current
+				// bindings and a concrete example command. Spec §2.6 calls
+				// this out as a script-safe equivalent of the interactive
+				// picker.
+				if errors.Is(err, provider.ErrAmbiguousUnbind) {
+					if a, getErr := s.prov.GetAgent(ctx, agentName); getErr == nil {
+						err = provider.FormatAmbiguousUnbindError(agentName, platform, a.ChannelBindings(platform))
+					}
+				}
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			label := platform

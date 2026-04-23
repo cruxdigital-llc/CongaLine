@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 )
@@ -26,8 +27,8 @@ func CheckBindPreconditions(agent *AgentConfig, binding channels.ChannelBinding,
 		if existing.Platform == binding.Platform && existing.ID == binding.ID {
 			if binding.Label != "" && existing.Label != binding.Label {
 				return false, fmt.Errorf(
-					"binding %s:%s already exists on agent %q with a different label (%q); unbind first to relabel",
-					binding.Platform, binding.ID, agent.Name, existing.Label)
+					"binding %s:%s already exists on agent %q with label %q; cannot relabel to %q — unbind first",
+					binding.Platform, binding.ID, agent.Name, existing.Label, binding.Label)
 			}
 			return true, nil
 		}
@@ -83,4 +84,29 @@ func CheckUnbindRequest(agent *AgentConfig, platform, id string) (targetID strin
 		}
 	}
 	return "", fmt.Errorf("agent %q has no %s:%s binding", agent.Name, platform, id)
+}
+
+// FormatAmbiguousUnbindError builds a helpful enumerated error for callers
+// that receive ErrAmbiguousUnbind. Lists every current binding (with labels
+// when present) and offers a concrete example command using the first id.
+//
+// Called by the CLI unbind path and the MCP unbind tool so both interfaces
+// surface the same diagnostic. bindings must be the platform-filtered list
+// obtained via AgentConfig.ChannelBindings(platform).
+func FormatAmbiguousUnbindError(agentName, platform string, bindings []channels.ChannelBinding) error {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "agent %q has %d %s bindings; specify the id to remove.\nCurrent bindings:\n",
+		agentName, len(bindings), platform)
+	for _, b := range bindings {
+		fmt.Fprintf(&sb, "  %s:%s", b.Platform, b.ID)
+		if b.Label != "" {
+			fmt.Fprintf(&sb, " (%s)", b.Label)
+		}
+		sb.WriteString("\n")
+	}
+	if len(bindings) > 0 {
+		fmt.Fprintf(&sb, "Example: conga channels unbind %s %s:%s",
+			agentName, platform, bindings[0].ID)
+	}
+	return fmt.Errorf("%s", sb.String())
 }

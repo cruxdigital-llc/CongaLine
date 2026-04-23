@@ -392,7 +392,7 @@ func channelsUnbindRun(cmd *cobra.Command, args []string) error {
 			// reach this branch; enhance the error with the enumerated list.
 			if errors.Is(err, provider.ErrAmbiguousUnbind) {
 				if a, getErr := prov.GetAgent(ctx, agentName); getErr == nil {
-					return formatAmbiguousUnbindError(agentName, platform, a.ChannelBindings(platform))
+					return provider.FormatAmbiguousUnbindError(agentName, platform, a.ChannelBindings(platform))
 				}
 			}
 			return err
@@ -423,7 +423,12 @@ func resolveUnbindTargets(ctx context.Context, agentName, platform, id string) (
 	if id != "" {
 		return []string{id}, false, nil
 	}
-	if ui.JSONInputActive {
+	// Skip the interactive picker for any machine-readable invocation —
+	// either JSON input mode (no TTY to prompt from) or JSON output mode
+	// (callers parsing stdout can't handle the picker's stderr prompt
+	// cleanly). The provider will return ErrAmbiguousUnbind, which the
+	// outer handler formats into a structured enumerated error.
+	if ui.JSONInputActive || ui.OutputJSON {
 		return []string{""}, false, nil
 	}
 
@@ -524,25 +529,4 @@ func emitUnbindResult(agentName, platform string, idsRemoved []string, userSuppl
 	default:
 		fmt.Printf("Agent %s unbound from %d %s channels.\n", agentName, len(idsRemoved), platform)
 	}
-}
-
-// formatAmbiguousUnbindError builds a human-readable enumeration of the
-// bindings for a platform, suggesting a concrete first-option command.
-// Used in JSON/MCP mode where no interactive picker is possible.
-func formatAmbiguousUnbindError(agentName, platform string, bindings []channels.ChannelBinding) error {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "agent %q has %d %s bindings; specify the id to remove.\nCurrent bindings:\n",
-		agentName, len(bindings), platform)
-	for _, b := range bindings {
-		fmt.Fprintf(&sb, "  %s:%s", b.Platform, b.ID)
-		if b.Label != "" {
-			fmt.Fprintf(&sb, " (%s)", b.Label)
-		}
-		sb.WriteString("\n")
-	}
-	if len(bindings) > 0 {
-		fmt.Fprintf(&sb, "Example: conga channels unbind %s %s:%s",
-			agentName, platform, bindings[0].ID)
-	}
-	return fmt.Errorf("%s", sb.String())
 }
