@@ -155,13 +155,18 @@ func TestGenerateConfig_UserAgentMultiBinding_AllowFromIncludesAll(t *testing.T)
 	}
 }
 
-func TestGenerateConfig_TeamAgentMultiBinding_ByteIdenticalSingleOutput(t *testing.T) {
-	// Equivalence guarantee: feeding the multi-binding call path a single
-	// binding must produce byte-identical JSON to the old singular path
-	// (which is now itself a call through the multi wrapper).
+// TestGenerateConfig_TeamAgentSingleBinding_SlackShapeUnchanged asserts
+// the observable shape of channels.slack for a single-binding team agent
+// (groupPolicy, dmPolicy, 1-entry channels map). It deliberately does NOT
+// snapshot the entire openclaw.json because openclaw-defaults.json can
+// drift independently of this feature. The strict byte-identical guarantee
+// for single-binding outputs lives at the Slack unit level, in
+// TestOpenClawChannelConfigMulti_SingleBinding_MatchesSingular, which does
+// json.Marshal equality on the slack section.
+func TestGenerateConfig_TeamAgentSingleBinding_SlackShapeUnchanged(t *testing.T) {
 	r := &Runtime{}
 
-	singleBinding := runtime.ConfigParams{
+	params := runtime.ConfigParams{
 		Agent: provider.AgentConfig{
 			Name: "leadership", Type: provider.AgentTypeTeam, GatewayPort: 18790,
 			Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C9876543210"}},
@@ -169,15 +174,11 @@ func TestGenerateConfig_TeamAgentMultiBinding_ByteIdenticalSingleOutput(t *testi
 		Secrets: sampleSecrets(),
 	}
 
-	data, err := r.GenerateConfig(singleBinding)
+	data, err := r.GenerateConfig(params)
 	if err != nil {
 		t.Fatalf("GenerateConfig: %v", err)
 	}
 
-	// Pre-multi-binding snapshot for the same inputs: channels.slack has
-	// one entry C9876543210, groupPolicy=allowlist, dmPolicy=disabled.
-	// We don't snapshot the WHOLE JSON (openclaw-defaults.json can drift),
-	// only the slack section — which is what this feature actually touches.
 	slack := extractSlackSection(t, data)
 	if slack["groupPolicy"] != "allowlist" {
 		t.Errorf("groupPolicy = %v, want allowlist", slack["groupPolicy"])

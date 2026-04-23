@@ -256,19 +256,16 @@ func TestFormatAgentChannels(t *testing.T) {
 	}
 }
 
-func TestFormatAmbiguousUnbindError_IncludesAllBindings(t *testing.T) {
+// Formatting for the ambiguous-unbind error is now provided by
+// pkg/provider.FormatAmbiguousUnbindError; see pkg/provider/bind_test.go
+// for the exhaustive message-content tests. This test stays only as a
+// smoke check that the CLI imports the shared helper correctly.
+func TestProviderFormatAmbiguousUnbindError_Wiring(t *testing.T) {
 	bs := []channels.ChannelBinding{
 		{Platform: "slack", ID: "C1", Label: "#legal"},
-		{Platform: "slack", ID: "C2"},
 	}
-	err := formatAmbiguousUnbindError("acme", "slack", bs)
-	msg := err.Error()
-	for _, want := range []string{
-		`agent "acme"`, `2 slack bindings`, `slack:C1`, `#legal`, `slack:C2`,
-		`Example: conga channels unbind acme slack:C1`,
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error missing %q\nfull message:\n%s", want, msg)
-		}
+	err := provider.FormatAmbiguousUnbindError("acme", "slack", bs)
+	if err == nil || !strings.Contains(err.Error(), "slack:C1") {
+		t.Errorf("shared helper not wired through: %v", err)
 	}
 }

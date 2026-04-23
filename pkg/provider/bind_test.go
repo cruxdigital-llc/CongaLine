@@ -74,11 +74,16 @@ func TestCheckBindPreconditions_ExactID_DifferentLabel_Errors(t *testing.T) {
 	if skip {
 		t.Fatalf("want skip=false when error is returned")
 	}
-	if !strings.Contains(err.Error(), "different label") {
-		t.Errorf("error message should mention label mismatch, got: %v", err)
+	// Both labels should be named so the operator can see the conflict
+	// without re-reading their own command.
+	if !strings.Contains(err.Error(), `"#legal"`) {
+		t.Errorf("error should name the existing label %q, got: %v", "#legal", err)
 	}
-	if !strings.Contains(err.Error(), "#legal") {
-		t.Errorf("error should name the existing label, got: %v", err)
+	if !strings.Contains(err.Error(), `"#legal-vendor"`) {
+		t.Errorf("error should name the requested (incoming) label %q, got: %v", "#legal-vendor", err)
+	}
+	if !strings.Contains(err.Error(), "unbind first") {
+		t.Errorf("error should tell operator what to do, got: %v", err)
 	}
 }
 
@@ -279,6 +284,42 @@ func TestCheckUnbindRequest_OtherPlatformBindings_Ignored(t *testing.T) {
 	}
 	if id != "C1" {
 		t.Errorf("targetID = %q, want C1", id)
+	}
+}
+
+// --- FormatAmbiguousUnbindError ---
+
+func TestFormatAmbiguousUnbindError_IncludesBindingsAndExample(t *testing.T) {
+	bs := []channels.ChannelBinding{
+		{Platform: "slack", ID: "C1", Label: "#legal"},
+		{Platform: "slack", ID: "C2"},
+	}
+	err := FormatAmbiguousUnbindError("acme", "slack", bs)
+	msg := err.Error()
+	for _, want := range []string{
+		`agent "acme"`,
+		`2 slack bindings`,
+		`slack:C1`,
+		`#legal`,
+		`slack:C2`,
+		`Example: conga channels unbind acme slack:C1`,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("formatted error missing %q\nfull message:\n%s", want, msg)
+		}
+	}
+}
+
+func TestFormatAmbiguousUnbindError_SurvivesEmptyBindings(t *testing.T) {
+	// Edge: if a caller ever hands us zero bindings, we should still produce
+	// a non-panicking, informative message (no Example line, but no crash).
+	err := FormatAmbiguousUnbindError("acme", "slack", nil)
+	msg := err.Error()
+	if !strings.Contains(msg, `agent "acme"`) {
+		t.Errorf("empty-bindings message should still name the agent, got: %s", msg)
+	}
+	if strings.Contains(msg, "Example:") {
+		t.Errorf("empty-bindings message should not suggest an example, got: %s", msg)
 	}
 }
 

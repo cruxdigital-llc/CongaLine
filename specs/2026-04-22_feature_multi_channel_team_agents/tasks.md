@@ -1,8 +1,16 @@
 # Implementation Tasks: Multi-Channel Team Agents
 
 **Feature branch**: `feature/multi-channel-team-agents` (off `main`)
-**Spec PR**: #42 (`spec/multi-channel-team-agents` → `main`)
+**Implementation PR**: #43 (supersedes spec PR #42 which was closed; #43 now carries both spec and implementation to `main`)
 **Companion PR**: one in `cruxdigital-llc/terraform-provider-conga` for Phase 9
+
+## Intentional Spec Divergences
+
+Two implementation choices diverge from the written spec. Both were deliberate; recording them here rather than editing the spec retroactively.
+
+1. **Shared bind/unbind guard helper in `pkg/provider/bind.go`** (spec §3.5 said "Keep the guard copy-pasted across the three files"). The spec's reasoning — "subtle file-write semantics per provider" — applies to the transport code (os.WriteFile, SFTP, SSM), which is indeed still per-provider. The guard logic itself is pure computation over `AgentConfig` with no transport concerns; extracting `CheckBindPreconditions`, `CheckUnbindRequest`, and `FormatAmbiguousUnbindError` gave us ~300 lines of edge-case tests once rather than three parallel test suites and eliminated drift hazard. Accept the divergence; superseded by implementation reality.
+
+2. **`pkg/provider/errors_test.go` kept, not deleted** (spec §3.7 said "The sentinel var and the test file `pkg/provider/errors_test.go` are deleted as part of this change"). `ErrBindingExists` was removed as specified, but the test file was kept and narrowed to `TestErrNotFound_Wrapping` because `ErrNotFound` still needs the wrapping-equivalence test. Zero cost to keep, modest value for the other sentinel. Accept the divergence.
 
 ## Working Approach
 
