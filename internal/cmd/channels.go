@@ -1,10 +1,18 @@
 package cmd
 
 import (
+	"bufio"
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 	"github.com/spf13/cobra"
 )
@@ -12,6 +20,8 @@ import (
 var (
 	channelRemoveForce bool
 	channelUnbindForce bool
+	channelListAgent   string
+	channelBindLabel   string
 )
 
 func init() {
@@ -46,26 +56,49 @@ for this platform, and deletes the shared credentials.`,
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List configured channels and their status",
-		RunE:  channelsListRun,
+		Long: `List configured channel platforms (slack, telegram, etc.) and their status.
+
+With --agent, list the individual bindings for that agent — one row per
+(platform, id) binding, including any labels. Useful for team agents that
+own multiple bindings on the same platform.`,
+		RunE: channelsListRun,
 	}
+	listCmd.Flags().StringVar(&channelListAgent, "agent", "", "Show per-binding detail for the named agent")
 
 	bindCmd := &cobra.Command{
 		Use:   "bind <agent> <platform:id>",
 		Short: "Bind an agent to a channel",
 		Long: `Add a channel binding to an existing agent.
 
+An agent may own multiple bindings on the same platform (e.g. a team agent
+serving several Slack channels). Repeat the command with different channel
+IDs to add more bindings — each one must be a channel ID not already bound
+to another agent. Rebinding the exact same (platform, id) is an idempotent
+no-op; changing the label of an existing binding requires unbinding first.
+
 Example:
   conga channels bind aaron slack:U0123456789
-  conga channels bind leadership slack:C0123456789`,
+  conga channels bind leadership slack:C0123456789
+  conga channels bind contracts slack:C0111 --label "#legal"
+  conga channels bind contracts slack:C0222 --label "#sales"`,
 		Args: cobra.ExactArgs(2),
 		RunE: channelsBindRun,
 	}
+	bindCmd.Flags().StringVar(&channelBindLabel, "label", "", "Human-readable label for this binding (e.g. a channel name)")
 
 	unbindCmd := &cobra.Command{
-		Use:   "unbind <agent> <platform>",
+		Use:   "unbind <agent> <platform[:id]>",
 		Short: "Remove a channel binding from an agent",
-		Args:  cobra.ExactArgs(2),
-		RunE:  channelsUnbindRun,
+		Long: `Remove a channel binding from an agent.
+
+When the agent has a single binding for the platform, the id suffix is optional:
+  conga channels unbind aaron slack
+
+When the agent has multiple bindings for the same platform (e.g. a team agent
+bound to several Slack channels), you must specify which binding to remove:
+  conga channels unbind contracts slack:C0123456789`,
+		Args: cobra.ExactArgs(2),
+		RunE: channelsUnbindRun,
 	}
 	unbindCmd.Flags().BoolVar(&channelUnbindForce, "force", false, "Skip confirmation")
 
@@ -189,6 +222,11 @@ func channelsListRun(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandContext()
 	defer cancel()
 
+	// --agent <name> → per-binding detail for one agent
+	if channelListAgent != "" {
+		return channelsListAgentBindings(ctx, channelListAgent)
+	}
+
 	statuses, err := prov.ListChannels(ctx)
 	if err != nil {
 		return err
@@ -228,6 +266,59 @@ func channelsListRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// channelsListAgentBindings renders a table of an agent's individual
+// channel bindings — one row per (platform, id). Sorted by platform,
+// then by the order the bindings were added.
+func channelsListAgentBindings(ctx context.Context, agentName string) error {
+	a, err := prov.GetAgent(ctx, agentName)
+	if err != nil {
+		return err
+	}
+
+	if ui.OutputJSON {
+		payload := make([]map[string]any, 0, len(a.Channels))
+		for _, b := range a.Channels {
+			payload = append(payload, map[string]any{
+				"platform": b.Platform,
+				"id":       b.ID,
+				"label":    b.Label,
+			})
+		}
+		ui.EmitJSON(payload)
+		return nil
+	}
+
+	if len(a.Channels) == 0 {
+		fmt.Printf("Agent %s has no channel bindings (gateway-only).\n", agentName)
+		return nil
+	}
+
+	// Stable order: platform alphabetical, then insertion order within a platform.
+	byPlatform := map[string][]channels.ChannelBinding{}
+	var platforms []string
+	for _, b := range a.Channels {
+		if _, seen := byPlatform[b.Platform]; !seen {
+			platforms = append(platforms, b.Platform)
+		}
+		byPlatform[b.Platform] = append(byPlatform[b.Platform], b)
+	}
+	sort.Strings(platforms)
+
+	headers := []string{"PLATFORM", "ID", "LABEL"}
+	var rows [][]string
+	for _, platform := range platforms {
+		for _, b := range byPlatform[platform] {
+			label := b.Label
+			if label == "" {
+				label = "-"
+			}
+			rows = append(rows, []string{b.Platform, b.ID, label})
+		}
+	}
+	ui.PrintTable(headers, rows)
+	return nil
+}
+
 func channelsBindRun(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandContext()
 	defer cancel()
@@ -241,6 +332,9 @@ func channelsBindRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if channelBindLabel != "" {
+		binding.Label = channelBindLabel
+	}
 
 	if err := prov.BindChannel(ctx, agentName, binding); err != nil {
 		return err
@@ -251,6 +345,7 @@ func channelsBindRun(cmd *cobra.Command, args []string) error {
 			"agent":    agentName,
 			"platform": binding.Platform,
 			"id":       binding.ID,
+			"label":    binding.Label,
 			"status":   "bound",
 		})
 	} else {
@@ -264,27 +359,190 @@ func channelsUnbindRun(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	agentName := args[0]
-	platform := args[1]
 
-	if !channelUnbindForce && !ui.JSONInputActive {
-		if !ui.Confirm(fmt.Sprintf("Remove %s binding from agent %s?", platform, agentName)) {
+	// Accept either "<platform>" (legacy, single-binding) or "<platform>:<id>".
+	platform, id := splitPlatformID(args[1])
+
+	// Resolve which bindings to remove. Interactive picker kicks in only when
+	// the user didn't specify an id AND we're not in JSON/MCP mode AND the
+	// agent actually has multiple bindings for the platform. In every other
+	// case we defer to the provider (which applies the legacy single-binding
+	// removal or returns ErrAmbiguousUnbind for JSON callers).
+	idsToRemove, cancelled, err := resolveUnbindTargets(ctx, agentName, platform, id)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Confirm before a specific-id removal (not needed after the picker —
+	// selecting in the picker is itself the confirmation). Skip in JSON mode.
+	if !channelUnbindForce && !ui.JSONInputActive && id != "" {
+		if !ui.Confirm(fmt.Sprintf("Remove %s:%s binding from agent %s?", platform, id, agentName)) {
 			fmt.Println("Cancelled.")
 			return nil
 		}
 	}
 
-	if err := prov.UnbindChannel(ctx, agentName, platform); err != nil {
-		return err
+	for _, targetID := range idsToRemove {
+		if err := prov.UnbindChannel(ctx, agentName, platform, targetID); err != nil {
+			// JSON/MCP callers hitting the empty-id-with-multiple-bindings path
+			// reach this branch; enhance the error with the enumerated list.
+			if errors.Is(err, provider.ErrAmbiguousUnbind) {
+				if a, getErr := prov.GetAgent(ctx, agentName); getErr == nil {
+					return formatAmbiguousUnbindError(agentName, platform, a.ChannelBindings(platform))
+				}
+			}
+			return err
+		}
 	}
 
+	emitUnbindResult(agentName, platform, idsToRemove, id)
+	return nil
+}
+
+// splitPlatformID splits "platform" or "platform:id" into its parts.
+// An empty id means "remove the sole binding if exactly one exists".
+func splitPlatformID(arg string) (platform, id string) {
+	if i := strings.Index(arg, ":"); i >= 0 {
+		return arg[:i], arg[i+1:]
+	}
+	return arg, ""
+}
+
+// resolveUnbindTargets decides which channel IDs the caller wants to remove.
+// In interactive mode, if the user omitted the id and the agent has multiple
+// bindings for the platform, an interactive picker runs and returns either
+// one selected binding, all bindings, or a cancel signal. In every other
+// case the function returns a single-element slice whose value is the
+// user-supplied id (possibly empty — the provider handles legacy single-binding
+// semantics or returns ErrAmbiguousUnbind for JSON callers).
+func resolveUnbindTargets(ctx context.Context, agentName, platform, id string) (ids []string, cancelled bool, err error) {
+	if id != "" {
+		return []string{id}, false, nil
+	}
+	if ui.JSONInputActive {
+		return []string{""}, false, nil
+	}
+
+	a, err := prov.GetAgent(ctx, agentName)
+	if err != nil {
+		return nil, false, err
+	}
+	bindings := a.ChannelBindings(platform)
+	if len(bindings) <= 1 {
+		// 0 bindings → provider returns "no binding" error; 1 binding → legacy
+		// single-removal path. Either way, defer to the provider.
+		return []string{""}, false, nil
+	}
+
+	chosen, cancelled, pickErr := pickBindingFrom(os.Stdin, os.Stderr, agentName, platform, bindings)
+	if pickErr != nil {
+		return nil, false, pickErr
+	}
+	return chosen, cancelled, nil
+}
+
+// pickBindingFrom runs the interactive multi-binding picker, rendering a
+// numbered list of bindings (with labels when present) and reading one of:
+//
+//	"1"..."N"  → remove that specific binding
+//	"a" / "all"→ remove every listed binding
+//	""/"n"/"N" → cancel (no removal)
+//
+// Any other input is treated as a cancel with an error explaining the
+// invalid choice. Returns (ids, cancelled, err) where a non-nil err means
+// the picker itself failed (stdin closed, etc.) and the caller should
+// surface the error rather than act on the other return values.
+//
+// Accepts reader/writer arguments to make the picker testable.
+func pickBindingFrom(r io.Reader, w io.Writer, agentName, platform string, bindings []channels.ChannelBinding) (ids []string, cancelled bool, err error) {
+	fmt.Fprintf(w, "Agent %q has %d %s bindings:\n", agentName, len(bindings), platform)
+	for i, b := range bindings {
+		label := ""
+		if b.Label != "" {
+			label = " (" + b.Label + ")"
+		}
+		fmt.Fprintf(w, "  [%d] %s:%s%s\n", i+1, b.Platform, b.ID, label)
+	}
+	fmt.Fprintln(w, "  [a] all")
+
+	choices := make([]string, 0, len(bindings)+2)
+	for i := range bindings {
+		choices = append(choices, strconv.Itoa(i+1))
+	}
+	choices = append(choices, "a", "N")
+	fmt.Fprintf(w, "Which to remove? [%s]: ", strings.Join(choices, "/"))
+
+	scanner := bufio.NewScanner(r)
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return nil, false, fmt.Errorf("failed to read input: %w", scanErr)
+		}
+		// EOF with no input — treat as cancel (safe default).
+		return nil, true, nil
+	}
+	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+
+	switch answer {
+	case "", "n", "no":
+		return nil, true, nil
+	case "a", "all":
+		out := make([]string, len(bindings))
+		for i, b := range bindings {
+			out[i] = b.ID
+		}
+		return out, false, nil
+	}
+	if n, convErr := strconv.Atoi(answer); convErr == nil && n >= 1 && n <= len(bindings) {
+		return []string{bindings[n-1].ID}, false, nil
+	}
+	return nil, false, fmt.Errorf("invalid choice %q; cancelled without removing anything", answer)
+}
+
+// emitUnbindResult writes the success message to stdout/JSON, adapting to
+// whether one specific binding, the sole-legacy binding, or all bindings
+// were removed.
+func emitUnbindResult(agentName, platform string, idsRemoved []string, userSuppliedID string) {
 	if ui.OutputJSON {
 		ui.EmitJSON(map[string]any{
 			"agent":    agentName,
 			"platform": platform,
+			"id":       userSuppliedID,
+			"count":    len(idsRemoved),
 			"status":   "unbound",
 		})
-	} else {
-		fmt.Printf("Agent %s unbound from %s.\n", agentName, platform)
+		return
 	}
-	return nil
+	switch {
+	case len(idsRemoved) == 1 && idsRemoved[0] == "":
+		fmt.Printf("Agent %s unbound from %s.\n", agentName, platform)
+	case len(idsRemoved) == 1:
+		fmt.Printf("Agent %s unbound from %s:%s.\n", agentName, platform, idsRemoved[0])
+	default:
+		fmt.Printf("Agent %s unbound from %d %s channels.\n", agentName, len(idsRemoved), platform)
+	}
+}
+
+// formatAmbiguousUnbindError builds a human-readable enumeration of the
+// bindings for a platform, suggesting a concrete first-option command.
+// Used in JSON/MCP mode where no interactive picker is possible.
+func formatAmbiguousUnbindError(agentName, platform string, bindings []channels.ChannelBinding) error {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "agent %q has %d %s bindings; specify the id to remove.\nCurrent bindings:\n",
+		agentName, len(bindings), platform)
+	for _, b := range bindings {
+		fmt.Fprintf(&sb, "  %s:%s", b.Platform, b.ID)
+		if b.Label != "" {
+			fmt.Fprintf(&sb, " (%s)", b.Label)
+		}
+		sb.WriteString("\n")
+	}
+	if len(bindings) > 0 {
+		fmt.Fprintf(&sb, "Example: conga channels unbind %s %s:%s",
+			agentName, platform, bindings[0].ID)
+	}
+	return fmt.Errorf("%s", sb.String())
 }

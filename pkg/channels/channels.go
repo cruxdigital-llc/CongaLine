@@ -65,3 +65,24 @@ type Channel interface {
 	// credentials needed for this channel. Displayed before prompting for secrets.
 	SetupGuide() string
 }
+
+// MultiBindingChannel is implemented by channels that support more than one
+// binding of the same platform on a single agent (e.g. one team agent serving
+// several Slack channels). Channels that only support a single binding per
+// agent — the norm for platforms like Telegram, where an agent maps 1:1 to
+// a chat — implement only the base Channel interface.
+//
+// Callers should type-assert to MultiBindingChannel and use
+// OpenClawChannelConfigMulti when available; otherwise fall back to the
+// singular OpenClawChannelConfig with the first binding for the platform.
+//
+// When len(bindings) == 0 the implementation returns (nil, nil) — equivalent
+// to "no config section for this platform" at the call site.
+// When len(bindings) == 1 the output must match what OpenClawChannelConfig
+// would have produced for that same binding — the singular method is
+// expected to be implemented as a thin wrapper around the multi method to
+// guarantee this.
+type MultiBindingChannel interface {
+	Channel
+	OpenClawChannelConfigMulti(agentType string, bindings []ChannelBinding, secretValues map[string]string) (map[string]any, error)
+}

@@ -109,11 +109,18 @@ func (s *Server) toolChannelsRemove() server.ServerTool {
 func (s *Server) toolChannelsList() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{
-			Name:        "conga_channels_list",
-			Description: "List configured channels and their status (credentials present, router running, bound agents).",
+			Name: "conga_channels_list",
+			Description: "List configured channel platforms and their status (credentials present, router running, bound agents). " +
+				"Pass `agent_name` to instead get a per-binding view of that agent — one entry per (platform, id) binding, including labels. " +
+				"Use the per-agent mode to audit multi-binding team agents.",
 			InputSchema: mcp.ToolInputSchema{
-				Type:       "object",
-				Properties: map[string]any{},
+				Type: "object",
+				Properties: map[string]any{
+					"agent_name": map[string]any{
+						"type":        "string",
+						"description": "Optional — when set, returns that agent's individual bindings instead of platform statuses.",
+					},
+				},
 			},
 			Annotations: mcp.ToolAnnotation{
 				ReadOnlyHint: boolPtr(true),
@@ -122,6 +129,14 @@ func (s *Server) toolChannelsList() server.ServerTool {
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
+
+			if agentName := req.GetString("agent_name", ""); agentName != "" {
+				a, err := s.prov.GetAgent(ctx, agentName)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				return jsonResult(a.Channels)
+			}
 
 			statuses, err := s.prov.ListChannels(ctx)
 			if err != nil {
@@ -135,8 +150,11 @@ func (s *Server) toolChannelsList() server.ServerTool {
 func (s *Server) toolChannelsBind() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{
-			Name:        "conga_channels_bind",
-			Description: "Bind an agent to a channel. The channel must be configured first via conga_channels_add.",
+			Name: "conga_channels_bind",
+			Description: "Bind an agent to a channel. The channel platform must be configured first via conga_channels_add. " +
+				"An agent may hold multiple bindings on the same platform (e.g. a team agent serving several Slack channels) — call this tool once per channel. " +
+				"Repeat calls with the exact same (agent, platform, id) are idempotent no-ops. " +
+				"Binding a channel id already owned by a different agent returns an error.",
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -147,6 +165,10 @@ func (s *Server) toolChannelsBind() server.ServerTool {
 					"channel": map[string]any{
 						"type":        "string",
 						"description": "Channel binding (format: platform:id, e.g., slack:U0123456789)",
+					},
+					"label": map[string]any{
+						"type":        "string",
+						"description": "Optional human-readable label (e.g. a channel name like '#legal'). Used in list output and the ambiguous-unbind picker.",
 					},
 				},
 				Required: []string{"agent_name", "channel"},
@@ -166,6 +188,9 @@ func (s *Server) toolChannelsBind() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			if label := req.GetString("label", ""); label != "" {
+				binding.Label = label
+			}
 
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
@@ -181,8 +206,10 @@ func (s *Server) toolChannelsBind() server.ServerTool {
 func (s *Server) toolChannelsUnbind() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{
-			Name:        "conga_channels_unbind",
-			Description: "Remove a channel binding from an agent.",
+			Name: "conga_channels_unbind",
+			Description: "Remove a channel binding from an agent. " +
+				"Omit `id` to remove the sole binding when the agent has only one for this platform. " +
+				"When an agent has multiple bindings for the same platform (e.g. a team agent on several Slack channels), `id` is required.",
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -193,6 +220,10 @@ func (s *Server) toolChannelsUnbind() server.ServerTool {
 					"platform": map[string]any{
 						"type":        "string",
 						"description": "Channel platform to unbind (e.g., 'slack')",
+					},
+					"id": map[string]any{
+						"type":        "string",
+						"description": "Specific binding id to remove. Required when the agent has multiple bindings for the platform; optional otherwise.",
 					},
 				},
 				Required: []string{"agent_name", "platform"},
@@ -210,14 +241,20 @@ func (s *Server) toolChannelsUnbind() server.ServerTool {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			// id is optional — empty means "remove the sole binding for this platform".
+			id := req.GetString("id", "")
 
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
-			if err := s.prov.UnbindChannel(ctx, agentName, platform); err != nil {
+			if err := s.prov.UnbindChannel(ctx, agentName, platform, id); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q unbound from %s.", agentName, platform)), nil
+			label := platform
+			if id != "" {
+				label = platform + ":" + id
+			}
+			return okResult(fmt.Sprintf("Agent %q unbound from %s.", agentName, label)), nil
 		},
 	}
 }
