@@ -20,7 +20,6 @@ import (
 var (
 	channelRemoveForce bool
 	channelUnbindForce bool
-	channelListAgent   string
 	channelBindLabel   string
 )
 
@@ -58,12 +57,18 @@ for this platform, and deletes the shared credentials.`,
 		Short: "List configured channels and their status",
 		Long: `List configured channel platforms (slack, telegram, etc.) and their status.
 
-With --agent, list the individual bindings for that agent — one row per
-(platform, id) binding, including any labels. Useful for team agents that
-own multiple bindings on the same platform.`,
+With the global --agent flag, list the individual bindings for that agent
+— one row per (platform, id) binding, including any labels. Useful for
+team agents that own multiple bindings on the same platform.
+
+Example:
+  conga channels list
+  conga channels list --agent contracts`,
 		RunE: channelsListRun,
 	}
-	listCmd.Flags().StringVar(&channelListAgent, "agent", "", "Show per-binding detail for the named agent")
+	// Note: --agent here reuses the root persistent flag (flagAgent). A local
+	// --agent would shadow and conflict with the persistent one in pflag,
+	// causing state leakage between CLI invocations in the same process.
 
 	bindCmd := &cobra.Command{
 		Use:   "bind <agent> <platform:id>",
@@ -222,9 +227,11 @@ func channelsListRun(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandContext()
 	defer cancel()
 
-	// --agent <name> → per-binding detail for one agent
-	if channelListAgent != "" {
-		return channelsListAgentBindings(ctx, channelListAgent)
+	// --agent <name> → per-binding detail for one agent. Uses the root
+	// persistent --agent flag (flagAgent) rather than a local shadow so
+	// pflag state stays consistent across commands.
+	if flagAgent != "" {
+		return channelsListAgentBindings(ctx, flagAgent)
 	}
 
 	statuses, err := prov.ListChannels(ctx)
