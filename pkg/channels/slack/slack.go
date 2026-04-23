@@ -12,6 +12,9 @@ func init() {
 	channels.Register(&Slack{})
 }
 
+// Compile-time assertion: Slack supports multi-binding.
+var _ channels.MultiBindingChannel = (*Slack)(nil)
+
 var (
 	memberIDPattern  = regexp.MustCompile(`^U[A-Z0-9]{8,12}$`)
 	channelIDPattern = regexp.MustCompile(`^C[A-Z0-9]{8,12}$`)
@@ -50,7 +53,23 @@ func (s *Slack) HasCredentials(sv map[string]string) bool {
 	return sv["slack-bot-token"] != "" && sv["slack-signing-secret"] != ""
 }
 
+// OpenClawChannelConfig returns the channels.slack config for a single binding.
+// Implemented as a thin wrapper around OpenClawChannelConfigMulti so the
+// single-binding output is guaranteed byte-identical.
 func (s *Slack) OpenClawChannelConfig(agentType string, binding channels.ChannelBinding, sv map[string]string) (map[string]any, error) {
+	return s.OpenClawChannelConfigMulti(agentType, []channels.ChannelBinding{binding}, sv)
+}
+
+// OpenClawChannelConfigMulti returns the channels.slack config for any number
+// of bindings attached to the same agent. For user agents, `allowFrom`
+// aggregates every member ID across bindings. For team agents, `channels`
+// aggregates every channel ID. An empty bindings slice returns (nil, nil)
+// — the caller should omit the channels.slack section entirely.
+func (s *Slack) OpenClawChannelConfigMulti(agentType string, bindings []channels.ChannelBinding, sv map[string]string) (map[string]any, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+
 	cfg := map[string]any{
 		"mode":              "http",
 		"enabled":           true,
@@ -66,17 +85,27 @@ func (s *Slack) OpenClawChannelConfig(agentType string, binding channels.Channel
 	case "user":
 		cfg["groupPolicy"] = "disabled"
 		cfg["dmPolicy"] = "allowlist"
-		if binding.ID != "" {
-			cfg["allowFrom"] = []string{binding.ID}
+		ids := make([]string, 0, len(bindings))
+		for _, b := range bindings {
+			if b.ID != "" {
+				ids = append(ids, b.ID)
+			}
+		}
+		if len(ids) > 0 {
+			cfg["allowFrom"] = ids
 		}
 		cfg["dm"] = map[string]any{"enabled": true}
 	case "team":
 		cfg["groupPolicy"] = "allowlist"
 		cfg["dmPolicy"] = "disabled"
-		if binding.ID != "" {
-			cfg["channels"] = map[string]any{
-				binding.ID: map[string]any{"allow": true, "requireMention": false},
+		channelsMap := map[string]any{}
+		for _, b := range bindings {
+			if b.ID != "" {
+				channelsMap[b.ID] = map[string]any{"allow": true, "requireMention": false}
 			}
+		}
+		if len(channelsMap) > 0 {
+			cfg["channels"] = channelsMap
 		}
 	}
 

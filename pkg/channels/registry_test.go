@@ -109,3 +109,60 @@ func TestAll(t *testing.T) {
 		t.Errorf("All() returned %d channels, want 2", len(all))
 	}
 }
+
+func TestRemoveBinding_RemovesMatch(t *testing.T) {
+	in := []ChannelBinding{
+		{Platform: "slack", ID: "C1"},
+		{Platform: "slack", ID: "C2"},
+		{Platform: "slack", ID: "C3"},
+	}
+	got := RemoveBinding(in, "slack", "C2")
+	if len(got) != 2 {
+		t.Fatalf("want 2 remaining, got %d: %+v", len(got), got)
+	}
+	if got[0].ID != "C1" || got[1].ID != "C3" {
+		t.Errorf("order/contents wrong: %+v", got)
+	}
+}
+
+func TestRemoveBinding_NoMatch_UnchangedContent(t *testing.T) {
+	in := []ChannelBinding{
+		{Platform: "slack", ID: "C1"},
+		{Platform: "slack", ID: "C2"},
+	}
+	got := RemoveBinding(in, "slack", "C999")
+	if len(got) != 2 {
+		t.Fatalf("want 2 remaining, got %d", len(got))
+	}
+	if got[0].ID != "C1" || got[1].ID != "C2" {
+		t.Errorf("order/contents wrong: %+v", got)
+	}
+}
+
+func TestRemoveBinding_WrongPlatform_UnchangedContent(t *testing.T) {
+	// Same ID on different platform must NOT be removed.
+	in := []ChannelBinding{
+		{Platform: "telegram", ID: "100"},
+		{Platform: "slack", ID: "C1"},
+	}
+	got := RemoveBinding(in, "slack", "100")
+	if len(got) != 2 {
+		t.Fatalf("want 2 remaining, got %d", len(got))
+	}
+	if got[0].Platform != "telegram" || got[0].ID != "100" {
+		t.Errorf("telegram binding was incorrectly removed: %+v", got)
+	}
+}
+
+func TestRemoveBinding_RemovesAtMostOne(t *testing.T) {
+	// Duplicates shouldn't exist (bind guard prevents them), but guarding
+	// the helper's behavior keeps it predictable if one ever slips in.
+	in := []ChannelBinding{
+		{Platform: "slack", ID: "C1"},
+		{Platform: "slack", ID: "C1"},
+	}
+	got := RemoveBinding(in, "slack", "C1")
+	if len(got) != 1 {
+		t.Fatalf("want 1 remaining, got %d: %+v", len(got), got)
+	}
+}

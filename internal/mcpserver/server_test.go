@@ -140,7 +140,7 @@ func (m *mockProvider) BindChannel(ctx context.Context, agentName string, bindin
 	m.lastAgentName = agentName
 	return m.err
 }
-func (m *mockProvider) UnbindChannel(ctx context.Context, agentName string, platform string) error {
+func (m *mockProvider) UnbindChannel(ctx context.Context, agentName, platform, id string) error {
 	m.lastAgentName = agentName
 	return m.err
 }

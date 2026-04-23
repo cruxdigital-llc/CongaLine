@@ -53,6 +53,8 @@ func RegisteredNames() string {
 }
 
 // FilterBindings returns bindings with the given platform removed.
+// Used when a platform is being removed entirely from the deployment;
+// see RemoveBinding for removing a single (platform, id) pair.
 func FilterBindings(bindings []ChannelBinding, platform string) []ChannelBinding {
 	var result []ChannelBinding
 	for _, b := range bindings {
@@ -61,6 +63,24 @@ func FilterBindings(bindings []ChannelBinding, platform string) []ChannelBinding
 		}
 	}
 	return result
+}
+
+// RemoveBinding returns bindings with the exact (platform, id) pair removed.
+// Removes at most one occurrence — if multiple duplicates somehow exist they
+// are left alone after the first removal (they should not exist in the first
+// place; the bind guard rejects duplicates). When the pair is not present,
+// returns the slice unchanged.
+func RemoveBinding(bindings []ChannelBinding, platform, id string) []ChannelBinding {
+	out := make([]ChannelBinding, 0, len(bindings))
+	removed := false
+	for _, b := range bindings {
+		if !removed && b.Platform == platform && b.ID == id {
+			removed = true
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 func registeredNames() []string {

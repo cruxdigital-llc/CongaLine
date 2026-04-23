@@ -1040,7 +1040,13 @@ func (p *RemoteProvider) regenerateRouting(ctx context.Context) error {
 		return err
 	}
 	p.ssh.MkdirAll(p.remoteConfigDir(), 0700)
-	return p.ssh.Upload(posixpath.Join(p.remoteConfigDir(), "routing.json"), data, 0644)
+	if err := p.ssh.Upload(posixpath.Join(p.remoteConfigDir(), "routing.json"), data, 0644); err != nil {
+		return err
+	}
+	for _, r := range common.FindMultiBindingAgents(agents) {
+		fmt.Fprintln(os.Stderr, r.LogLine())
+	}
+	return nil
 }
 
 func (p *RemoteProvider) deployBehavior(ctx context.Context, cfg provider.AgentConfig) error {
