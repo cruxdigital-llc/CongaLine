@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
@@ -152,6 +153,146 @@ func TestOpenClawChannelConfig_NoID(t *testing.T) {
 	// Should still produce valid config, just without allowFrom
 	if _, ok := cfg["allowFrom"]; ok {
 		t.Error("expected no allowFrom when ID is empty")
+	}
+}
+
+func TestOpenClawChannelConfigMulti_SingleBinding_MatchesSingular(t *testing.T) {
+	// The singular method is now a thin wrapper around the multi method.
+	// Feed them the exact same input and require identical output — this is
+	// the byte-identical guarantee for operators who do not adopt
+	// multi-binding.
+	s := &Slack{}
+	sv := map[string]string{"slack-bot-token": "xoxb-test", "slack-signing-secret": "secret"}
+
+	cases := []struct {
+		name      string
+		agentType string
+		binding   channels.ChannelBinding
+	}{
+		{"user with ID", "user", channels.ChannelBinding{Platform: "slack", ID: "U0123456789"}},
+		{"user no ID", "user", channels.ChannelBinding{Platform: "slack"}},
+		{"team with ID", "team", channels.ChannelBinding{Platform: "slack", ID: "C9876543210"}},
+		{"team no ID", "team", channels.ChannelBinding{Platform: "slack"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			singular, err := s.OpenClawChannelConfig(tc.agentType, tc.binding, sv)
+			if err != nil {
+				t.Fatalf("singular err: %v", err)
+			}
+			multi, err := s.OpenClawChannelConfigMulti(tc.agentType,
+				[]channels.ChannelBinding{tc.binding}, sv)
+			if err != nil {
+				t.Fatalf("multi err: %v", err)
+			}
+			// Marshal both to canonical JSON and compare for strict equivalence.
+			singJSON, _ := json.Marshal(singular)
+			multiJSON, _ := json.Marshal(multi)
+			if string(singJSON) != string(multiJSON) {
+				t.Errorf("single-binding output diverged.\nsingular: %s\nmulti:    %s",
+					singJSON, multiJSON)
+			}
+		})
+	}
+}
+
+func TestOpenClawChannelConfigMulti_Empty_ReturnsNil(t *testing.T) {
+	s := &Slack{}
+	sv := map[string]string{"slack-bot-token": "x", "slack-signing-secret": "y"}
+	cfg, err := s.OpenClawChannelConfigMulti("team", nil, sv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg != nil {
+		t.Errorf("want nil for empty bindings, got %v", cfg)
+	}
+}
+
+func TestOpenClawChannelConfigMulti_TeamMultipleBindings(t *testing.T) {
+	s := &Slack{}
+	sv := map[string]string{"slack-bot-token": "xoxb-test", "slack-signing-secret": "secret"}
+	bindings := []channels.ChannelBinding{
+		{Platform: "slack", ID: "C1", Label: "#legal"},
+		{Platform: "slack", ID: "C2", Label: "#sales"},
+		{Platform: "slack", ID: "C3"},
+	}
+
+	cfg, err := s.OpenClawChannelConfigMulti("team", bindings, sv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg["groupPolicy"] != "allowlist" {
+		t.Errorf("groupPolicy = %v, want allowlist", cfg["groupPolicy"])
+	}
+	chans, ok := cfg["channels"].(map[string]any)
+	if !ok {
+		t.Fatalf("channels not a map: %v", cfg["channels"])
+	}
+	if len(chans) != 3 {
+		t.Errorf("want 3 channel entries, got %d: %v", len(chans), chans)
+	}
+	for _, id := range []string{"C1", "C2", "C3"} {
+		entry, ok := chans[id].(map[string]any)
+		if !ok {
+			t.Errorf("missing or malformed entry for %q: %v", id, chans[id])
+			continue
+		}
+		if entry["allow"] != true {
+			t.Errorf("channels[%q].allow = %v, want true", id, entry["allow"])
+		}
+		if entry["requireMention"] != false {
+			t.Errorf("channels[%q].requireMention = %v, want false", id, entry["requireMention"])
+		}
+	}
+}
+
+func TestOpenClawChannelConfigMulti_UserMultipleBindings(t *testing.T) {
+	// Less common but possible — a user agent with multiple Slack member IDs
+	// should aggregate all IDs into allowFrom.
+	s := &Slack{}
+	sv := map[string]string{"slack-bot-token": "xoxb-test", "slack-signing-secret": "secret"}
+	bindings := []channels.ChannelBinding{
+		{Platform: "slack", ID: "U0000000001"},
+		{Platform: "slack", ID: "U0000000002"},
+	}
+
+	cfg, err := s.OpenClawChannelConfigMulti("user", bindings, sv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	allowFrom, ok := cfg["allowFrom"].([]string)
+	if !ok {
+		t.Fatalf("allowFrom not a []string: %T %v", cfg["allowFrom"], cfg["allowFrom"])
+	}
+	if len(allowFrom) != 2 || allowFrom[0] != "U0000000001" || allowFrom[1] != "U0000000002" {
+		t.Errorf("allowFrom = %v, want [U0000000001 U0000000002] in order", allowFrom)
+	}
+}
+
+func TestOpenClawChannelConfigMulti_TeamEmptyIDsSkipped(t *testing.T) {
+	// Defensive: bindings with empty ID should not create a channels entry.
+	// Matches singular behavior at TestOpenClawChannelConfig_NoID.
+	s := &Slack{}
+	sv := map[string]string{"slack-bot-token": "x", "slack-signing-secret": "y"}
+	bindings := []channels.ChannelBinding{
+		{Platform: "slack", ID: ""},
+		{Platform: "slack", ID: "C1"},
+	}
+	cfg, err := s.OpenClawChannelConfigMulti("team", bindings, sv)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chans, ok := cfg["channels"].(map[string]any)
+	if !ok {
+		t.Fatalf("channels not a map: %v", cfg["channels"])
+	}
+	if len(chans) != 1 {
+		t.Errorf("want 1 channel entry (empty ID skipped), got %d: %v", len(chans), chans)
+	}
+	if _, has := chans["C1"]; !has {
+		t.Errorf("want C1 present; got %v", chans)
 	}
 }
 

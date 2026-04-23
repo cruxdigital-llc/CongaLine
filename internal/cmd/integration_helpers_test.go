@@ -54,6 +54,9 @@ func resetCLIState() {
 	adminForce = false
 	adminDeleteSecrets = false
 	behaviorAsName = ""
+	channelRemoveForce = false
+	channelUnbindForce = false
+	channelBindLabel = ""
 
 	// Reset cobra's "Changed" bits on all persistent flags.
 	// Without this, flags set in one test leak into the next.

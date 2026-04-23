@@ -161,10 +161,17 @@ func (p *RemoteProvider) BindChannel(ctx context.Context, agentName string, bind
 		return err
 	}
 
-	// Check for duplicate binding
-	if a.ChannelBinding(binding.Platform) != nil {
-		return fmt.Errorf("agent %q already has a %s binding: %w",
-			agentName, binding.Platform, provider.ErrBindingExists)
+	// Check bind preconditions (idempotent duplicate, label mismatch, cross-agent collision).
+	allAgents, listErr := p.ListAgents(ctx)
+	if listErr != nil {
+		return fmt.Errorf("failed to check binding uniqueness: %w", listErr)
+	}
+	skip, err := provider.CheckBindPreconditions(a, binding, allAgents)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
 	}
 
 	// Validate binding
@@ -211,7 +218,7 @@ func (p *RemoteProvider) BindChannel(ctx context.Context, agentName string, bind
 }
 
 // UnbindChannel removes a channel binding from an agent on the remote host.
-func (p *RemoteProvider) UnbindChannel(ctx context.Context, agentName string, platform string) error {
+func (p *RemoteProvider) UnbindChannel(ctx context.Context, agentName, platform, id string) error {
 	if _, ok := channels.Get(platform); !ok {
 		return fmt.Errorf("unknown channel platform %q", platform)
 	}
@@ -222,13 +229,14 @@ func (p *RemoteProvider) UnbindChannel(ctx context.Context, agentName string, pl
 		return err
 	}
 
-	// Check if agent has this binding
-	if a.ChannelBinding(platform) == nil {
-		return fmt.Errorf("agent %q has no %s binding", agentName, platform)
+	// Resolve which specific binding to remove.
+	targetID, err := provider.CheckUnbindRequest(a, platform, id)
+	if err != nil {
+		return err
 	}
 
-	// Remove binding
-	a.Channels = channels.FilterBindings(a.Channels, platform)
+	// Remove the specific (platform, targetID) binding.
+	a.Channels = channels.RemoveBinding(a.Channels, platform, targetID)
 	if err := p.saveAgentConfig(a); err != nil {
 		return err
 	}

@@ -1660,7 +1660,13 @@ func (p *LocalProvider) regenerateRouting(ctx context.Context) error {
 	if err := os.MkdirAll(p.configDir(), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(p.configDir(), "routing.json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(p.configDir(), "routing.json"), data, 0644); err != nil {
+		return err
+	}
+	for _, r := range common.FindMultiBindingAgents(agents) {
+		fmt.Fprintln(os.Stderr, r.LogLine())
+	}
+	return nil
 }
 
 func (p *LocalProvider) deployBehavior(cfg provider.AgentConfig) error {

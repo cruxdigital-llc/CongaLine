@@ -3,6 +3,8 @@ package common
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
@@ -73,4 +75,64 @@ func GenerateRoutingJSON(agents []provider.AgentConfig, resolver WebhookTargetRe
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// MultiBindingReport describes an agent bound to more than one channel on a
+// single platform. Returned by FindMultiBindingAgents as an adoption-signal
+// summary; callers typically format each report via LogLine and write it to
+// their operator-facing output stream.
+type MultiBindingReport struct {
+	AgentName  string
+	Platform   string
+	ChannelIDs []string
+}
+
+// LogLine returns a single structured, operator-facing line describing the
+// multi-binding agent. Format is stable — suitable for grepping.
+func (r MultiBindingReport) LogLine() string {
+	return fmt.Sprintf(
+		"[router-config] multi-binding agent: name=%s platform=%s bindings=%d channel_ids=[%s]",
+		r.AgentName, r.Platform, len(r.ChannelIDs), strings.Join(r.ChannelIDs, ","))
+}
+
+// FindMultiBindingAgents scans agents for any (agent, platform) pair with
+// more than one binding. Returns one report per such pair in stable order
+// (agent name asc, then platform asc). Paused agents are excluded.
+// Channel IDs inside each report preserve the order they appear in the
+// agent's Channels slice.
+func FindMultiBindingAgents(agents []provider.AgentConfig) []MultiBindingReport {
+	var reports []MultiBindingReport
+
+	// Sort agents by name for stable output.
+	sorted := make([]provider.AgentConfig, 0, len(agents))
+	for _, a := range agents {
+		if a.Paused {
+			continue
+		}
+		sorted = append(sorted, a)
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+
+	for _, a := range sorted {
+		byPlatform := make(map[string][]string)
+		for _, b := range a.Channels {
+			byPlatform[b.Platform] = append(byPlatform[b.Platform], b.ID)
+		}
+		platforms := make([]string, 0, len(byPlatform))
+		for p := range byPlatform {
+			platforms = append(platforms, p)
+		}
+		sort.Strings(platforms)
+		for _, p := range platforms {
+			ids := byPlatform[p]
+			if len(ids) > 1 {
+				reports = append(reports, MultiBindingReport{
+					AgentName:  a.Name,
+					Platform:   p,
+					ChannelIDs: ids,
+				})
+			}
+		}
+	}
+	return reports
 }

@@ -45,6 +45,20 @@ func (a *AgentConfig) ChannelBinding(platform string) *channels.ChannelBinding {
 	return nil
 }
 
+// ChannelBindings returns all bindings for the given platform in insertion
+// order. Returns an empty slice when no bindings match. Used by callers that
+// need to handle multi-binding agents (e.g. a team agent serving several Slack
+// channels); prefer over ChannelBinding when multiple bindings are valid.
+func (a *AgentConfig) ChannelBindings(platform string) []channels.ChannelBinding {
+	var out []channels.ChannelBinding
+	for _, b := range a.Channels {
+		if b.Platform == platform {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // AgentStatus is returned by GetStatus.
 type AgentStatus struct {
 	AgentName    string          `json:"agent_name"`
@@ -189,8 +203,14 @@ type Provider interface {
 	// BindChannel adds a channel binding to an existing agent.
 	BindChannel(ctx context.Context, agentName string, binding channels.ChannelBinding) error
 
-	// UnbindChannel removes a channel binding from an agent.
-	UnbindChannel(ctx context.Context, agentName string, platform string) error
+	// UnbindChannel removes a channel binding from an agent. When id is empty
+	// and the agent has exactly one binding for the platform, that binding is
+	// removed (legacy single-binding behavior). When id is empty and 2+
+	// bindings exist for the platform, the call returns ErrAmbiguousUnbind —
+	// the caller should surface the available bindings and retry with a
+	// specific id. When id is set, only the matching (platform, id) binding
+	// is removed.
+	UnbindChannel(ctx context.Context, agentName string, platform string, id string) error
 
 	// --- Connectivity ---
 

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -183,10 +184,17 @@ func (p *AWSProvider) BindChannel(ctx context.Context, agentName string, binding
 		return err
 	}
 
-	// Check for duplicate binding
-	if a.ChannelBinding(binding.Platform) != nil {
-		return fmt.Errorf("agent %q already has a %s binding: %w",
-			agentName, binding.Platform, provider.ErrBindingExists)
+	// Check bind preconditions (idempotent duplicate, label mismatch, cross-agent collision).
+	allAgents, listErr := p.ListAgents(ctx)
+	if listErr != nil {
+		return fmt.Errorf("failed to check binding uniqueness: %w", listErr)
+	}
+	skip, err := provider.CheckBindPreconditions(a, binding, allAgents)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
 	}
 
 	// Validate binding
@@ -237,7 +245,7 @@ func (p *AWSProvider) BindChannel(ctx context.Context, agentName string, binding
 }
 
 // UnbindChannel removes a channel binding from an agent.
-func (p *AWSProvider) UnbindChannel(ctx context.Context, agentName string, platform string) error {
+func (p *AWSProvider) UnbindChannel(ctx context.Context, agentName, platform, id string) error {
 	if _, ok := channels.Get(platform); !ok {
 		return fmt.Errorf("unknown channel platform %q", platform)
 	}
@@ -248,13 +256,14 @@ func (p *AWSProvider) UnbindChannel(ctx context.Context, agentName string, platf
 		return err
 	}
 
-	// Check if agent has this binding
-	if a.ChannelBinding(platform) == nil {
-		return fmt.Errorf("agent %q has no %s binding", agentName, platform)
+	// Resolve which specific binding to remove.
+	targetID, err := provider.CheckUnbindRequest(a, platform, id)
+	if err != nil {
+		return err
 	}
 
-	// Remove binding and save to SSM
-	a.Channels = channels.FilterBindings(a.Channels, platform)
+	// Remove the specific (platform, targetID) binding and save to SSM.
+	a.Channels = channels.RemoveBinding(a.Channels, platform, targetID)
 	if err := p.saveAgentToSSM(ctx, *a); err != nil {
 		return err
 	}
@@ -422,7 +431,13 @@ func (p *AWSProvider) regenerateRoutingOnInstance(ctx context.Context, instanceI
 		return fmt.Errorf("failed to generate routing: %w", err)
 	}
 
-	return p.uploadFile(ctx, instanceID, "/opt/conga/config/routing.json", routingJSON, "0644")
+	if err := p.uploadFile(ctx, instanceID, "/opt/conga/config/routing.json", routingJSON, "0644"); err != nil {
+		return err
+	}
+	for _, r := range common.FindMultiBindingAgents(agents) {
+		fmt.Fprintln(os.Stderr, r.LogLine())
+	}
+	return nil
 }
 
 // restartRouterOnInstance restarts the router container on the EC2 instance.
