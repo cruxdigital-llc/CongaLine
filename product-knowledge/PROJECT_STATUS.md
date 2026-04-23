@@ -196,6 +196,26 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
   - [x] Phase 4: Connect / SSH tunnel (4 subtests — ConnectInfo verification)
 - [ ] Verification
 
+### 27. Multi-Channel Team Agents — Specified, Ready for Implementation
+*Lead: Architect + QA + PM*
+*See `specs/2026-04-22_feature_multi_channel_team_agents/` for full trace*
+- [x] Requirements defined
+- [x] Plan defined
+- [x] Spec defined (data models, API changes, edge cases, data safety, rollout/rollback)
+- [x] Persona review passed (Architect + QA + PM, all blockers resolved)
+- [x] Standards gate passed (1 violation resolved — Data Safety section added; 1 preexisting warning — JSON schema entries for `channels bind/unbind/list` predate this spec)
+- [ ] Implementation (single PR in congaline + coordinated PR in `terraform-provider-conga`)
+  - [ ] Phase 1: `ChannelBindings(platform)` plural helper
+  - [ ] Phase 2: Bind guard — idempotent on exact match, label-mismatch error, cross-agent uniqueness
+  - [ ] Phase 3: Routing fan-out (`pkg/common/routing.go`)
+  - [ ] Phase 4: `MultiBindingChannel` interface extension + Slack implementation
+  - [ ] Phase 5: `UnbindChannel` signature change + `ErrAmbiguousUnbind` sentinel
+  - [ ] Phase 6: CLI + MCP UX (bind/unbind/list additive behavior)
+  - [ ] Phase 7: Router unbound-channel ephemeral notice with 24h rate limit
+  - [ ] Phase 8: Tests (unit, integration on all three providers, router)
+  - [ ] Phase 9: Terraform provider — resource ID scheme v0→v1, state upgrader, Create/Read/Delete/Import updates
+- [ ] Verification
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
