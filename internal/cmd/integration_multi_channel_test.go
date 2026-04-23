@@ -199,10 +199,13 @@ func TestLocalMultiChannelBinding(t *testing.T) {
 
 // --- Helpers ---
 
-// readRoutingJSON reads and parses $dataDir/routing.json.
+// readRoutingJSON reads and parses the routing.json the local provider
+// writes under $dataDir/config/ (see pkg/provider/localprovider/provider.go
+// where routingPath is filepath.Join(p.configDir(), "routing.json") and
+// configDir() is filepath.Join(p.dataDir, "config")).
 func readRoutingJSON(t *testing.T, dataDir string) map[string]any {
 	t.Helper()
-	path := filepath.Join(dataDir, "routing.json")
+	path := filepath.Join(dataDir, "config", "routing.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read routing.json: %v", err)
