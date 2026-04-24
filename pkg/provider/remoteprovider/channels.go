@@ -2,7 +2,10 @@ package remoteprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	posixpath "path"
 	"strings"
 
@@ -22,17 +25,29 @@ func (p *RemoteProvider) ReadProxyManifest(ctx context.Context, agentName string
 	path := posixpath.Join(p.remoteConfigDir(), policy.EgressManifestFileName(agentName))
 	data, err := p.ssh.Download(path)
 	if err != nil {
-		// SSHClient.Download returns a generic error for "file not found".
-		// The SFTP + cat fallback surfaces different messages — check both.
-		msg := err.Error()
-		if strings.Contains(msg, "file does not exist") ||
-			strings.Contains(msg, "No such file") ||
-			strings.Contains(msg, "not found") {
+		if isNotExist(err) {
 			return nil, fmt.Errorf("manifest for agent %q: %w", agentName, provider.ErrNotFound)
 		}
 		return nil, fmt.Errorf("reading manifest for %q: %w", agentName, err)
 	}
 	return data, nil
+}
+
+// isNotExist reports whether err indicates a missing file, across the two
+// code paths in SSHClient.Download:
+//   - SFTP path: wraps os.ErrNotExist / fs.ErrNotExist via *sftp.StatusError,
+//     which satisfies errors.Is.
+//   - cat fallback: wraps the shell's "No such file or directory" stderr
+//     plus a session exit error. Detected here via substring match on the
+//     common variants.
+func isNotExist(err error) bool {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "file does not exist") ||
+		strings.Contains(msg, "No such file") ||
+		strings.Contains(msg, "not found")
 }
 
 // AddChannel configures a messaging channel platform on the remote host by

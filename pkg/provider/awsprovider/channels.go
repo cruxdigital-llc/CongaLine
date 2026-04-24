@@ -290,10 +290,17 @@ func (p *AWSProvider) UnbindChannel(ctx context.Context, agentName string, platf
 	return nil
 }
 
+// manifestMissingSentinel is echoed by ReadProxyManifest's shell script when
+// the manifest file does not exist on the host. Chosen so it cannot collide
+// with a valid manifest (which is pretty-printed JSON starting with '{').
+const manifestMissingSentinel = "__CONGA_MANIFEST_MISSING__"
+
 // ReadProxyManifest runs a `cat` on the instance to fetch the deployed
 // egress policy manifest for an agent. Returns (nil, ErrNotFound) when the
 // manifest file is absent — e.g. if the agent has not been deployed with
-// the drift-aware pipeline yet.
+// the drift-aware pipeline yet. Other read errors (permission denied, SSM
+// failure, disk I/O) surface as distinct errors so the drift UI can tell
+// the operator "error" vs "not deployed".
 func (p *AWSProvider) ReadProxyManifest(ctx context.Context, agentName string) ([]byte, error) {
 	if !isValidAgentName(agentName) {
 		return nil, fmt.Errorf("invalid agent name %q", agentName)
@@ -303,14 +310,30 @@ func (p *AWSProvider) ReadProxyManifest(ctx context.Context, agentName string) (
 		return nil, err
 	}
 	manifestPath := fmt.Sprintf("/opt/conga/config/%s", policy.EgressManifestFileName(agentName))
-	// Emit an exit-2 sentinel for "missing" so we can distinguish from read errors.
-	script := fmt.Sprintf(`if [ -f %q ]; then cat %q; else exit 2; fi`, manifestPath, manifestPath)
+	// isValidAgentName restricts agentName to [a-z0-9-] so the Go-quoted
+	// string produced by %q contains no shell-special characters. Keep these
+	// two facts together when reviewing changes to either site.
+	//
+	// The script always exits 0 with Success. "Missing" is communicated by
+	// the sentinel on stdout so the caller can distinguish a missing file
+	// (benign — report "not deployed") from an SSM/permission error
+	// (operator needs to know).
+	script := fmt.Sprintf(
+		`if [ -f %q ]; then cat %q; else echo %s; fi`,
+		manifestPath, manifestPath, manifestMissingSentinel,
+	)
 	result, err := p.runOnInstance(ctx, instanceID, script, 30*time.Second)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading manifest for %q: %w", agentName, err)
 	}
 	if result == nil || result.Status != "Success" {
-		// Non-zero exit — most likely the file is missing.
+		stderr := ""
+		if result != nil {
+			stderr = strings.TrimSpace(result.Stderr)
+		}
+		return nil, fmt.Errorf("reading manifest for %q: SSM command failed (stderr: %s)", agentName, stderr)
+	}
+	if strings.TrimSpace(result.Stdout) == manifestMissingSentinel {
 		return nil, fmt.Errorf("manifest for agent %q: %w", agentName, provider.ErrNotFound)
 	}
 	return []byte(result.Stdout), nil
@@ -318,6 +341,8 @@ func (p *AWSProvider) ReadProxyManifest(ctx context.Context, agentName string) (
 
 // isValidAgentName mirrors the agent-name safety check in deploy-egress.sh.tmpl
 // and keeps injection-prone characters out of the interpolated shell command.
+// Any change here must be mirrored at call sites that interpolate agentName
+// into a shell command (see ReadProxyManifest).
 func isValidAgentName(name string) bool {
 	if name == "" {
 		return false

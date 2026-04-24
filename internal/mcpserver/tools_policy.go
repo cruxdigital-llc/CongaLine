@@ -285,6 +285,20 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
+			// Read back the just-saved policy bytes so we can pass them into
+			// deployPolicyEgress without a second disk read inside the helper.
+			// Only used when deploy=true; set_egress without deploy never touches
+			// the running agents.
+			var policyContent string
+			if req.GetBool("deploy", false) {
+				policyBytes, readErr := os.ReadFile(path)
+				if readErr != nil {
+					return mcp.NewToolResultError(
+						fmt.Sprintf("policy saved but could not re-read for deploy: %v", readErr)), nil
+				}
+				policyContent = string(policyBytes)
+			}
+
 			// Response includes a deploy reminder so the caller can't miss it.
 			// When 'deploy' is true we run the deploy step inline and report its
 			// outcome alongside the saved policy.
@@ -296,18 +310,31 @@ func (s *Server) toolPolicySetEgress() server.ServerTool {
 			if req.GetBool("deploy", false) {
 				ctx, cancel := toolCtx(ctx)
 				defer cancel()
-				deployed, deployErrs := s.deployPolicyEgress(ctx, pf, agentName)
-				resp.DeployRequired = false
-				resp.DeployHint = ""
+				deployed, deployErrs := s.deployPolicyEgress(ctx, pf, agentName, []byte(policyContent))
 				resp.Deployed = deployed
 				resp.DeployErrors = deployErrs
-				if len(deployed) == 0 && len(deployErrs) > 0 {
-					// Surface the deploy failure as a tool error so the caller
-					// doesn't silently assume the policy is live. The policy
-					// was still saved locally — the response carries that.
+				// Deploy is "complete" only when every target succeeded.
+				// Any failure — partial or total — leaves at least one proxy
+				// stale, so deploy_required must stay true. The hint points
+				// operators at the corrective action.
+				switch {
+				case len(deployErrs) == 0:
+					resp.DeployRequired = false
+					resp.DeployHint = ""
+				case len(deployed) == 0:
+					// Total failure: no agent got the new policy.
+					resp.DeployRequired = true
+					resp.DeployHint = "deploy failed — rerun conga_policy_deploy after addressing the errors above."
 					body, _ := s.resultJSON(resp)
 					return mcp.NewToolResultError(fmt.Sprintf("policy saved but deploy failed: %s\n%s",
 						strings.Join(deployErrs, "; "), body)), nil
+				default:
+					// Partial failure: some agents drifted.
+					resp.DeployRequired = true
+					resp.DeployHint = fmt.Sprintf(
+						"deploy partially succeeded (%d ok, %d failed) — rerun conga_policy_deploy to retry the failed agents.",
+						len(deployed), len(deployErrs),
+					)
 				}
 			}
 			return jsonResult(resp)
@@ -326,10 +353,20 @@ type setEgressResult struct {
 	DeployErrors   []string           `json:"deploy_errors,omitempty"`
 }
 
+// egressDeployer is implemented by providers that support pushing egress
+// config directly to an agent's host (AWS via SSM). Providers without a
+// direct path (local, remote) fall through to RefreshAgent — which in turn
+// regenerates the Envoy YAML + manifest from their own code paths.
+type egressDeployer interface {
+	DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, manifestJSON string, mode policy.EgressMode) error
+}
+
 // deployPolicyEgress runs the same egress-deploy logic as conga_policy_deploy,
 // scoped to a single agent when agentName is set or to all non-paused agents
-// otherwise. Returns (deployed, errors).
-func (s *Server) deployPolicyEgress(ctx context.Context, pf *policy.PolicyFile, agentName string) ([]string, []string) {
+// otherwise. policyBytes must be the authoritative on-disk policy content —
+// the caller owns reading/marshaling; this helper never re-reads the file.
+// Returns (deployed, errors).
+func (s *Server) deployPolicyEgress(ctx context.Context, pf *policy.PolicyFile, agentName string, policyBytes []byte) ([]string, []string) {
 	var targets []string
 	if agentName != "" {
 		targets = []string{agentName}
@@ -345,19 +382,6 @@ func (s *Server) deployPolicyEgress(ctx context.Context, pf *policy.PolicyFile, 
 		}
 	}
 
-	type egressDeployer interface {
-		DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, manifestJSON string, mode policy.EgressMode) error
-	}
-	// Re-read the policy file from disk. The caller (set_egress handler) has
-	// already written it via policy.Save, so this is the authoritative text.
-	path, err := s.policyPath()
-	if err != nil {
-		return nil, []string{fmt.Sprintf("resolving policy path: %v", err)}
-	}
-	policyBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("reading policy file: %v", err)}
-	}
 	policyContent := string(policyBytes)
 
 	deployer, ok := s.prov.(egressDeployer)
@@ -631,10 +655,8 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 				return mcp.NewToolResultError("no active agents to deploy to — all agents are paused"), nil
 			}
 
-			// Check if provider supports direct egress deployment (e.g., AWS via SSM)
-			type egressDeployer interface {
-				DeployEgress(ctx context.Context, agentName, policyContent, envoyConfig, manifestJSON string, mode policy.EgressMode) error
-			}
+			// Check if provider supports direct egress deployment (e.g., AWS via SSM).
+			// Interface defined once at the package level (see egressDeployer).
 
 			var deployed []string
 			var errors []string
@@ -737,12 +759,22 @@ func (s *Server) toolPolicyDrift() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
-			pf, _, err := s.loadPolicy()
+			// Drift detection requires an explicit policy file — loadPolicy()
+			// returns a skeleton when the file is missing, which would give a
+			// misleading "everything is fine" against an empty spec. Check
+			// disk presence directly.
+			path, err := s.policyPath()
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			if pf == nil {
-				return mcp.NewToolResultError("no policy file found — nothing to compare against"), nil
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				return mcp.NewToolResultError(
+					"no policy file found — create one with conga_policy_set_egress or conga_policy_set_routing first",
+				), nil
+			}
+			pf, _, err := s.loadPolicy()
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			if err := pf.Validate(); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("policy validation failed: %v", err)), nil
