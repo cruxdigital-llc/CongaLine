@@ -396,6 +396,7 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 		filepath.Join(p.configDir(), name+".sha256"),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", name)),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", name)),
+		filepath.Join(p.configDir(), policy.EgressManifestFileName(name)),
 	} {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove %s: %v", filepath.Base(f), err))

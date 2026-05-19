@@ -353,11 +353,12 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 
 	// Remove remote config files
-	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s %s %s %s",
+	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s %s %s %s %s",
 		shellQuote(posixpath.Join(p.remoteAgentsDir(), name+".json")),
 		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".env")),
 		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".sha256")),
 		shellQuote(posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.yaml", name))),
+		shellQuote(posixpath.Join(p.remoteConfigDir(), policy.EgressManifestFileName(name))),
 	))
 
 	if deleteSecrets {

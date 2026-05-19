@@ -575,7 +575,7 @@ func (p *AWSProvider) DeployEgress(ctx context.Context, agentName, policyContent
 // arbitrary shell execution. This check conservatively rejects any value containing
 // the delimiter string, even as a substring.
 func validateHeredocSafety(values map[string]string) error {
-	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF"}
+	heredocDelimiters := []string{"POLICYEOF", "ENVOYEOF", "BOOTSTRAPEOF", "PROXYDF", "MANIFESTEOF"}
 	for _, delim := range heredocDelimiters {
 		for name, val := range values {
 			if strings.Contains(val, delim) {

@@ -409,11 +409,14 @@ func (s *Server) deployPolicyEgress(ctx context.Context, pf *policy.PolicyFile, 
 			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
+		// If manifest building fails, deploy egress without it rather than
+		// skipping the agent — drift detection will report "manifest missing"
+		// which surfaces the bug without dropping the security-policy update.
 		manifest := policy.BuildManifest(merged.Egress)
 		manifestBytes, marshalErr := manifest.MarshalForDeploy()
 		if marshalErr != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", name, marshalErr))
-			continue
+			errs = append(errs, fmt.Sprintf("%s: building manifest (deploying without it): %v", name, marshalErr))
+			manifestBytes = nil
 		}
 		mode := policy.EgressModeEnforce
 		if merged.Egress != nil {
@@ -677,11 +680,13 @@ func (s *Server) toolPolicyDeploy() server.ServerTool {
 					// reverse-engineering the Lua filter. If manifest building
 					// fails, proceed with an empty manifest — drift detection
 					// will then report "manifest missing" which surfaces the bug.
+					// Skipping the agent entirely would drop a security-policy
+					// update for an unrelated reason, so always deploy egress.
 					manifest := policy.BuildManifest(merged.Egress)
 					manifestBytes, marshalErr := manifest.MarshalForDeploy()
 					if marshalErr != nil {
-						errors = append(errors, fmt.Sprintf("%s: building manifest: %v", name, marshalErr))
-						continue
+						errors = append(errors, fmt.Sprintf("%s: building manifest (deploying without it): %v", name, marshalErr))
+						manifestBytes = nil
 					}
 
 					mode := policy.EgressModeEnforce

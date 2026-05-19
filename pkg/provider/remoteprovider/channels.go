@@ -45,9 +45,12 @@ func isNotExist(err error) bool {
 		return true
 	}
 	msg := err.Error()
+	// Match only the missing-file variants, not bare "not found": a
+	// "cat: command not found" (exit 127) or other shell failure must
+	// surface as a real error, not a silently-absent manifest.
 	return strings.Contains(msg, "file does not exist") ||
 		strings.Contains(msg, "No such file") ||
-		strings.Contains(msg, "not found")
+		strings.Contains(msg, "no such file")
 }
 
 // AddChannel configures a messaging channel platform on the remote host by
