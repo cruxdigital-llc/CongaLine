@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
@@ -128,17 +129,47 @@ func adminListAgentsRun(cmd *cobra.Command, args []string) error {
 	headers := []string{"NAME", "TYPE", "STATUS", "CHANNEL", "GATEWAY PORT"}
 	var rows [][]string
 	for _, a := range agents {
-		channel := "(gateway-only)"
-		if len(a.Channels) > 0 {
-			channel = a.Channels[0].Platform + ":" + a.Channels[0].ID
-		}
 		status := "active"
 		if a.Paused {
 			status = "paused"
 		}
-		rows = append(rows, []string{a.Name, string(a.Type), status, channel, strconv.Itoa(a.GatewayPort)})
+		rows = append(rows, []string{a.Name, string(a.Type), status, formatAgentChannels(a), strconv.Itoa(a.GatewayPort)})
 	}
 
 	ui.PrintTable(headers, rows)
 	return nil
+}
+
+// formatAgentChannels renders the CHANNEL column for an agent. For a
+// gateway-only agent (no bindings) returns "(gateway-only)". For a single
+// binding, returns "<platform>:<id>". For N>1 bindings, groups by platform
+// and shows either a short aggregated form ("slack (3)") or a comma list
+// when it stays under the soft width limit.
+func formatAgentChannels(a provider.AgentConfig) string {
+	if len(a.Channels) == 0 {
+		return "(gateway-only)"
+	}
+
+	// Group by platform, preserving insertion order per platform.
+	byPlatform := map[string][]string{}
+	platformOrder := []string{}
+	for _, b := range a.Channels {
+		if _, seen := byPlatform[b.Platform]; !seen {
+			platformOrder = append(platformOrder, b.Platform)
+		}
+		byPlatform[b.Platform] = append(byPlatform[b.Platform], b.ID)
+	}
+
+	const softLimit = 48 // keeps the table readable on most terminals
+	parts := make([]string, 0, len(platformOrder))
+	for _, platform := range platformOrder {
+		ids := byPlatform[platform]
+		full := platform + ":" + strings.Join(ids, ",")
+		if len(full) <= softLimit {
+			parts = append(parts, full)
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d)", platform, len(ids)))
+	}
+	return strings.Join(parts, "; ")
 }

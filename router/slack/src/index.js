@@ -1,6 +1,7 @@
 import { SocketModeClient } from '@slack/socket-mode';
 import { readFileSync, watch } from 'fs';
 import { createHmac } from 'crypto';
+import { createUnboundNotifier } from './unbound-notice.js';
 
 // Load routing config
 const CONFIG_PATH = process.env.ROUTER_CONFIG || '/opt/conga/config/routing.json';
@@ -57,7 +58,14 @@ function extractUser(payload) {
     || null;
 }
 
-// Find the target container URL for an event
+// Find the target container URL for an event.
+//
+// Shape of the returned object:
+//   - Route found: { target, reason }
+//   - Channel-scoped event in a channel we're not configured for:
+//       { target: null, reason: 'unbound:<channelId>', channelId, userId }
+//     The caller uses this to post an ephemeral "not configured" notice.
+//   - No route at all (DMs for unknown users, unusual payloads): null.
 function resolveTarget(payload) {
   const channel = extractChannel(payload);
 
@@ -67,9 +75,21 @@ function resolveTarget(payload) {
       if (userId && config.members[userId]) {
         return { target: config.members[userId], reason: `dm:${userId}` };
       }
+      // DM to a user we don't route — drop silently, not a channel-bind problem.
+      return null;
     }
     if (config.channels[channel]) {
       return { target: config.channels[channel], reason: `channel:${channel}` };
+    }
+    // Public (C...) / private (G...) channel not in routing.json. The bot
+    // was invited but nobody has bound the channel to an agent yet.
+    if (channel.startsWith('C') || channel.startsWith('G')) {
+      return {
+        target: null,
+        reason: `unbound:${channel}`,
+        channelId: channel,
+        userId: extractUser(payload),
+      };
     }
   }
 
@@ -147,6 +167,10 @@ function isDuplicate(body) {
   return false;
 }
 
+// Rate-limited "not configured for this channel" ephemeral notifier.
+// One instance for the router's lifetime; state clears on restart.
+const unboundNotifier = createUnboundNotifier();
+
 client.on('slack_event', async ({ body, ack }) => {
   // Ack immediately — Slack requires this within 3 seconds
   if (ack) await ack();
@@ -176,16 +200,29 @@ client.on('slack_event', async ({ body, ack }) => {
 
   const route = resolveTarget(body);
 
-  if (route) {
+  if (route?.target) {
     console.log(`[router] ${eventType} → ${route.reason}`);
     forwardEvent(route.target, body).catch(err =>
       console.error(`[router] Async forward error:`, err.message)
     );
-  } else {
-    const channel = extractChannel(body);
-    const user = extractUser(body);
-    console.log(`[router] No route: type=${eventType} channel=${channel} user=${user} — dropped`);
+    return;
   }
+
+  // Unbound channel: nudge the sender to ask an admin to bind it.
+  if (route?.reason?.startsWith('unbound:')) {
+    const result = await unboundNotifier.notify(route.channelId, route.userId, body);
+    if (result.sent) {
+      console.log(`[router] ${eventType} → unbound:${route.channelId} (ephemeral to ${route.userId})`);
+    } else {
+      // Suppressed — rate-limited, bot sender, or missing IDs.
+      console.log(`[router] ${eventType} → unbound:${route.channelId} (${result.suppressed})`);
+    }
+    return;
+  }
+
+  const channel = extractChannel(body);
+  const user = extractUser(body);
+  console.log(`[router] No route: type=${eventType} channel=${channel} user=${user} — dropped`);
 });
 
 // Connection lifecycle

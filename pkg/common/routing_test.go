@@ -101,6 +101,211 @@ func TestGenerateRoutingJSON_GatewayOnly(t *testing.T) {
 	}
 }
 
+func TestGenerateRoutingJSON_TeamAgentSingleChannel_ByteIdentical(t *testing.T) {
+	// Regression: single-binding team agent must produce byte-identical
+	// output to the pre-multi-binding implementation. This is the blast-radius
+	// guarantee for operators upgrading without opting into multi-binding.
+	agents := []provider.AgentConfig{
+		{
+			Name: "leadership", Type: provider.AgentTypeTeam, GatewayPort: 18790,
+			Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C9876543210"}},
+		},
+	}
+
+	got, err := GenerateRoutingJSON(agents, nil)
+	if err != nil {
+		t.Fatalf("GenerateRoutingJSON() error: %v", err)
+	}
+
+	want := `{
+  "channels": {
+    "C9876543210": "http://conga-leadership:18790/slack/events"
+  },
+  "members": {}
+}`
+	if string(got) != want {
+		t.Errorf("single-binding output drifted.\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestGenerateRoutingJSON_TeamAgentMultipleChannels(t *testing.T) {
+	// Core of the feature: one team agent bound to three channels should
+	// produce three entries in cfg.Channels, all pointing at the same URL.
+	agents := []provider.AgentConfig{
+		{
+			Name: "contracts", Type: provider.AgentTypeTeam, GatewayPort: 18791,
+			Channels: []channels.ChannelBinding{
+				{Platform: "slack", ID: "C1", Label: "#legal"},
+				{Platform: "slack", ID: "C2", Label: "#sales"},
+				{Platform: "slack", ID: "C3"},
+			},
+		},
+	}
+
+	data, err := GenerateRoutingJSON(agents, nil)
+	if err != nil {
+		t.Fatalf("GenerateRoutingJSON() error: %v", err)
+	}
+
+	var cfg RoutingConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	if len(cfg.Channels) != 3 {
+		t.Fatalf("want 3 channel routes, got %d: %+v", len(cfg.Channels), cfg.Channels)
+	}
+	wantURL := "http://conga-contracts:18791/slack/events"
+	for _, id := range []string{"C1", "C2", "C3"} {
+		if got := cfg.Channels[id]; got != wantURL {
+			t.Errorf("channels[%q] = %q, want %q", id, got, wantURL)
+		}
+	}
+}
+
+func TestGenerateRoutingJSON_TeamAgentMixedWithOtherAgents(t *testing.T) {
+	// Multi-binding team agent alongside a user agent and a single-binding
+	// team agent — ensure no cross-contamination.
+	agents := []provider.AgentConfig{
+		{
+			Name: "ada", Type: provider.AgentTypeUser, GatewayPort: 18789,
+			Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U0000000001"}},
+		},
+		{
+			Name: "contracts", Type: provider.AgentTypeTeam, GatewayPort: 18791,
+			Channels: []channels.ChannelBinding{
+				{Platform: "slack", ID: "C1"},
+				{Platform: "slack", ID: "C2"},
+			},
+		},
+		{
+			Name: "leadership", Type: provider.AgentTypeTeam, GatewayPort: 18790,
+			Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C99"}},
+		},
+	}
+
+	data, err := GenerateRoutingJSON(agents, nil)
+	if err != nil {
+		t.Fatalf("GenerateRoutingJSON() error: %v", err)
+	}
+
+	var cfg RoutingConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	if len(cfg.Members) != 1 {
+		t.Errorf("want 1 member, got %d", len(cfg.Members))
+	}
+	if len(cfg.Channels) != 3 {
+		t.Errorf("want 3 channel routes, got %d", len(cfg.Channels))
+	}
+	if cfg.Members["U0000000001"] != "http://conga-ada:18789/slack/events" {
+		t.Errorf("ada user route wrong: %q", cfg.Members["U0000000001"])
+	}
+	if cfg.Channels["C1"] != "http://conga-contracts:18791/slack/events" {
+		t.Errorf("contracts C1 route wrong: %q", cfg.Channels["C1"])
+	}
+	if cfg.Channels["C2"] != "http://conga-contracts:18791/slack/events" {
+		t.Errorf("contracts C2 route wrong: %q", cfg.Channels["C2"])
+	}
+	if cfg.Channels["C99"] != "http://conga-leadership:18790/slack/events" {
+		t.Errorf("leadership route wrong: %q", cfg.Channels["C99"])
+	}
+}
+
+func TestFindMultiBindingAgents_None(t *testing.T) {
+	agents := []provider.AgentConfig{
+		{Name: "ada", Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U1"}}},
+		{Name: "leadership", Channels: []channels.ChannelBinding{{Platform: "slack", ID: "C1"}}},
+	}
+	if got := FindMultiBindingAgents(agents); len(got) != 0 {
+		t.Errorf("want empty reports, got %+v", got)
+	}
+}
+
+func TestFindMultiBindingAgents_FindsTeam(t *testing.T) {
+	agents := []provider.AgentConfig{
+		{Name: "ada", Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U1"}}},
+		{
+			Name: "contracts",
+			Channels: []channels.ChannelBinding{
+				{Platform: "slack", ID: "C1"},
+				{Platform: "slack", ID: "C2"},
+				{Platform: "slack", ID: "C3"},
+			},
+		},
+	}
+	reports := FindMultiBindingAgents(agents)
+	if len(reports) != 1 {
+		t.Fatalf("want 1 report, got %d: %+v", len(reports), reports)
+	}
+	r := reports[0]
+	if r.AgentName != "contracts" || r.Platform != "slack" {
+		t.Errorf("report identity = (%q, %q), want (contracts, slack)", r.AgentName, r.Platform)
+	}
+	if len(r.ChannelIDs) != 3 {
+		t.Errorf("want 3 channel ids, got %d", len(r.ChannelIDs))
+	}
+	wantIDs := []string{"C1", "C2", "C3"}
+	for i, id := range r.ChannelIDs {
+		if id != wantIDs[i] {
+			t.Errorf("ChannelIDs[%d] = %q, want %q (preserve insertion order)", i, id, wantIDs[i])
+		}
+	}
+}
+
+func TestFindMultiBindingAgents_ExcludesPaused(t *testing.T) {
+	agents := []provider.AgentConfig{
+		{
+			Name: "contracts", Paused: true,
+			Channels: []channels.ChannelBinding{
+				{Platform: "slack", ID: "C1"},
+				{Platform: "slack", ID: "C2"},
+			},
+		},
+	}
+	if got := FindMultiBindingAgents(agents); len(got) != 0 {
+		t.Errorf("paused agent should not appear in reports, got %+v", got)
+	}
+}
+
+func TestFindMultiBindingAgents_StableOrder(t *testing.T) {
+	// Two multi-binding agents — reports should be ordered by agent name ascending.
+	agents := []provider.AgentConfig{
+		{
+			Name: "zebra",
+			Channels: []channels.ChannelBinding{
+				{Platform: "slack", ID: "Cz1"},
+				{Platform: "slack", ID: "Cz2"},
+			},
+		},
+		{
+			Name: "alpha",
+			Channels: []channels.ChannelBinding{
+				{Platform: "slack", ID: "Ca1"},
+				{Platform: "slack", ID: "Ca2"},
+			},
+		},
+	}
+	reports := FindMultiBindingAgents(agents)
+	if len(reports) != 2 || reports[0].AgentName != "alpha" || reports[1].AgentName != "zebra" {
+		t.Errorf("want [alpha, zebra], got %+v", reports)
+	}
+}
+
+func TestMultiBindingReport_LogLine(t *testing.T) {
+	r := MultiBindingReport{
+		AgentName:  "contracts",
+		Platform:   "slack",
+		ChannelIDs: []string{"C1", "C2", "C3"},
+	}
+	want := "[router-config] multi-binding agent: name=contracts platform=slack bindings=3 channel_ids=[C1,C2,C3]"
+	if got := r.LogLine(); got != want {
+		t.Errorf("LogLine()\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
 func TestGenerateRoutingJSON_MixedRuntimes(t *testing.T) {
 	agents := []provider.AgentConfig{
 		{Name: "ocagent", Type: provider.AgentTypeUser, Runtime: "openclaw",
