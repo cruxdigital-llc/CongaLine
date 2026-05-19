@@ -396,6 +396,7 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 		filepath.Join(p.configDir(), name+".sha256"),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", name)),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", name)),
+		filepath.Join(p.configDir(), policy.EgressManifestFileName(name)),
 	} {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove %s: %v", filepath.Base(f), err))
@@ -1575,6 +1576,21 @@ func (p *LocalProvider) startAgentEgressProxy(ctx context.Context, agentName str
 	}
 	if err := os.WriteFile(confPath, []byte(conf), 0444); err != nil {
 		return fmt.Errorf("writing egress config: %w", err)
+	}
+
+	// Write the deployment manifest alongside the YAML so drift detection
+	// (conga policy drift) can tell whether the running proxy matches the
+	// current desired policy. Best-effort: manifest write failure does not
+	// abort the deploy.
+	manifestPath := filepath.Join(p.configDir(), policy.EgressManifestFileName(agentName))
+	manifestBytes, err := policy.BuildManifest(ep).MarshalForDeploy()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to build egress manifest for %s: %v\n", agentName, err)
+	} else {
+		_ = os.Remove(manifestPath)
+		if err := os.WriteFile(manifestPath, manifestBytes, 0444); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write egress manifest %s: %v\n", manifestPath, err)
+		}
 	}
 
 	// Ensure agent network exists (caller should have created it, but be safe)
