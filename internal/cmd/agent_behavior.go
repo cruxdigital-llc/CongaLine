@@ -145,7 +145,17 @@ func syncBehaviorToDeployed(dataDir string) {
 		return nil
 	})
 
-	// Remove files from dst that no longer exist in src
+	// Remove files from dst that no longer exist in src.
+	//
+	// IMPORTANT: only reconcile files INSIDE per-agent subdirectories
+	// (rel contains a path separator). Direct children of dst (e.g.
+	// dataDir/agents/<name>.json — the local provider's identity store —
+	// or dataDir/agents/README.md) are not part of the overlay surface
+	// and must not be deleted. The pre-2026-05-XX layout sidestepped this
+	// by living under dataDir/behavior/agents/, but the rename collapsed
+	// both file types into a single parent dir. See
+	// pkg/provider/localprovider/provider.go behaviorDir() doc comment
+	// for the cohabitation rules.
 	if _, err := os.Stat(dst); err != nil {
 		return
 	}
@@ -162,6 +172,11 @@ func syncBehaviorToDeployed(dataDir string) {
 			return nil
 		}
 		rel, _ := filepath.Rel(dst, path)
+		// Skip top-level files (no separator in rel) — they're not overlay
+		// content. See comment above the walk for the full rationale.
+		if !strings.Contains(rel, string(filepath.Separator)) {
+			return nil
+		}
 		if _, err := os.Stat(filepath.Join(src, rel)); os.IsNotExist(err) {
 			os.Remove(path)
 		}

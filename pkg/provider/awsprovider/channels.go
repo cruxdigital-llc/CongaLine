@@ -460,10 +460,10 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 
 	// Optional per-agent overlay (agents/<name>/agent.yaml).
 	// AWS doesn't persist a repo_path the way the remote provider does, so we
-	// resolve the behavior directory by:
-	//   1. Trying ./behavior (cwd-relative — works when operator is at repo root).
+	// resolve the agents directory by:
+	//   1. Trying ./agents (cwd-relative — works when operator is at repo root).
 	//   2. Walking up from cwd to find the congaline go.mod, then trying
-	//      <repo-root>/behavior (works when operator is in any subdir of the repo).
+	//      <repo-root>/agents (works when operator is in any subdir of the repo).
 	//   3. If neither resolves, emit a warning to stderr and skip overlay
 	//      loading. The warning is intentionally noisy because silently
 	//      skipping would let `conga refresh` revert a previously-overlay'd
