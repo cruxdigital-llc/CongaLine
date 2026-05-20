@@ -235,10 +235,10 @@ func TestReadAgentSecrets_ReadsFromSecretsManager(t *testing.T) {
 }
 
 func TestResolveAWSBehaviorDir(t *testing.T) {
-	// All scenarios use a sandboxed cwd so the real repo's agents/ or
-	// behavior/ dir (visible at the test runner's cwd) doesn't pollute results.
+	// All scenarios use a sandboxed cwd so the real repo's agents/ dir
+	// (visible at the test runner's cwd) doesn't pollute results.
 
-	t.Run("cwd has new agents/ dir", func(t *testing.T) {
+	t.Run("cwd has agents/ dir", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "agents"), 0700); err != nil {
 			t.Fatalf("mkdir: %v", err)
@@ -250,43 +250,16 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 		})
 	})
 
-	t.Run("cwd has legacy behavior/ dir only", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(dir, "behavior"), 0700); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		withCwd(t, dir, func() {
-			if got := resolveAWSBehaviorDir(); got != "behavior" {
-				t.Fatalf("want legacy 'behavior', got %q", got)
-			}
-		})
-	})
-
-	t.Run("both layouts present prefers new agents/", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(dir, "agents"), 0700); err != nil {
-			t.Fatalf("mkdir agents: %v", err)
-		}
-		if err := os.MkdirAll(filepath.Join(dir, "behavior"), 0700); err != nil {
-			t.Fatalf("mkdir behavior: %v", err)
-		}
-		withCwd(t, dir, func() {
-			if got := resolveAWSBehaviorDir(); got != "agents" {
-				t.Fatalf("want 'agents' (new preferred over legacy), got %q", got)
-			}
-		})
-	})
-
 	t.Run("walks up to repo root", func(t *testing.T) {
 		// Construct a fake repo: <root>/go.mod with the right module marker,
-		// <root>/behavior/, and <root>/sub1/sub2/ as the cwd.
+		// <root>/agents/, and <root>/sub1/sub2/ as the cwd.
 		root := t.TempDir()
 		goMod := []byte("module github.com/cruxdigital-llc/conga-line\n\ngo 1.25\n")
 		if err := os.WriteFile(filepath.Join(root, "go.mod"), goMod, 0600); err != nil {
 			t.Fatalf("write go.mod: %v", err)
 		}
-		if err := os.MkdirAll(filepath.Join(root, "behavior"), 0700); err != nil {
-			t.Fatalf("mkdir behavior: %v", err)
+		if err := os.MkdirAll(filepath.Join(root, "agents"), 0700); err != nil {
+			t.Fatalf("mkdir agents: %v", err)
 		}
 		sub := filepath.Join(root, "sub1", "sub2")
 		if err := os.MkdirAll(sub, 0700); err != nil {
@@ -298,7 +271,7 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 		withCwd(t, sub, func() {
 			got := resolveAWSBehaviorDir()
 			gotResolved, _ := filepath.EvalSymlinks(got)
-			want := filepath.Join(resolvedRoot, "behavior")
+			want := filepath.Join(resolvedRoot, "agents")
 			if gotResolved != want {
 				t.Fatalf("want %q, got %q", want, gotResolved)
 			}
@@ -307,7 +280,7 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 
 	t.Run("stops at foreign go.mod without ascending past it", func(t *testing.T) {
 		// A go.mod from a different module shouldn't be picked up, even if
-		// the parent has a real behavior/ dir. The walk stops at the first
+		// the parent has a real agents/ dir. The walk stops at the first
 		// go.mod it sees.
 		root := t.TempDir()
 		foreign := filepath.Join(root, "other-repo")
@@ -318,9 +291,9 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 			[]byte("module example.com/other\n"), 0600); err != nil {
 			t.Fatalf("write foreign go.mod: %v", err)
 		}
-		// Place a behavior/ dir at the OUTER root — we must NOT find it.
-		if err := os.MkdirAll(filepath.Join(root, "behavior"), 0700); err != nil {
-			t.Fatalf("mkdir outer behavior: %v", err)
+		// Place a agents/ dir at the OUTER root — we must NOT find it.
+		if err := os.MkdirAll(filepath.Join(root, "agents"), 0700); err != nil {
+			t.Fatalf("mkdir outer agents: %v", err)
 		}
 		withCwd(t, foreign, func() {
 			if got := resolveAWSBehaviorDir(); got != "" {
@@ -330,7 +303,7 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 	})
 
 	t.Run("returns empty when nothing matches", func(t *testing.T) {
-		dir := t.TempDir() // no go.mod, no behavior/
+		dir := t.TempDir() // no go.mod, no agents/
 		withCwd(t, dir, func() {
 			if got := resolveAWSBehaviorDir(); got != "" {
 				t.Fatalf("want empty, got %q", got)

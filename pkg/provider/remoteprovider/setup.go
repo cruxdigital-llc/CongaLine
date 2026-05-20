@@ -280,19 +280,12 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		}
 
 		fmt.Println("Uploading agent overlays...")
-		// Prefer the new layout (repo/agents) post-2026-05-XX rename; fall back
-		// to the legacy layout (repo/behavior) so a stale repo still works.
-		var localSrc string
-		if _, err := os.Stat(filepath.Join(repoPath, "agents")); err == nil {
-			localSrc = filepath.Join(repoPath, "agents")
-		} else if _, err := os.Stat(filepath.Join(repoPath, "behavior")); err == nil {
-			localSrc = filepath.Join(repoPath, "behavior")
-		}
-		if localSrc != "" {
+		localSrc := filepath.Join(repoPath, "agents")
+		if _, err := os.Stat(localSrc); err == nil {
 			if err := p.ssh.UploadDir(localSrc, p.remoteBehaviorDir()); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to upload agent overlays: %v\n", err)
 			} else {
-				fmt.Printf("  Agent overlays uploaded from %s to %s\n", localSrc, p.remoteBehaviorDir())
+				fmt.Printf("  Agent overlays uploaded to %s\n", p.remoteBehaviorDir())
 			}
 		}
 

@@ -34,11 +34,5 @@ agents/*/
 !agents/_example/
 !agents/_defaults/
 
-# Legacy layout (pre-2026-05-XX rename). Operators may still have on-disk
-# files under behavior/agents/ until they run scripts/migrate-behavior-to-agents.sh.
-# Keep ignored so the loader's backward-compat fallback doesn't surface them.
-behavior/agents/*/
-!behavior/agents/_example/
-
 # Other local files
 demo.*

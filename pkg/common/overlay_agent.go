@@ -55,30 +55,13 @@ var overlayWarningOnce sync.Map // map[string]struct{}
 // line/key message. See spec § "Strict key parsing" for rationale.
 func LoadAgentOverlay(behaviorDir string, agent provider.AgentConfig) (*runtime.AgentOverlay, error) {
 	path := filepath.Join(behaviorDir, agent.Name, agentOverlayFileName)
-	isLegacy := false
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		// New path missing — try legacy fallback (<behaviorDir>/agents/<name>/agent.yaml)
-		// if the feature gate is enabled.
-		if legacyPathFallbackEnabled {
-			legacyPath := filepath.Join(behaviorDir, legacyAgentsSubdir, agent.Name, agentOverlayFileName)
-			legacyData, legacyErr := os.ReadFile(legacyPath)
-			if legacyErr == nil {
-				data = legacyData
-				path = legacyPath
-				isLegacy = true
-			} else if !errors.Is(legacyErr, fs.ErrNotExist) {
-				return nil, fmt.Errorf("read %s: %w", legacyPath, legacyErr)
-			} else {
-				return nil, nil
-			}
-		} else {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	// Pre-pass: detect reserved top-level keys before strict-key parsing so we
@@ -113,10 +96,6 @@ func LoadAgentOverlay(behaviorDir string, agent provider.AgentConfig) (*runtime.
 		overlay.Model.Provider == runtime.ProviderOpenAI &&
 		runtime.OpenAIBaseURLLooksNonstandard(overlay.Model.BaseURL) {
 		emitNonStandardBaseURLWarning(path, overlay.Model.BaseURL)
-	}
-
-	if isLegacy {
-		warnLegacyBehaviorPath(path)
 	}
 
 	return &overlay, nil

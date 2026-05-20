@@ -6,19 +6,11 @@ AGENT_TYPE="$2"
 AGENT_RUNTIME="${3:-openclaw}"
 
 # Staging directory holds the agent overlays + defaults rsync'd from S3.
-# Prefer the new layout (post-2026-05-XX rename) and fall back to the legacy
-# /opt/conga/behavior/ for hosts that haven't run
-# scripts/migrate-behavior-to-agents.sh yet.
-if [ -d /opt/conga/agents ]; then
-  STAGING="/opt/conga/agents"
-  DEFAULT_SUBDIR="_defaults"
-  AGENT_DIR="$STAGING/$AGENT_NAME"
-elif [ -d /opt/conga/behavior ]; then
-  STAGING="/opt/conga/behavior"
-  DEFAULT_SUBDIR="default"
-  AGENT_DIR="$STAGING/agents/$AGENT_NAME"
-else
-  echo "deploy-agents: neither /opt/conga/agents nor /opt/conga/behavior found; nothing to deploy"
+STAGING="/opt/conga/agents"
+DEFAULT_SUBDIR="_defaults"
+AGENT_DIR="$STAGING/$AGENT_NAME"
+if [ ! -d "$STAGING" ]; then
+  echo "deploy-agents: $STAGING not found; nothing to deploy"
   exit 0
 fi
 

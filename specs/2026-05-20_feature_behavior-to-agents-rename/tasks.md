@@ -85,12 +85,28 @@ If #45 has not merged yet, the implementation can still proceed on this branch �
 
 | Phase | Status |
 |---|---|
-| 1 — Fallback loader | ⏳ in progress |
-| 1.5 — Tests | pending |
-| 2 — git mv | pending |
-| 3 — Provider wiring | pending |
-| 4 — Terraform/bootstrap | pending |
-| 5 — gitignore | pending |
-| 6 — Migration script | pending |
-| 7 — Docs | pending |
-| Verification | pending |
+| 1 — Loader rewrites paths to new layout (no fallback — zero external adoption) | ✅ complete |
+| 1.5 — Tests | ✅ complete |
+| 2 — git mv | ✅ complete |
+| 3 — Provider wiring | ✅ complete |
+| 4 — Terraform/bootstrap | ✅ complete |
+| 5 — gitignore | ✅ complete |
+| 6 — Migration script | ✅ complete |
+| 7 — Docs | ✅ complete |
+| Verification | ✅ complete |
+
+## Update — 2026-05-20 (fallback removed)
+
+Initial implementation shipped a one-release backward-compat fallback (loader tried new paths first, fell back to legacy with a deprecation warning). After review, dropped the fallback entirely — the project has zero external adoption, so the fallback was pure dead weight:
+
+- Removed `legacyAgentsSubdir`, `legacyDefaultsSubdir`, `legacyPathFallbackEnabled` constants from `pkg/common/behavior.go`.
+- Removed `warnLegacyBehaviorPath`, `behaviorPathWarningOnce` from same.
+- Loader (`resolveBehaviorFiles`, `LoadAgentOverlay`) now reads new paths only; missing file behaves as today (silent for overlay, default-fallback for prompts).
+- Removed the per-provider new-vs-legacy probe logic. Each provider returns the single canonical path.
+- Removed `.gitignore` legacy block (`behavior/agents/*/` rule).
+- Removed `deploy-agents.sh.tmpl` on-host autodetect — assumes `/opt/conga/agents/` only.
+- Removed all 5 + 3 + 2 fallback test cases (legacy-fixture helpers, warn-once tests, "both layouts present" preference tests).
+
+Migration script also deleted: zero external adoption means no on-disk state anywhere except the author's own machine, which is migrated by hand in this PR's working tree (`mv behavior/agents/* agents/`, `mv behavior/default agents/_defaults`).
+
+Cost saved by the simplification: ~200 lines of code + tests + shell script, plus one cleanup-PR-next-release that's now unnecessary.

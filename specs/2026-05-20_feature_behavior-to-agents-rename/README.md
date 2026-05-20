@@ -33,8 +33,8 @@ Rename the per-agent config tree from `behavior/agents/<name>/` to `agents/<name
 | New top-level directory name | `agents/` (was `behavior/`) |
 | Per-agent entries | Flatten — `agents/<name>/` (was `behavior/agents/<name>/`) |
 | Shipped defaults location | `agents/_defaults/<runtime>/<type>/` (was `behavior/default/<runtime>/<type>/`) — leading underscore flags it as non-agent, matches `_example/` |
-| Backward-compat strategy | Loader falls back to old paths and emits a one-time deprecation warning per old-path access. Fallback removed one release after this lands. |
-| Migration story | One-time shell script (committed to repo under `scripts/migrate-behavior-to-agents.sh`) for live hosts. Idempotent — re-runs are no-ops. |
+| Backward-compat strategy | **None.** Project has zero external adoption — there's no on-disk state to migrate anywhere except the developer's own machine, which they migrate by hand (`mv behavior/agents/* agents/`, `mv behavior/default agents/_defaults`) before pulling. |
+| Migration story | Not needed. The author migrated their own local state in this PR's working tree. |
 | Scope guard | Strictly a rename + flatten. No schema changes, no new agent fields, no overlay-content changes. |
 | Branching | Off `feature/local-model-support` so we don't fight the new `agent.yaml` file `_example` shape. Merges *after* #45. |
 

@@ -1069,19 +1069,14 @@ func (p *RemoteProvider) regenerateRouting(ctx context.Context) error {
 }
 
 func (p *RemoteProvider) deployBehavior(ctx context.Context, cfg provider.AgentConfig) error {
-	// Read behavior files from local repo (stored in remote-config.json repo_path).
-	// Prefers the new layout (repo/agents) post-2026-05-XX rename; falls back to
-	// the legacy layout (repo/behavior) so stale repos still work.
+	// Read agent overlay files from the local repo (path stored in
+	// remote-config.json repo_path).
 	repoPath := p.getConfigValue("repo_path")
 	if repoPath == "" {
 		return nil
 	}
-	var behaviorDir string
-	if d := filepath.Join(repoPath, "agents"); statDir(d) {
-		behaviorDir = d
-	} else if d := filepath.Join(repoPath, "behavior"); statDir(d) {
-		behaviorDir = d
-	} else {
+	behaviorDir := filepath.Join(repoPath, "agents")
+	if _, err := os.Stat(behaviorDir); os.IsNotExist(err) {
 		return nil
 	}
 

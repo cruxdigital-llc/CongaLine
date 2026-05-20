@@ -3,8 +3,6 @@ package common
 import (
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
@@ -12,14 +10,13 @@ import (
 	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 )
 
-// setupBehaviorDir creates a temp behavior directory with the (new-layout)
-// runtime+type structure:
+// setupBehaviorDir creates a temp behavior directory with the runtime+type
+// structure:
 //
 //	_defaults/openclaw/team/{SOUL.md, AGENTS.md, USER.md.tmpl}
 //	_defaults/openclaw/user/{SOUL.md, AGENTS.md, USER.md.tmpl}
 //
 // Per-agent overrides go directly under dir (dir/<name>/SOUL.md, etc.).
-// Legacy-layout fixtures are exercised in TestResolveBehaviorFiles_LegacyFallback.
 func setupBehaviorDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -373,171 +370,5 @@ func TestComposeAgentWorkspaceFiles_RuntimeIsolation(t *testing.T) {
 	}
 	if string(hFiles["SOUL.md"].Content) != "hermes team soul" {
 		t.Errorf("hermes SOUL.md = %q, want 'hermes team soul'", string(hFiles["SOUL.md"].Content))
-	}
-}
-
-// --- 2026-05-XX rename fallback tests ---
-
-// setupLegacyBehaviorDir creates the legacy (pre-rename) layout:
-//
-//	<dir>/default/openclaw/<type>/{SOUL.md, AGENTS.md, USER.md.tmpl}
-//	<dir>/agents/<name>/SOUL.md (etc.)
-//
-// Used to verify the loader's legacy-fallback codepath.
-func setupLegacyBehaviorDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-
-	os.MkdirAll(filepath.Join(dir, "default", "openclaw", "team"), 0755)
-	os.MkdirAll(filepath.Join(dir, "default", "openclaw", "user"), 0755)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "SOUL.md"), []byte("legacy team soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "AGENTS.md"), []byte("legacy team agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "USER.md.tmpl"), []byte("legacy team: {{AGENT_NAME}}"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "user", "SOUL.md"), []byte("legacy user soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "user", "AGENTS.md"), []byte("legacy user agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "user", "USER.md.tmpl"), []byte("legacy dm: {{AGENT_NAME}}"), 0644)
-
-	return dir
-}
-
-// resetBehaviorWarnings clears the per-process warn-once cache so each test
-// independently observes (or doesn't observe) the deprecation warning.
-func resetBehaviorWarnings() {
-	behaviorPathWarningOnce = sync.Map{}
-}
-
-// captureStderrBehavior mirrors the helper in overlay_agent_test.go but is
-// kept here to avoid a cross-file dependency on test internals.
-func captureStderrBehavior(t *testing.T, fn func()) string {
-	t.Helper()
-	orig := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	os.Stderr = w
-	done := make(chan string)
-	go func() {
-		buf := make([]byte, 4096)
-		var sb strings.Builder
-		for {
-			n, _ := r.Read(buf)
-			if n == 0 {
-				break
-			}
-			sb.Write(buf[:n])
-		}
-		done <- sb.String()
-	}()
-	fn()
-	w.Close()
-	os.Stderr = orig
-	return <-done
-}
-
-func TestResolveBehaviorFiles_LegacyFallback_DefaultsOnly(t *testing.T) {
-	resetBehaviorWarnings()
-	dir := setupLegacyBehaviorDir(t)
-	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
-
-	var files BehaviorFiles
-	stderr := captureStderrBehavior(t, func() {
-		files = resolveBehaviorFiles(dir, agent)
-	})
-
-	if got := string(files["SOUL.md"].Content); got != "legacy team soul" {
-		t.Fatalf("SOUL.md: want 'legacy team soul', got %q", got)
-	}
-	if !strings.Contains(stderr, "legacy path") {
-		t.Fatalf("want legacy-path warning on stderr, got %q", stderr)
-	}
-}
-
-func TestResolveBehaviorFiles_LegacyFallback_AgentOverride(t *testing.T) {
-	resetBehaviorWarnings()
-	dir := setupLegacyBehaviorDir(t)
-	agentDir := filepath.Join(dir, "agents", "acme")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(agentDir, "SOUL.md"), []byte("acme overridden"), 0644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
-
-	var files BehaviorFiles
-	stderr := captureStderrBehavior(t, func() {
-		files = resolveBehaviorFiles(dir, agent)
-	})
-
-	if got := string(files["SOUL.md"].Content); got != "acme overridden" {
-		t.Fatalf("SOUL.md: want 'acme overridden', got %q", got)
-	}
-	if files["SOUL.md"].Source != "agent" {
-		t.Fatalf("Source: want 'agent', got %q", files["SOUL.md"].Source)
-	}
-	if !strings.Contains(stderr, "legacy path") {
-		t.Fatalf("want legacy-path warning on stderr, got %q", stderr)
-	}
-}
-
-func TestResolveBehaviorFiles_NewLayout_NoWarning(t *testing.T) {
-	resetBehaviorWarnings()
-	dir := setupBehaviorDir(t) // new layout
-	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
-
-	stderr := captureStderrBehavior(t, func() {
-		_ = resolveBehaviorFiles(dir, agent)
-	})
-
-	if stderr != "" {
-		t.Fatalf("new layout should produce no stderr output, got %q", stderr)
-	}
-}
-
-func TestResolveBehaviorFiles_BothPresent_PrefersNew(t *testing.T) {
-	resetBehaviorWarnings()
-	dir := setupBehaviorDir(t)
-	// Also create a legacy default at default/openclaw/team/SOUL.md with
-	// different content. The loader must prefer the new path silently.
-	os.MkdirAll(filepath.Join(dir, "default", "openclaw", "team"), 0755)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "SOUL.md"), []byte("legacy team soul SHOULD NOT WIN"), 0644)
-
-	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
-
-	var files BehaviorFiles
-	stderr := captureStderrBehavior(t, func() {
-		files = resolveBehaviorFiles(dir, agent)
-	})
-
-	if got := string(files["SOUL.md"].Content); got != "team soul" {
-		t.Fatalf("SOUL.md: want new-layout 'team soul', got %q", got)
-	}
-	if stderr != "" {
-		t.Fatalf("new layout taking precedence should produce no warning, got %q", stderr)
-	}
-}
-
-func TestResolveBehaviorFiles_LegacyWarningOnce(t *testing.T) {
-	resetBehaviorWarnings()
-	dir := setupLegacyBehaviorDir(t)
-	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
-
-	stderr := captureStderrBehavior(t, func() {
-		_ = resolveBehaviorFiles(dir, agent)
-		_ = resolveBehaviorFiles(dir, agent)
-		_ = resolveBehaviorFiles(dir, agent)
-	})
-
-	// Each file (SOUL.md, AGENTS.md, USER.md from .tmpl) warns once.
-	// Three consecutive resolveBehaviorFiles calls should NOT triple the count.
-	soulWarnings := strings.Count(stderr, "default/openclaw/team/SOUL.md")
-	if soulWarnings != 1 {
-		t.Fatalf("SOUL.md should warn exactly once across 3 resolves, got %d in %q", soulWarnings, stderr)
-	}
-	agentsWarnings := strings.Count(stderr, "default/openclaw/team/AGENTS.md")
-	if agentsWarnings != 1 {
-		t.Fatalf("AGENTS.md should warn exactly once across 3 resolves, got %d", agentsWarnings)
 	}
 }
