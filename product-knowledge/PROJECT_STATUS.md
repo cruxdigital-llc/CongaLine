@@ -196,6 +196,29 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
   - [x] Phase 4: Connect / SSH tunnel (4 subtests — ConnectInfo verification)
 - [ ] Verification
 
+### 27. Local Model Routing — Planning
+*Lead: Architect + PM + QA*
+*See `specs/2026-05-19_feature_local-model-routing/` for full trace*
+
+Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent OpenAI-compatible model override via a new `behavior/agents/<name>/agent.yaml` file in the existing overlay directory. Provider-agnostic; first use case is pointing `aaron` at Qwen 3.6 on Aaron's DGX Spark over the existing WireGuard VPN. Terraform stays infra-only; no new CLI surface; no new policy fields.
+
+- [x] Requirements defined: `specs/2026-05-19_feature_local-model-routing/requirements.md`
+- [x] High-level plan defined: `specs/2026-05-19_feature_local-model-routing/plan.md`
+- [x] Pre-spec spike: `spike-openclaw-providers.md` — #45311 closed; pin bump to `v2026.5.18`; **provider path is Ollama-native (not OpenAI-compatible — that breaks tool calling per OpenClaw docs)**
+- [x] Spec defined: `specs/2026-05-19_feature_local-model-routing/spec.md`
+- [x] Persona review (architect + PM + QA — all PROCEED with non-blocking caveats; folded into spec)
+- [x] Standards gate (1 ⚠️ WARNING on Config Format Boundary doc staleness; remediation included in deliverables. No ❌ violations.)
+- [ ] Phase 1: Image pin bump (`v2026.3.11` → `v2026.5.18`) — SEPARATE PR, verify Slack survives before feature work
+- [ ] Phase 2: Type defs (`pkg/runtime/overlay.go`)
+- [ ] Phase 3: Overlay loader (`pkg/common/overlay_agent.go`)
+- [ ] Phase 4: Config generator overlay (`pkg/runtime/openclaw/config.go` `applyModelOverlay`)
+- [ ] Phase 5: Provider wiring (local/remote/aws `RefreshAgent` populate `ConfigParams.Overlay`)
+- [ ] Phase 6: AWS bootstrap (server-side JSON render, avoid shell YAML parsing)
+- [x] Architect deep-dive (durability review) — 6 spec changes applied: schema versioning, strict-key YAML, reserved keyspace, new `config-taxonomy.md`, `architecture.md` cross-link, Hermes Model field preservation note
+- [ ] Phase 7: Docs (`_example/agent.yaml.example`, `config-taxonomy.md` ✅ landed early, CLAUDE.md, architecture.md ✅ landed early, ROADMAP cross-link)
+- [ ] Phase 8: Provider release (per `reference_provider_release_flow`)
+- [ ] Phase 9: Verification (AWS aaron→Spark, local parity, control-agent regression)
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
