@@ -215,16 +215,18 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent m
 *Lead: Architect + QA + PM*
 *See `specs/2026-04-16_feature_dm-agent-routing/` for full trace*
 - [x] Requirements defined (revised: channel membership replaces manual enrollment)
-- [x] Plan defined (8 phases, revised)
+- [x] Plan defined (9 phases, revised after pre-implementation review)
+- [x] Pre-implementation review (2026-05-19): `routing.json` schema set to Option C (single `agents` table); Phase 0 validation spike added; Phase 2 relocated into `pkg/channels/slack`
 - [ ] Spec (next: `/glados/spec-feature`)
-- [ ] Phase 1: Go data model — `Description` on AgentConfig, `AgentDescriptions` in RoutingConfig
-- [ ] Phase 2: Team agent DM acceptance — enable `dmPolicy: "allowlist"` for team agents
+- [ ] Phase 0: Validation spike — OpenClaw empty-allowlist DM acceptance; Socket Mode interactive + member event delivery
+- [ ] Phase 1: Go data model — `Description` on AgentConfig; `RoutingConfig` restructure (Option C: single `agents` table, name-indexed channels/members, platform-keyed binding slices)
+- [ ] Phase 2: Team agent DM acceptance — enable `dmPolicy: "allowlist"` in `pkg/channels/slack/slack.go`
 - [ ] Phase 3: Channel membership resolution — `conversations.members` bootstrap + join/leave events
 - [ ] Phase 4: Agent descriptions — `--description` flag, post-hoc update command
 - [ ] Phase 5: Router classifier — configurable endpoint (Haiku default, `CLASSIFIER_URL` for self-hosted)
-- [ ] Phase 6: Router integration — modified resolveTarget, thread cache, clarification flow
-- [ ] Phase 7: Router secrets/config — `ANTHROPIC_API_KEY`, `CLASSIFIER_URL`, `SLACK_BOT_TOKEN`
-- [ ] Phase 8: Tests — unit, router, integration, E2E
+- [ ] Phase 6: Router integration — modified resolveTarget, thread cache, clarification flow, interactive handler
+- [ ] Phase 7: Router secrets/config + SetupGuide — `ANTHROPIC_API_KEY`, `CLASSIFIER_URL`, `SLACK_BOT_TOKEN`; document event subscriptions and interactivity
+- [ ] Phase 8: Tests — add `node:test` runner; unit, router, integration, E2E
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)

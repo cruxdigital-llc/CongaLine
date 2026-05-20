@@ -2,7 +2,7 @@
 
 ## Overview
 
-Add LLM-classified DM routing to the Slack event router so that users with access to multiple agents can DM the bot and have the right agent respond transparently. DM access is derived automatically from Slack channel membership. The classifier defaults to Haiku but supports any OpenAI-compatible endpoint (e.g. a self-hosted model via Ollama) for privacy-sensitive deployments. When confidence is low, the system asks the user to clarify. Thread replies stay pinned to the routed agent.
+Add LLM-classified DM routing to the Slack event router so users with access to multiple agents can DM the bot and have the right agent respond transparently. DM access is derived automatically from Slack channel membership — no manual enrollment. The classifier defaults to Haiku but accepts any OpenAI-compatible endpoint (e.g. self-hosted via Ollama) for privacy-sensitive deployments. When confidence is low, the router sends an ephemeral Block Kit picker. Thread replies stay pinned to the routed agent.
 
 ## Architecture
 
@@ -13,70 +13,107 @@ User DM → Slack Socket Mode → Router
                                  ├─ User in 2+ channels, thread reply? → forward to cached agent
                                  └─ User in 2+ channels, new message?
                                       ├─ Classifier confident → forward to chosen agent
-                                      └─ Classifier uncertain → ephemeral message asking user to pick
+                                      └─ Classifier uncertain → ephemeral picker
 
 Membership resolution:
-  Router startup → conversations.members for each bound channel → in-memory maps
+  Router startup → conversations.members for each Slack-bound channel → in-memory maps
   Steady state  → member_joined_channel / member_left_channel events → update maps
+  Safety net    → re-poll every 30 minutes
 ```
 
 ## Phases
 
-### Phase 1: Go Data Model Extensions
+### Phase 0: Validation Spike
+
+Before committing to the data-model and Slack manifest changes downstream, verify three load-bearing assumptions against the pinned `ghcr.io/openclaw/openclaw:2026.3.11` image and the `@slack/socket-mode` v2 router.
+
+**Verify:**
+
+1. **OpenClaw empty-allowlist DM acceptance.** Configure a team agent with `dmPolicy: "allowlist"`, `allowFrom: []`, `dm.enabled: true`. Send a router-forwarded DM event to its `/slack/events` endpoint. Confirm OpenClaw processes the DM rather than rejecting it as unallowed. If empty `allowFrom` denies, document the required form (drop `allowFrom` entirely, use a sentinel, or have the router populate it from the membership map and refresh).
+2. **Socket Mode interactive delivery.** Confirm whether `block_actions` payloads arrive via the existing `client.on('slack_event')` catch-all or require a separate `client.on('interactive')` handler in `@slack/socket-mode` v2. Document which.
+3. **Socket Mode member events.** Confirm `member_joined_channel` and `member_left_channel` arrive through the catch-all once subscribed in the app manifest.
+
+**Slack app manifest updates needed (regardless of outcome):**
+
+- Event Subscriptions: add `member_joined_channel`, `member_left_channel`
+- Interactivity & Shortcuts: enabled (no Request URL — Socket Mode delivers)
+
+**Output:** a short findings note in this spec dir that locks the empty-allowlist form (feeds Phase 2) and the interactive-handler shape (feeds Phase 6). If any assumption fails, revise the dependent phase before proceeding.
+
+**Effort:** S. Single-agent dev environment, no provider release, no router code change beyond a logging hook.
+
+### Phase 1: Go Data Model — `routing.json` Schema Restructure
 
 **Files:**
 - `pkg/provider/provider.go` — Add `Description string` to `AgentConfig`
-- `pkg/common/routing.go` — Add `AgentDescriptions map[string]AgentDescription` to `RoutingConfig`
-- `pkg/common/routing.go` — Extend `GenerateRoutingJSON()` to populate agent descriptions
+- `pkg/common/routing.go` — Restructure `RoutingConfig` and extend `GenerateRoutingJSON()`
 
-**`AgentConfig` changes:**
+**`AgentConfig` change:**
 ```go
 Description string `json:"description,omitempty"` // agent purpose — used by classifier
 ```
 
-Note: `DMAccess` is NOT stored on AgentConfig. DM access is derived from Slack channel membership at runtime by the router.
+DM access is NOT stored on `AgentConfig`. It is resolved at runtime by the router from Slack channel membership.
 
-**`RoutingConfig` extension:**
+**`RoutingConfig` restructure (wire-format change):**
+
 ```go
-AgentDescriptions map[string]AgentDescription `json:"agentDescriptions,omitempty"`
-```
-```go
-type AgentDescription struct {
-    Name        string `json:"name"`
-    Description string `json:"description"`
-    URL         string `json:"url"`
-    Type        string `json:"type"` // "user" or "team"
+type RoutingConfig struct {
+    Agents   map[string]AgentRouting `json:"agents"`
+    Channels map[string]string       `json:"channels"` // platform channel id → agent name
+    Members  map[string]string       `json:"members"`  // platform member id → agent name
+}
+
+type AgentRouting struct {
+    URL         string              `json:"url"`
+    Type        string              `json:"type"` // "user" | "team"
+    Description string              `json:"description,omitempty"`
+    ChannelIDs  map[string][]string `json:"channelIds,omitempty"` // platform → ids
+    MemberIDs   map[string][]string `json:"memberIds,omitempty"`  // platform → ids
 }
 ```
 
-The router uses `agentDescriptions` combined with live channel membership to build per-user DM routing at runtime.
+`agents` is the source of truth for agent metadata. `channels` and `members` become string→name indexes. The platform-keyed `ChannelIDs`/`MemberIDs` lets the Slack router filter to Slack IDs only (and the Telegram router do the same for its IDs) without colliding when the file is shared.
 
-**Tests:** `pkg/common/routing_test.go` — new test cases:
-- Agent with description: appears in `agentDescriptions`
-- Agent without description: gets default `"{name} ({type} agent)"`
-- Paused agent excluded from `agentDescriptions`
+`GenerateRoutingJSON()` populates all three maps atomically from the agent list:
+- Description defaults to `"{name} ({type} agent)"` when empty
+- Paused agents are excluded from `agents`, `channels`, and `members`
+- Per-binding `Platform` flows into `ChannelIDs[platform]` / `MemberIDs[platform]`
 
-### Phase 2: Team Agent DM Acceptance
+**Tests:** `pkg/common/routing_test.go` — new cases:
+- Agent name appears in `agents` with correct URL and type
+- `channels[id]` and `members[id]` point to agent name (not URL)
+- `ChannelIDs["slack"]` populated correctly across bindings
+- Description fallback when empty; explicit description honored
+- Paused agent excluded from all three maps
+
+**Deployment note:** this is a wire-format break. `conga admin refresh-all` regenerates `routing.json` before the router reloads (the router watches the file and reloads on change). Same-repo coupling between writer and reader means we ship them together.
+
+### Phase 2: Team Agent DM Acceptance (in Slack channel)
 
 **Files:**
-- `pkg/runtime/openclaw/config.go` — Enable DM acceptance for all team agents bound to a Slack channel
+- `pkg/channels/slack/slack.go` — Change the `case "team"` branch of `OpenClawChannelConfig` to accept router-forwarded DMs
 
-**Logic:** After `ch.OpenClawChannelConfig()` returns (line 34), if agent is team type with a Slack channel binding:
+The DM-policy decision belongs in the Slack channel, not the runtime layer — `pkg/runtime/openclaw/config.go` iterates bindings generically and shouldn't carry Slack-specific behavior.
+
+**Change (subject to Phase 0 findings on the exact `allowFrom` form):**
+
 ```go
-if string(params.Agent.Type) == "team" {
-    if slackSection, ok := channelsCfg["slack"].(map[string]any); ok {
-        // Enable DMs — the router controls who can actually reach the agent
-        // via channel membership resolution
-        slackSection["dmPolicy"] = "allowlist"
-        slackSection["allowFrom"] = []string{} // router handles access control
-        slackSection["dm"] = map[string]any{"enabled": true}
+case "team":
+    cfg["groupPolicy"] = "allowlist"
+    cfg["dmPolicy"] = "allowlist"
+    cfg["allowFrom"] = []string{} // router gates access via channel membership
+    cfg["dm"] = map[string]any{"enabled": true}
+    if binding.ID != "" {
+        cfg["channels"] = map[string]any{
+            binding.ID: map[string]any{"allow": true, "requireMention": false},
+        }
     }
-}
 ```
 
-The `allowFrom` list is empty because the router handles access control via channel membership. The team agent just needs to accept DMs that the router forwards to it.
+The router gates who can reach the team agent via channel membership; OpenClaw just needs to accept DMs the router forwards. If Phase 0 shows empty `allowFrom` is treated as deny-all, adopt whatever form Phase 0 documents (e.g. omit `allowFrom`, or have the router populate it).
 
-**Tests:** `pkg/runtime/openclaw/config_test.go` — verify team agent produces `dmPolicy: "allowlist"` with `dm.enabled: true`.
+**Tests:** `pkg/channels/slack/slack_test.go` — verify team agent produces `dmPolicy: "allowlist"` and `dm.enabled: true`; verify user agent unchanged.
 
 ### Phase 3: Channel Membership Resolution (Router)
 
@@ -84,244 +121,265 @@ The `allowFrom` list is empty because the router handles access control via chan
 - `router/slack/src/membership.js` (new)
 
 **Bootstrap (on router startup):**
-1. For each channel in `routing.json` bindings, call `conversations.members` (Tier 4 rate limit — 100 req/min, trivial for 5-20 channels)
+1. For each agent in `config.agents` with type `"team"`, iterate `agent.channelIds["slack"]`. Call `conversations.members` per channel (Tier 4 — 100 req/min, trivial for typical fleets).
 2. Build in-memory maps:
-   - `channelId → Set<userId>` — who's in each channel
-   - `userId → [{ agentName, agentUrl, description }]` — which agents a user can DM (derived from channel bindings + `agentDescriptions`)
-3. Add personal agent (from `members` map) to each user's agent list if they have one
+   - `channelId → Set<userId>`
+   - `userId → [{ agentName, url, description }]` — agents the user can DM (channel-derived + personal from `config.members`)
+3. Personal agent (from `config.members[userId]` → `config.agents[name]`) added to each user's agent list when present.
+
+**Bootstrap-failure policy:** if `conversations.members` fails for a channel (bot not in channel, rate limit, transport error), log a warning and skip that channel. Do not block router startup. Affected users fall back to personal-only DM routing until the next safety-net re-poll. Slack API outage at startup ≠ router refusing to start.
 
 **Steady-state (event-driven):**
-- Subscribe to `member_joined_channel` / `member_left_channel` events via Socket Mode
-- Update both maps on each event — DM routing reflects changes within seconds
+- `member_joined_channel` / `member_left_channel` arrive via Socket Mode (delivery path confirmed in Phase 0). Update both maps.
 
 **Safety net:**
-- Re-poll `conversations.members` every 30 minutes to catch missed events
+- Re-poll `conversations.members` every 30 minutes to recover from dropped events.
 
-**Exports:** `{ bootstrap, getUserAgents, handleMemberJoin, handleMemberLeave }`
+**Exports:** `{ bootstrap, getUserAgents, handleMemberJoin, handleMemberLeave }`.
 
 ### Phase 4: Agent Descriptions
 
 **Files:**
-- `internal/cmd/admin_provision.go` — Add `--description` flag
-- New subcommand or flag on existing `conga agent` command for updating descriptions post-hoc
+- `internal/cmd/admin_provision.go` — add `--description` flag
+- `internal/cmd/agent.go` (or equivalent) — add a way to update description post-hoc (e.g. `conga agent set <name> --description "..."`)
 
 **Behavior:**
 - Description stored in `AgentConfig.Description`
-- Default if empty: `"{name} ({type} agent)"` — generated at routing config time, not stored
-- Descriptions appear in `routing.json` `dmRouting.agents[].description`
-- The classifier prompt quality depends directly on description quality
+- Default at routing-config generation time: `"{name} ({type} agent)"`
+- Surfaces in `routing.json` as `agents[name].description`
+- Classifier prompt quality scales with description quality — `conga agent show <name>` should display it
 
 ### Phase 5: Router Classifier Module
 
 **Files:**
 - `router/slack/src/classifier.js` (new)
 
-**Configurable endpoint:**
+**Endpoint selection:**
+
 ```javascript
-// Default: Anthropic Haiku
-// Self-hosted: set CLASSIFIER_URL to any OpenAI-compatible endpoint (e.g. Ollama)
-const classifierUrl = process.env.CLASSIFIER_URL || 'https://api.anthropic.com';
-const classifierKey = process.env.ANTHROPIC_API_KEY || null;
-const useCustomEndpoint = !!process.env.CLASSIFIER_URL;
+// Default: Anthropic Haiku (Messages API)
+// Self-hosted: set CLASSIFIER_URL to any OpenAI-compatible /v1/chat/completions endpoint
+const classifierUrl = process.env.CLASSIFIER_URL || null;
+const anthropicKey  = process.env.ANTHROPIC_API_KEY || null;
 ```
 
-When `CLASSIFIER_URL` is set:
-- Uses OpenAI-compatible `/v1/chat/completions` format (works with Ollama, vLLM, LiteLLM, etc.)
-- No API key required (custom endpoints typically don't need one)
-- Same prompt, same JSON response parsing
+**Two code paths, one prompt.** Anthropic Messages and OpenAI Chat Completions differ in non-trivial ways — the spec previously called this "same prompt, same JSON response parsing," which understated it:
 
-When `CLASSIFIER_URL` is not set:
-- Uses Anthropic Messages API with Haiku (requires `ANTHROPIC_API_KEY`)
-- This is the default for most CongaLine deployments
+| | Anthropic (default) | OpenAI-compatible (`CLASSIFIER_URL`) |
+|---|---|---|
+| Auth | `x-api-key` + `anthropic-version` headers | `Authorization: Bearer` (often optional for self-hosted) |
+| System prompt | Top-level `system` field | First message with `role: "system"` |
+| Response text | `content[0].text` | `choices[0].message.content` |
 
-**Classifier:**
-- `createClassifier(config)` — returns `{ classify, getCachedThread, cacheThread }` or `null` if neither key nor URL configured
-- `classify(messageText, agents)` — calls the configured LLM endpoint:
-  - System prompt: list agents with descriptions, instruct to return JSON `{"agent": "name", "confident": true/false}`
-  - User message: the DM text
+The **prompt content** is shared. Both expect the model to return JSON `{"agent": "name", "confident": true|false}` inside the assistant text; both code paths extract that text and parse it identically downstream.
+
+**Classifier surface:**
+- `createClassifier(config)` — returns `{ classify, getCachedThread, cacheThread }`, or `null` if neither endpoint nor key configured
+- `classify(messageText, agents)`:
+  - System prompt lists each agent's name + description and instructs JSON-only output
+  - User message is the DM text
   - 3-second timeout via `AbortController`
-  - Validate returned agent name matches a known agent
-  - Return `{ agent, confident: boolean }` or `null` on failure
+  - Validates returned agent name against the known set
+  - Returns `{ agent, confident }` or `null` on failure
 
 **Clarification flow (low confidence):**
-- When `confident: false`, router sends an ephemeral Slack message to the user via `chat.postEphemeral` (requires bot token + `chat:write` scope — already in recommended scopes)
-- Ephemeral message includes Block Kit buttons, one per agent: "Which assistant can help? [Personal] [Project1] [Project2]"
-- Router listens for `block_actions` interactive events matching a known action ID prefix
-- On button click: forward the original message to the chosen agent, cache the thread
-- Pending messages held in memory with 60-second TTL (if user ignores, forward to default)
+- Router sends an ephemeral message via `chat.postEphemeral` with Block Kit buttons (one per agent). Requires `SLACK_BOT_TOKEN` + `chat:write` (already in recommended scopes).
+- Action IDs prefixed `dm-route-pick:` so the interactive handler can match them.
+- On click: forward original message to chosen agent, cache thread, clear pending entry.
+- Pending messages held in-memory with 60-second TTL. On TTL expiry: forward to default agent (first in list).
 
 **Thread cache:**
 - `Map<thread_ts, { agentUrl, expiry }>`
-- 4-hour TTL, max 2000 entries, lazy eviction
+- 4-hour TTL, max 2000 entries, lazy eviction on insert
 - On DM thread reply: check cache before classifying
 
-**No new npm dependencies** — uses native `fetch` for both Anthropic and OpenAI-compatible APIs.
+**No new npm dependencies** — native `fetch` covers both endpoints.
 
 ### Phase 6: Router Integration
 
 **Files:**
-- `router/slack/src/index.js` — Modified `resolveTarget` and event handler
+- `router/slack/src/index.js` — modified `resolveTarget`, event dispatch, interactive handler
 
-**Modified `resolveTarget`:**
+**Modified `resolveTarget` (Option C indirection):**
+
 ```javascript
 function resolveTarget(payload) {
   const channel = extractChannel(payload);
 
   if (channel && channel.startsWith('D')) {
     const userId = extractUser(payload);
-    const agents = membership.getUserAgents(userId);
+    const agents = membership.getUserAgents(userId); // [{ agentName, url, description }]
 
     if (agents && agents.length > 0) {
-      // Single agent: direct forward, no classification
       if (agents.length === 1) {
         return { target: agents[0].url, reason: `dm-direct:${userId}` };
       }
-      // Multi-agent: needs classification (async)
       return { target: null, agents, userId, reason: `dm-classify:${userId}` };
     }
 
-    // Fallback: single personal agent (existing behavior)
+    // Fallback: personal agent via members index (existing behavior)
     if (userId && config.members[userId]) {
-      return { target: config.members[userId], reason: `dm:${userId}` };
+      const name = config.members[userId];
+      const url  = config.agents[name]?.url;
+      if (url) return { target: url, reason: `dm:${userId}` };
     }
   }
 
-  // ... rest unchanged ...
+  if (channel && config.channels[channel]) {
+    const name = config.channels[channel];
+    const url  = config.agents[name]?.url;
+    if (url) return { target: url, reason: `channel:${channel}` };
+  }
+
+  // ... user fallback for app_home etc., resolved through agents ...
 }
 ```
 
-**Modified event handler** — async classification path:
-1. If `route.target` is set, forward immediately (unchanged fast path)
-2. If `route.agents` exists (needs classification):
-   a. Check thread cache first (thread reply → cached agent)
-   b. Call `classifier.classify(text, route.agents)`
-   c. If confident → forward, cache thread
-   d. If not confident → send ephemeral picker, hold message in pending map
-   e. On failure → forward to first agent (default), cache thread
+**Async dispatch** for the multi-agent DM case:
+1. Check thread cache → forward to cached agent if hit
+2. Call `classifier.classify(text, route.agents)`
+3. Confident → forward + cache
+4. Not confident → post ephemeral picker + hold in pending map (60s TTL)
+5. Classifier failure → forward to first agent (default) + cache
 
-**Interactive handler** — button clicks from clarification:
+**Interactive handler** — shape determined by Phase 0:
 - Match action ID prefix `dm-route-pick:`
-- Look up pending message
-- Forward to chosen agent
-- Cache thread, clear pending entry
+- Look up pending message → forward → cache thread → clear pending
 
-### Phase 7: Router Secrets & Configuration
+The Slack ack still fires before classification — async path doesn't block the 3-second ack budget.
+
+### Phase 7: Router Secrets, Configuration, and SetupGuide
 
 **Files:**
-- `pkg/channels/slack/slack.go` — Add to `SharedSecrets()`:
-  ```go
-  {Name: "anthropic-api-key", EnvVar: "ANTHROPIC_API_KEY",
-   Prompt: "Anthropic API key for DM routing classifier (optional, sk-ant-...)",
-   Required: false, RouterOnly: true}
-  {Name: "classifier-url", EnvVar: "CLASSIFIER_URL",
-   Prompt: "Custom classifier URL (optional, OpenAI-compatible endpoint for self-hosted models)",
-   Required: false, RouterOnly: true}
-  ```
-- `pkg/channels/slack/slack.go` — Add to `RouterEnvVars()`:
-  ```go
-  if v := sv["anthropic-api-key"]; v != "" {
-      vars["ANTHROPIC_API_KEY"] = v
-  }
-  if v := sv["classifier-url"]; v != "" {
-      vars["CLASSIFIER_URL"] = v
-  }
-  ```
-- Also pass `SLACK_BOT_TOKEN` to router env (needed for ephemeral messages and `conversations.members`):
-  ```go
-  if v := sv["slack-bot-token"]; v != "" {
-      vars["SLACK_BOT_TOKEN"] = v
-  }
-  ```
+- `pkg/channels/slack/slack.go` — `SharedSecrets()`, `RouterEnvVars()`, `SetupGuide()`
+
+**Secrets:**
+```go
+// SharedSecrets() additions:
+{Name: "anthropic-api-key", EnvVar: "ANTHROPIC_API_KEY",
+ Prompt: "Anthropic API key for DM routing classifier (optional, sk-ant-...)",
+ Required: false, RouterOnly: true}
+{Name: "classifier-url", EnvVar: "CLASSIFIER_URL",
+ Prompt: "Custom classifier URL (optional, OpenAI-compatible endpoint for self-hosted models)",
+ Required: false, RouterOnly: true}
+```
+
+**`RouterEnvVars()`** — pass `SLACK_BOT_TOKEN` (needed for `conversations.members` + `chat.postEphemeral`) plus the two new vars:
+```go
+if v := sv["slack-bot-token"]; v != "" { vars["SLACK_BOT_TOKEN"] = v }
+if v := sv["anthropic-api-key"]; v != "" { vars["ANTHROPIC_API_KEY"] = v }
+if v := sv["classifier-url"]; v != "" { vars["CLASSIFIER_URL"] = v }
+```
+
+**`SetupGuide()` updates** — the current guide documents scopes but says nothing about events or interactivity. Add:
+- **Event Subscriptions**: subscribe to `member_joined_channel` and `member_left_channel`. (No Request URL needed — Socket Mode delivers.)
+- **Interactivity & Shortcuts**: enable. (No Request URL needed — Socket Mode delivers `block_actions`.)
+- Reaffirm that `channels:read`, `groups:read`, and `chat:write` are required (already documented).
 
 **Router initialization:**
 ```javascript
 const classifier = (process.env.CLASSIFIER_URL || process.env.ANTHROPIC_API_KEY)
   ? createClassifier({
       classifierUrl: process.env.CLASSIFIER_URL,
-      anthropicKey: process.env.ANTHROPIC_API_KEY,
-      botToken: process.env.SLACK_BOT_TOKEN,
+      anthropicKey:  process.env.ANTHROPIC_API_KEY,
+      botToken:      process.env.SLACK_BOT_TOKEN,
     })
   : null;
 
-// Bootstrap channel membership (requires SLACK_BOT_TOKEN)
 await membership.bootstrap(config, process.env.SLACK_BOT_TOKEN);
 ```
 
 **Classifier priority:**
-1. `CLASSIFIER_URL` set → use custom OpenAI-compatible endpoint (no key needed)
-2. `ANTHROPIC_API_KEY` set → use Anthropic Haiku
-3. Neither set → no classifier. Single-agent DMs still route directly. Multi-agent DMs fall back to first agent.
+1. `CLASSIFIER_URL` set → custom OpenAI-compatible endpoint
+2. `ANTHROPIC_API_KEY` set → Anthropic Haiku
+3. Neither → no classifier; single-agent DMs still route directly; multi-agent DMs fall back to first agent
 
 ### Phase 8: Tests
 
-**Unit tests:**
-- `pkg/common/routing_test.go` — `agentDescriptions` generation (Phase 1)
-- `pkg/runtime/openclaw/config_test.go` — Team agent `dmPolicy` enablement (Phase 2)
+**Router test runner:**
+- `router/slack/package.json` — add `"test": "node --test src/*.test.js"`
+- Uses Node's built-in `node:test` runner — no new npm dependencies
+
+**Unit tests (Go):**
+- `pkg/common/routing_test.go` — Option C schema generation (Phase 1)
+- `pkg/channels/slack/slack_test.go` — team agent DM acceptance (Phase 2)
 
 **Router tests:**
-- `router/slack/src/membership.test.js` — Membership map build, join/leave event handling
-- `router/slack/src/classifier.test.js` — Anthropic path, custom URL path, timeout, fallback
+- `router/slack/src/membership.test.js` — bootstrap with mocked `conversations.members`, join/leave event handling, periodic re-poll
+- `router/slack/src/classifier.test.js` — Anthropic path, OpenAI-compatible path, timeout, agent-name validation, failure fallback
 
 **Integration tests:**
-- Provision personal + team agent, verify `routing.json` has `agentDescriptions`
-- Verify team agent's `openclaw.json` has `dmPolicy: "allowlist"`
+- Provision personal + team agent → assert `routing.json.agents` has both with descriptions, URLs, and slack channelIds/memberIds
+- Assert team agent's `openclaw.json` has `dmPolicy: "allowlist"` and `dm.enabled: true`
 
 **E2E verification:**
-- DM the Slack app → verify correct agent responds
-- Reply in thread → verify same agent responds
-- Ambiguous message → verify clarification ephemeral appears
-- No classifier configured → verify fallback to default agent
-- Team-only user → verify DM reaches team agent
+- DM the Slack app → correct agent responds
+- Reply in thread → same agent responds
+- Ambiguous message → ephemeral picker appears; button click routes correctly
+- No classifier configured → multi-agent DM falls back to default agent (not dropped)
+- Team-only user → DM reaches team agent
 - User joins bound channel → DM routing to that agent starts
 - User leaves bound channel → DM routing to that agent stops
-- `CLASSIFIER_URL` set → verify custom endpoint is called instead of Anthropic
+- `CLASSIFIER_URL` set → custom endpoint receives the request (not Anthropic)
 
 ## Persona Review Checklist
 
 ### Architect
-- [ ] `RoutingConfig` extension is additive and backward compatible
-- [ ] `Channel` interface is NOT changed — DM policy override is in runtime config generator
+- [ ] `RoutingConfig` restructure is wire-format-coordinated: writer (Go) and reader (router) ship together; refresh writes new format before router reload
+- [ ] `agents` is the single source of truth; `channels`/`members` are name-indexed lookups
+- [ ] Platform-keyed `ChannelIDs`/`MemberIDs` keep Slack and Telegram routers from cross-reading each other's IDs
+- [ ] Phase 2 keeps Slack DM policy in `pkg/channels/slack` — runtime layer stays channel-agnostic
 - [ ] No circular import introduced (`provider` ← `channels` boundary preserved)
-- [ ] Router membership resolution is resilient to Slack API failures (bootstrap retries, event drops handled by periodic re-poll)
-- [ ] Router async path doesn't block the Slack ack (ack happens before classification)
-- [ ] Thread cache doesn't leak memory (TTL + max size + lazy eviction)
-- [ ] Classifier endpoint is pluggable — Anthropic and OpenAI-compatible paths share the same prompt/response format
+- [ ] Membership module is resilient to Slack API failures (skip-and-warn at bootstrap, periodic re-poll covers missed events)
+- [ ] Async classification path doesn't block the Slack ack
+- [ ] Thread cache and pending map are TTL- and size-bounded
+- [ ] Classifier dual-path is honest about the two code paths (auth, system-prompt placement, response shape)
 
 ### QA
+- [ ] Phase 0 findings recorded; dependent phases adjusted if assumptions failed
 - [ ] Classifier timeout (3s) prevents hung requests
-- [ ] Ephemeral clarification has 60s TTL — pending messages don't leak
-- [ ] Thread cache eviction works correctly at boundary (2000 entries)
-- [ ] Duplicate events handled: dedup fires before classification (existing dedup is sufficient)
+- [ ] Ephemeral clarification 60s TTL — pending messages don't leak
+- [ ] Thread cache eviction works at boundary (2000 entries)
+- [ ] Existing dedup fires before classification
 - [ ] Membership re-poll catches missed join/leave events
-- [ ] Bot not in channel → skip gracefully, log warning
+- [ ] Bot-not-in-channel → log warning, skip channel, don't block startup
+- [ ] Router restart is recoverable: membership rebuilt from API; thread/pending state is best-effort and documented as ephemeral
 
 ### PM
 - [ ] Zero-syntax UX for end users — no prefixes, no commands
 - [ ] Zero admin overhead — DM access follows channel membership automatically
 - [ ] Clarification flow is non-blocking — user can ignore and default fires after 60s
-- [ ] Feature is fully opt-in (no classifier configured = no change)
+- [ ] Feature is opt-in (no classifier configured = no behavior change)
 - [ ] Self-hosted classifier option for privacy-sensitive deployments
-- [ ] Success metrics: classify accuracy (log chosen vs. clarification rate)
+- [ ] Setup guide reflects new Slack manifest requirements (events + interactivity)
+- [ ] Success metrics: classify accuracy (log chosen vs. clarification-required rate)
 
 ## Terraform Provider Impact
 
-Changes to `pkg/provider/provider.go` (`Description` field) and `pkg/common/routing.go` (new types) require a Terraform provider release. These are additive optional fields — backward compatible. Follow release flow in CLAUDE.md.
+Changes to `pkg/provider/provider.go` (`Description` field) and `pkg/common/routing.go` (`RoutingConfig` restructure, new `AgentRouting` type) require a Terraform provider release. The `Description` field is additive; the `RoutingConfig` restructure is a wire-format change. Provider consumers don't read `routing.json` directly — they generate it via the Go API — so the provider release exposes the new shape via the same `GenerateRoutingJSON` they already call.
 
-Note: `DMAccess` is NOT added to `AgentConfig` — DM access is resolved at runtime from Slack channel membership.
+Follow the release flow in `CLAUDE.md`.
+
+Note: `DMAccess` is NOT added to `AgentConfig`. DM access is resolved at runtime by the router from Slack channel membership.
 
 ## Implementation Order
 
 | Phase | Depends on | Risk | Effort |
 |-------|-----------|------|--------|
-| 1. Go data model | — | Low | S |
-| 2. DM acceptance | Phase 1 | Low | S |
-| 3. Membership resolution | — | Medium | M |
+| 0. Validation spike | — | Low | S |
+| 1. Go data model | Phase 0 (allowlist form, if it affects schema) | Low | S |
+| 2. DM acceptance | Phase 0 (allowlist form) | Low | S |
+| 3. Membership resolution | Phase 0 (event delivery), Phase 1 (schema) | Medium | M |
 | 4. Agent descriptions | Phase 1 | Low | S |
 | 5. Router classifier | — | Medium | M |
-| 6. Router integration | Phase 3, 5 | Medium | L |
-| 7. Router secrets/config | — | Low | S |
+| 6. Router integration | Phase 0 (interactive shape), Phases 3, 5 | Medium | L |
+| 7. Router secrets / SetupGuide | — | Low | S |
 | 8. Tests | All | — | M |
 
-Phases 1-2 (Go) and Phases 3, 5 (router modules) can be developed in parallel.
-Phase 6 (router integration) depends on Phases 3 and 5.
-Phase 7 (secrets) is independent — just env var wiring.
+Phase 0 unblocks the riskiest assumptions. Phases 1–2 (Go) and Phases 3, 5 (router modules) can be developed in parallel once Phase 0 is recorded. Phase 6 depends on Phases 3 and 5. Phase 7 is independent — just env-var and SetupGuide wiring.
+
+## Operational Notes
+
+- **Thread cache and pending-clarification map are per-router-process.** A router restart (config reload, container restart, host cycle) wipes them. Recovery is graceful: new DMs in an existing thread re-classify on next message; pending picks past TTL fall back to the default agent. Acceptable for v1.
+- **Membership state is rebuilt on router startup** via `conversations.members`. Slack API outage at startup means affected users temporarily fall back to personal-only routing; full state recovers on the next 30-minute re-poll.
+- **`routing.json` wire-format change** ships in lockstep with router code from this repo. `conga admin refresh-all` writes the new format before the router file-watcher reloads.

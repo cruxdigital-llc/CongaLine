@@ -46,3 +46,27 @@
 - **Files updated**:
   - [requirements.md](requirements.md) — revised enrollment model, classifier model, success criteria
   - [plan.md](plan.md) — Phase 3 replaced (enrollment CLI → membership resolution), Phase 5/7 updated for configurable endpoint
+
+### 2026-05-19 — Pre-implementation Review Pass
+- **Context**: Architect review against current codebase before starting Phase 1
+- **Verified accurate**: `RoutingConfig` shape today, team `dmPolicy: "disabled"` location, `RouterEnvVars()` missing `SLACK_BOT_TOKEN`, router is single-file Socket Mode with catch-all listener
+- **Issues found**:
+  1. Phase 1's `agentDescriptions` map didn't carry the channel→agent linkage the router needs; spec self-contradicted (Phase 4 referenced an undefined `dmRouting` shape)
+  2. Socket Mode delivery of `block_actions` and `member_joined_channel`/`member_left_channel` was assumed, not verified — and the Slack `SetupGuide()` documents zero event subscriptions or interactivity
+  3. Phase 2's empty-`allowFrom` DM acceptance was a load-bearing assumption against the pinned `2026.3.11` OpenClaw image with no validation
+  4. Phase 2 patched `pkg/runtime/openclaw/config.go` post-hoc, putting Slack-specific DM logic in the channel-agnostic runtime layer
+  5. No router test runner — Phase 8 specified `.test.js` files but `router/slack/package.json` had no test infrastructure
+  6. Phase 5 oversold Anthropic vs OpenAI-compatible as "same prompt, same JSON response parsing" — two distinct code paths
+- **Decision: `routing.json` schema — Option C (single `agents` table)**
+  - `agents` keyed by name with url/type/description and platform-keyed `channelIds`/`memberIds`
+  - `channels`/`members` become name-indexed lookups (id → agent name)
+  - Platform-keyed binding slices keep Slack/Telegram routers from cross-reading each other's IDs
+  - Wire-format break, but writer (Go) and reader (router) ship from this repo together
+- **Decision: Phase 0 validation spike added** — verify OpenClaw empty-allowlist DM acceptance + Socket Mode interactive/member event delivery against the pinned image before committing the dependent phases
+- **Decision: Phase 2 relocated** into `pkg/channels/slack/slack.go`'s `case "team"` branch
+- **Decision: `SetupGuide()` update is an explicit Phase 7 deliverable** (Event Subscriptions + Interactivity & Shortcuts)
+- **Decision: Phase 8 adds `node:test` runner** via `router/slack/package.json` script (zero new npm deps)
+- **Files updated**:
+  - [plan.md](plan.md) — new Phase 0; Phase 1 schema rewritten; Phase 2 relocated; Phase 5 dual-path made honest; Phase 7 SetupGuide deliverable; Phase 8 test runner; new Operational Notes section; Implementation Order table updated
+  - [requirements.md](requirements.md) — constraints tightened (scopes already satisfied; manifest events/interactivity are the real gap); new Operational Limitations section
+  - [README.md](README.md) — this entry

@@ -43,12 +43,20 @@ Enable transparent, intelligent DM routing so that when any enrolled user messag
 ## Constraints
 
 - Router must remain lightweight — the classifier is a single API call, not a new service
-- No new npm dependencies in the router (use native `fetch` for OpenAI-compatible API)
-- Team agents currently have `dmPolicy: "disabled"` — must be conditionally enabled for users in bound channels
+- No new npm dependencies in the router (use native `fetch` for both Anthropic and OpenAI-compatible endpoints; use the built-in `node:test` runner for router tests)
+- Team agents currently have `dmPolicy: "disabled"` (`pkg/channels/slack/slack.go`) — must be conditionally enabled for router-forwarded DMs
 - Changes to `pkg/` require a Terraform provider release
-- The Slack app needs `chat:write` scope for ephemeral clarification messages (already in the recommended scopes)
-- The Slack app needs `channels:read` and `groups:read` scopes for channel membership queries
-- Events `member_joined_channel` and `member_left_channel` must be subscribed in the app manifest
+- `routing.json` schema is restructured (single `agents` table, name-indexed `channels`/`members`). Writer (Go) and reader (router) ship from this repo and deploy together.
+- Slack app scopes already in `SetupGuide()`: `chat:write`, `channels:read`, `groups:read` — no scope additions required
+- Slack app **manifest** additions are required and are NOT documented today:
+  - Event Subscriptions: `member_joined_channel`, `member_left_channel`
+  - Interactivity & Shortcuts: enabled (Socket Mode delivery — no Request URL)
+- Pinned OpenClaw image is `ghcr.io/openclaw/openclaw:2026.3.11`. The empty-`allowFrom` DM acceptance form must be validated against this image (Phase 0).
+
+## Operational Limitations (v1)
+
+- **Per-process router state.** The thread-routing cache and pending-clarification map live in router memory. A router restart (config reload, container restart, host cycle) wipes them. Recovery is graceful: new DMs in an existing thread re-classify on the next message; pending picks past TTL fall back to the default agent.
+- **Membership rebuilds on startup.** Channel membership is reconstructed via `conversations.members` when the router starts. If Slack's API is unavailable for a given channel at startup, that channel's users temporarily fall back to personal-only DM routing. Full state recovers on the next 30-minute re-poll. The router does not refuse to start when Slack is partially unreachable.
 
 ## DM Access Model
 
