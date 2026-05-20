@@ -148,6 +148,22 @@ Each agent gets its own:
 No shared proxy means one agent's compromise cannot observe or interfere
 with another agent's traffic.
 
+### Global + agent policies are additive
+
+Per-agent egress overrides do not replace the global policy — they extend it.
+`MergeForAgent` (`pkg/policy/policy.go`) takes the case-insensitive union of
+`allowed_domains` and `blocked_domains` between global and per-agent. Every
+agent therefore inherits the global egress baseline by default; agent
+overrides only need to declare what the agent additionally allows or blocks.
+
+`mode` is the one field that still replaces, since a single value cannot
+union. To deny a globally-allowed domain for one agent, list it in that
+agent's `blocked_domains` — `EffectiveAllowedDomains` subtracts blocked from
+allowed at enforcement time.
+
+The bash reimplementation in `terraform/modules/infrastructure/user-data.sh.tftpl`
+uses the same merge semantics; keep both in sync when changing this rule.
+
 ## Operator Workflow
 
 ```mermaid

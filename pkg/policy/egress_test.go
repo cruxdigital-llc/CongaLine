@@ -43,11 +43,16 @@ agents:
 	if ep == nil {
 		t.Fatal("expected non-nil egress policy")
 	}
-	if len(ep.AllowedDomains) != 2 {
-		t.Fatalf("expected 2 domains, got %d", len(ep.AllowedDomains))
+	// Additive merge: global anthropic + *.slack.com are inherited, *.trello.com
+	// is the agent's addition, duplicate api.anthropic.com is collapsed.
+	want := []string{"api.anthropic.com", "*.slack.com", "*.trello.com"}
+	if len(ep.AllowedDomains) != len(want) {
+		t.Fatalf("merged allowed_domains = %v, want %v", ep.AllowedDomains, want)
 	}
-	if ep.AllowedDomains[1] != "*.trello.com" {
-		t.Errorf("expected *.trello.com, got %s", ep.AllowedDomains[1])
+	for i, w := range want {
+		if ep.AllowedDomains[i] != w {
+			t.Errorf("allowed_domains[%d] = %q, want %q", i, ep.AllowedDomains[i], w)
+		}
 	}
 }
 
