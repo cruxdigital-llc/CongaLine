@@ -533,6 +533,120 @@ conga policy validate
 
 Per-agent overrides are supported — see [`conga-policy.yaml.example`](conga-policy.yaml.example) for all fields and options.
 
+## Per-Agent Model Routing
+
+Each agent can point at its own LLM provider, model, and endpoint via a small operator-authored YAML file alongside its prompts. This lets you, for example, route one privacy-sensitive user agent at a self-hosted vLLM/Ollama server on your LAN while every other agent keeps using the global Anthropic default — all without changing terraform, the policy file, or the CLI surface.
+
+### Where it lives
+
+```
+behavior/
+├── default/<runtime>/<type>/      # Defaults (SOUL.md, AGENTS.md, USER.md.tmpl)
+└── agents/
+    ├── _example/                  # COMMITTED: agent.yaml.example template + prompt examples
+    └── <agent-name>/              # Gitignored. One directory per real agent.
+        ├── SOUL.md                # Optional prompt overrides
+        ├── AGENTS.md
+        ├── USER.md
+        └── agent.yaml             # Optional runtime overlay (THIS feature)
+```
+
+Only `_example/` is committed; everything under `behavior/agents/<real-name>/` is gitignored.
+
+### Schema (v1)
+
+```yaml
+version: 1                                # required; unknown future versions fail with a clear "binary too old" message
+
+model:
+  # Two shapes are valid — pick the one matching what's actually running on
+  # your host. Mixing them up will break tool calling at runtime.
+
+  # (A) Native Ollama daemon:
+  provider: ollama
+  name: qwen3:6b                          # exact NAME from `ollama list`
+  base_url: http://192.168.1.10:11434     # NO /v1 suffix
+
+  # (B) Any OpenAI-compatible server (vLLM, llama.cpp --api, LiteLLM proxy,
+  #     hosted OpenAI). Replaces the block above; don't keep both:
+  # provider: openai
+  # name: qwen36
+  # base_url: http://192.168.1.10:4000/v1  # /v1 suffix REQUIRED
+```
+
+- The loader uses strict-key YAML parsing — a typo like `bare_url:` fails loudly with a line number instead of silently falling back to defaults.
+- Top-level keys other than `version:` and `model:` are reserved for future versions (`memory:`, `tools:`, `limits:`, `model.fallbacks:`, multi-modal model refs) and rejected today by the parser with an explicit "reserved for a future schema version" error.
+- The committed template at `behavior/agents/_example/agent.yaml.example` shows the Ollama variant with the full reserved keyspace as commented-out documentation.
+
+### Provider matrix
+
+| Overlay `provider` | When to use | `base_url` shape | API key |
+|---|---|---|---|
+| `ollama` | Direct Ollama daemon on LAN/loopback | `http://host:11434` — **NO `/v1` suffix** | None for LAN hosts (uses `ollama-local` sentinel) |
+| `openai` | Native OpenAI, vLLM, llama.cpp `--api`, LiteLLM proxy, any OpenAI-compatible endpoint | `https://api.openai.com/v1` or `http://host:port/v1` | Set `openai-api-key` in the secrets store |
+
+**The Ollama `/v1` warning is enforced by the loader.** OpenClaw explicitly warns against pointing `openai/*` at Ollama's `/v1` endpoint — it breaks tool calling. If you want to route through Ollama, use `provider: ollama` (native API root, no `/v1`). If you have a separate OpenAI-compatible proxy (LiteLLM, vLLM, llama.cpp) on the same host, use `provider: openai` with its `/v1` endpoint.
+
+### Additive allowlist behavior
+
+When an overlay is applied, the runtime's default model (`anthropic/claude-opus-4-6` for OpenClaw) **stays in the allowlist**. The overlay just adds the new model and changes the primary. So operators can `/model anthropic/claude-opus-4-6` mid-conversation to swap, then `/model openai/qwen36` to switch back. Both keys (`OPENAI_API_KEY` from per-agent secrets, `ANTHROPIC_API_KEY` from global secrets) are present in the container env.
+
+If you want to **lock** an agent to one model, do it at the egress policy layer (remove `api.anthropic.com` from that agent's `allowed_domains`), not via the overlay — the allowlist is a UX surface for `/model` selection, not a security boundary.
+
+### End-to-end walkthrough
+
+For a user agent that should default to a self-hosted Qwen model running behind a LiteLLM proxy on a private network:
+
+```bash
+# 1. Add the endpoint host to the agent's egress allowlist + open the VPN port.
+#    Edit terraform/environments/production/terraform.tfvars:
+#
+#    egress_ports = [
+#      { protocol = "tcp", port = 443, description = "HTTPS" },
+#      { protocol = "udp", port = 51820, description = "WireGuard VPN to LLM gateway" },
+#      ...
+#    ]
+#    agents = {
+#      myagent = {
+#        type                   = "user"
+#        egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "10.0.0.5"]
+#        secrets = {
+#          "openai-api-key" = "<LiteLLM master key or vLLM token>"
+#        }
+#      }
+#    }
+
+# 2. Author the per-agent overlay (gitignored, never committed):
+mkdir -p behavior/agents/myagent
+cat > behavior/agents/myagent/agent.yaml <<'YAML'
+version: 1
+model:
+  provider: openai
+  name: qwen36
+  base_url: http://10.0.0.5:4000/v1
+YAML
+
+# 3. Apply infrastructure changes (lands the secret + syncs agent.yaml to the host):
+cd terraform/environments/production && terraform apply
+
+# 4. Regenerate the agent's openclaw.json with the overlay applied:
+cd -
+conga --provider aws refresh --agent myagent
+
+# 5. Verify in the agent's logs — should see `agent model: openai/qwen36`:
+conga --provider aws logs --agent myagent | grep "agent model"
+```
+
+For local and remote providers, steps 1 and 3 collapse — set the secret with `conga secrets set openai-api-key --agent myagent --value <key>` and the egress allowlist in `~/.conga/conga-policy.yaml`.
+
+> **Where the CLI looks for `agent.yaml`** (provider-specific): **AWS** tries `./behavior` first, then walks up to the congaline repo root via `go.mod` and tries `<root>/behavior`; if neither resolves, a stderr warning is emitted and overlay loading is skipped. **Local** prefers `<repo_path>/behavior` (set during `conga admin setup`), falling back to the snapshot at `~/.conga/behavior/`. **Remote** always reads from `<repo_path>/behavior` on the operator's machine, then SFTP-pushes the file. The common thread: edits to a real repo's `agent.yaml` always go live without a re-sync, except when an old local install hasn't configured `repo_path` yet.
+
+### See also
+
+- [`behavior/agents/_example/agent.yaml.example`](behavior/agents/_example/agent.yaml.example) — annotated template
+- [`product-knowledge/standards/config-taxonomy.md`](product-knowledge/standards/config-taxonomy.md) — full taxonomy of where each per-agent concern lives (infra vs. policy vs. overlay vs. persistence vs. secrets)
+- [`specs/2026-05-19_feature_local-model-routing/`](specs/2026-05-19_feature_local-model-routing/) — design rationale and OpenClaw schema notes
+
 ## MCP Server (AI Agent Integration)
 
 The CLI includes an MCP server that exposes agent management as tools for AI coding assistants like Claude Code. This lets an AI manage your CongaLine deployment conversationally — listing agents, checking status, setting secrets, refreshing containers, etc.
@@ -668,7 +782,7 @@ go build -o conga ./cmd/conga
 ├── router/                     # Channel event routers (Node.js)
 │   ├── slack/                  # Slack router (Socket Mode → HTTP fan-out)
 │   └── telegram/               # Telegram router (long-polling → HTTP fan-out)
-└── behavior/                   # Agent personality files (SOUL.md, etc.)
+└── behavior/                   # Agent personality files (SOUL.md, AGENTS.md, USER.md.tmpl) + per-agent agent.yaml overlay (model routing). Only behavior/agents/_example/ is committed; real agent overlays are gitignored.
 ```
 
 **Module boundary:** `pkg/` is the public API — external modules (like `terraform-provider-conga`) import these packages. `internal/` holds interface layers (CLI, MCP server) that only the `conga` binary uses.

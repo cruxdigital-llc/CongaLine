@@ -110,7 +110,16 @@ type ConfigParams struct {
 	Agent        provider.AgentConfig
 	Secrets      provider.SharedSecrets
 	GatewayToken string
-	Model        string // LLM model identifier (e.g., "anthropic/claude-sonnet-4-20250514")
+	Model        string // LLM model identifier (e.g., "anthropic/claude-sonnet-4-20250514").
+	// Consumed by the Hermes runtime today (see pkg/runtime/hermes/config.go);
+	// OpenClaw uses the richer Overlay below. A future spec will migrate Hermes
+	// to consume Overlay too, at which point this field can be removed. Until
+	// then, both fields coexist; new runtimes should prefer Overlay.
+
+	// Overlay is the optional, provider-agnostic per-agent runtime overlay
+	// loaded from behavior/agents/<name>/agent.yaml. Runtime config generators
+	// translate it into their native config shape. nil = no overlay applied.
+	Overlay *AgentOverlay
 }
 
 // EnvParams holds all inputs needed to generate an env file.

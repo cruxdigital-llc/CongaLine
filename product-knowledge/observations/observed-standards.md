@@ -3,6 +3,14 @@
 *This file is populated automatically by the `pattern-observer` module during normal workflow execution.*
 *Items here are reviewed and promoted (or discarded) during `/glados/recombobulate`.*
 
+### 2026-05-20 - Runtime config generators must be tested against the runtime's actual schema
+- **Source**: Test gap discovered during live testing of `local-model-routing` (see `specs/2026-05-19_feature_local-model-routing/README.md` Test-iteration findings).
+- **Context**: `applyModelOverlay` in `pkg/runtime/openclaw/config.go` rendered an `openclaw.json` that passed all internal-shape golden tests but was rejected by OpenClaw's own validator with `models.providers.openai.models: Invalid input: expected array, received undefined`. The bug only surfaced when a real container loaded the rendered file. Internal-shape assertions can validate "the renderer produces what we coded it to" but not "what we coded matches what the runtime requires."
+- **Proposed Standard**: "Tests for runtime config generators (`pkg/runtime/<rt>/config_test.go`) MUST include at least one scenario that validates the rendered config against the runtime's actual schema. Acceptable mechanisms: (a) launch the runtime's own validator in a CI container against the rendered file, e.g. `openclaw doctor --check-only`; (b) maintain a schema reference file (JSON Schema, OpenAPI, or runtime-specific) and cross-check the rendered output; (c) any other mechanism that catches a divergence between generator output and runtime expectations. Pure internal-shape assertions are not sufficient."
+- **Suggested Severity**: should
+- **Confidence**: High
+- **Status**: pending — tracked at [#46](https://github.com/cruxdigital-llc/CongaLine/issues/46) for resolution in the next `/glados:recombobulate` cycle.
+
 ### 2026-04-07 - Workspace path resolution must go through Runtime interface
 - **Source**: Explicit user direction — "focus on OpenClaw, scaffold Hermes"
 - **Context**: Per-agent overlay feature required writing files to the agent workspace. Workspace path differs by runtime (OpenClaw: `data/workspace`, Hermes: `workspace`).

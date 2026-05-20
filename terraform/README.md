@@ -136,3 +136,19 @@ terraform apply -var='global_secrets={"anthropic-api-key":"sk-ant-..."}'
 ```
 
 On the host, secrets are stored in AWS Secrets Manager and injected into containers via env files (mode 0400) on encrypted EBS.
+
+## Per-Agent Model Routing
+
+Per-agent LLM provider/model overrides (e.g. routing one agent at a self-hosted vLLM or Ollama server while others stay on Anthropic) live in `behavior/agents/<name>/agent.yaml` at the repo root, **not** in `terraform.tfvars`. The split:
+
+| Concern | Lives in tfvars | Lives in `behavior/agents/<name>/agent.yaml` |
+|---------|-----------------|-----------------------------------------------|
+| Agent existence, type, gateway port | ✅ | — |
+| Egress allowlist for the model endpoint | ✅ (`egress_allowed_domains`) | — |
+| VPN ports if reaching the model over a tunnel | ✅ (`egress_ports`) | — |
+| API key secret | ✅ (`secrets = { "openai-api-key" = "..." }` per agent) | — |
+| Which provider / model / base_url to use | — | ✅ (`version: 1`, `model: { provider, name, base_url }`) |
+
+So a typical multi-tier change touches both files: tfvars opens the network path and stores the secret; `agent.yaml` declares what to use. `terraform apply` lands the secret + S3-syncs the overlay file to the host; then `conga refresh --agent <name>` regenerates `openclaw.json` with the overlay applied and pushes it via SSM.
+
+See [the Per-Agent Model Routing section in the root README](../README.md#per-agent-model-routing) for the overlay schema, provider matrix, and an end-to-end walkthrough.

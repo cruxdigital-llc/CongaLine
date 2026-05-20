@@ -7,12 +7,14 @@ import (
 	"io/fs"
 	"os"
 	posixpath "path"
+	"path/filepath"
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
 // ReadProxyManifest downloads the deployed egress policy manifest for an
@@ -314,7 +316,20 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 		return err
 	}
 
-	openClawJSON, envContent, err := common.GenerateAgentFiles(cfg, shared, perAgent)
+	var overlay *runtime.AgentOverlay
+	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
+		behaviorDir := filepath.Join(repoPath, "behavior")
+		if _, statErr := os.Stat(behaviorDir); statErr == nil {
+			overlay, err = common.LoadAgentOverlay(behaviorDir, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to load agent overlay: %w", err)
+			}
+		}
+	}
+
+	openClawJSON, envContent, err := common.RuntimeGenerateAgentFilesWithOverlay(
+		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, overlay,
+	)
 	if err != nil {
 		return err
 	}

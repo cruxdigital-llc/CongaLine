@@ -3,6 +3,8 @@ package awsprovider
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -230,4 +232,96 @@ func TestReadAgentSecrets_ReadsFromSecretsManager(t *testing.T) {
 	if secrets["trello-api-key"] != "trello-key" {
 		t.Errorf("expected trello-api-key=trello-key, got %s", secrets["trello-api-key"])
 	}
+}
+
+func TestResolveAWSBehaviorDir(t *testing.T) {
+	// All scenarios use a sandboxed cwd so the real repo's behavior/ dir
+	// (visible at the test runner's cwd) doesn't pollute results.
+
+	t.Run("cwd has behavior dir", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "behavior"), 0700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		withCwd(t, dir, func() {
+			if got := resolveAWSBehaviorDir(); got != "behavior" {
+				t.Fatalf("want 'behavior', got %q", got)
+			}
+		})
+	})
+
+	t.Run("walks up to repo root", func(t *testing.T) {
+		// Construct a fake repo: <root>/go.mod with the right module marker,
+		// <root>/behavior/, and <root>/sub1/sub2/ as the cwd.
+		root := t.TempDir()
+		goMod := []byte("module github.com/cruxdigital-llc/conga-line\n\ngo 1.25\n")
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), goMod, 0600); err != nil {
+			t.Fatalf("write go.mod: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(root, "behavior"), 0700); err != nil {
+			t.Fatalf("mkdir behavior: %v", err)
+		}
+		sub := filepath.Join(root, "sub1", "sub2")
+		if err := os.MkdirAll(sub, 0700); err != nil {
+			t.Fatalf("mkdir sub: %v", err)
+		}
+		// macOS resolves t.TempDir() through /var → /private/var; compare
+		// against the resolved root so the assertion is portable.
+		resolvedRoot, _ := filepath.EvalSymlinks(root)
+		withCwd(t, sub, func() {
+			got := resolveAWSBehaviorDir()
+			gotResolved, _ := filepath.EvalSymlinks(got)
+			want := filepath.Join(resolvedRoot, "behavior")
+			if gotResolved != want {
+				t.Fatalf("want %q, got %q", want, gotResolved)
+			}
+		})
+	})
+
+	t.Run("stops at foreign go.mod without ascending past it", func(t *testing.T) {
+		// A go.mod from a different module shouldn't be picked up, even if
+		// the parent has a real behavior/ dir. The walk stops at the first
+		// go.mod it sees.
+		root := t.TempDir()
+		foreign := filepath.Join(root, "other-repo")
+		if err := os.MkdirAll(foreign, 0700); err != nil {
+			t.Fatalf("mkdir foreign: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(foreign, "go.mod"),
+			[]byte("module example.com/other\n"), 0600); err != nil {
+			t.Fatalf("write foreign go.mod: %v", err)
+		}
+		// Place a behavior/ dir at the OUTER root — we must NOT find it.
+		if err := os.MkdirAll(filepath.Join(root, "behavior"), 0700); err != nil {
+			t.Fatalf("mkdir outer behavior: %v", err)
+		}
+		withCwd(t, foreign, func() {
+			if got := resolveAWSBehaviorDir(); got != "" {
+				t.Fatalf("want empty (foreign repo), got %q", got)
+			}
+		})
+	})
+
+	t.Run("returns empty when nothing matches", func(t *testing.T) {
+		dir := t.TempDir() // no go.mod, no behavior/
+		withCwd(t, dir, func() {
+			if got := resolveAWSBehaviorDir(); got != "" {
+				t.Fatalf("want empty, got %q", got)
+			}
+		})
+	})
+}
+
+// withCwd chdir's into dir for the duration of fn, restoring on return.
+func withCwd(t *testing.T, dir string, fn func()) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	defer os.Chdir(orig)
+	fn()
 }
