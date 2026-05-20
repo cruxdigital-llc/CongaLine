@@ -1,7 +1,7 @@
 # ------------------------------------------------------------------------------
 # agent.yaml — per-agent runtime overlay (OPTIONAL)
 #
-# Lives at: behavior/agents/<agent-name>/agent.yaml
+# Lives at: agents/<agent-name>/agent.yaml
 # Format:   YAML, schema v1 (see below)
 # Scope:    Provider-agnostic per-agent runtime configuration. Same file
 #           produces the same behavior on local, remote, and AWS providers.
@@ -12,8 +12,9 @@
 #                  AGENTS.md / USER.md alongside this file), policy (→
 #                  conga-policy.yaml).
 #
-# See product-knowledge/standards/config-taxonomy.md for the full taxonomy and
-# decision rule.
+# See ../README.md for an overview, and
+# product-knowledge/standards/config-taxonomy.md for the full taxonomy
+# and decision rule.
 #
 # Real agent overlays are gitignored. Only this _example file is committed.
 # Copy this file as agent.yaml in your own agent's directory and edit.

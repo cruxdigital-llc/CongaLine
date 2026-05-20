@@ -552,6 +552,8 @@ agents/
 
 Only the leading-underscore entries (`_defaults/`, `_example/`) are committed; everything under `agents/<real-name>/` is gitignored. Agent names cannot start with `_`, so the underscore-prefixed entries can't collide with real agents.
 
+See [`agents/README.md`](agents/README.md) for the directory-level guide: what each file is for, how to create a new agent's overlay, and the resolution order.
+
 ### Schema (v1)
 
 ```yaml
