@@ -22,7 +22,7 @@ const (
 // loopback / LAN / .local Ollama hosts. No real bearer token is required.
 const OllamaLocalAPIKey = "ollama-local"
 
-// AgentOverlay is the parsed shape of behavior/agents/<name>/agent.yaml.
+// AgentOverlay is the parsed shape of agents/<name>/agent.yaml.
 //
 // The file is operator-authored, optional, and provider-agnostic. When set,
 // runtime-specific config generators (see pkg/runtime/openclaw/config.go)

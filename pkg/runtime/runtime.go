@@ -117,7 +117,7 @@ type ConfigParams struct {
 	// then, both fields coexist; new runtimes should prefer Overlay.
 
 	// Overlay is the optional, provider-agnostic per-agent runtime overlay
-	// loaded from behavior/agents/<name>/agent.yaml. Runtime config generators
+	// loaded from agents/<name>/agent.yaml. Runtime config generators
 	// translate it into their native config shape. nil = no overlay applied.
 	Overlay *AgentOverlay
 }

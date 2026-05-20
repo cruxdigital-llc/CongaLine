@@ -2,14 +2,14 @@
 
 <!--
   OVERRIDE NOTICE
-  Placing this file in behavior/agents/<your-agent>/AGENTS.md completely
-  REPLACES behavior/default/AGENTS.md for that agent. The default will
+  Placing this file in agents/<your-agent>/AGENTS.md completely
+  REPLACES agents/_defaults/<runtime>/<type>/AGENTS.md for that agent. The default will
   not be used.
 
   Getting started:
-    1. mkdir behavior/agents/<your-agent>
-    2. cp behavior/default/<runtime>/<type>/AGENTS.md behavior/agents/<your-agent>/AGENTS.md
-       — e.g. behavior/default/openclaw/team/AGENTS.md, or write your own from scratch
+    1. mkdir agents/<your-agent>
+    2. cp agents/_defaults/<runtime>/<type>/AGENTS.md agents/<your-agent>/AGENTS.md
+       — e.g. agents/_defaults/openclaw/team/AGENTS.md, or write your own from scratch
     3. Edit to add agent-specific context (client, team, project, rules)
     4. conga refresh --agent <your-agent>
 
@@ -29,7 +29,7 @@ entire file — include everything the agent needs to operate.
 
 ## Tips
 
-- Start by copying `behavior/default/<runtime>/<type>/AGENTS.md` so you
+- Start by copying `agents/_defaults/<runtime>/<type>/AGENTS.md` so you
   inherit the baseline rules, then append your agent-specific sections.
 - The default AGENTS.md already differs between user and team agents
   (personal vs shared memory management). Your override replaces it entirely.

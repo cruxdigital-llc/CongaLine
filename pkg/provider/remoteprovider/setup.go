@@ -130,7 +130,7 @@ if [ "$(id -u)" != "0" ]; then
         exit 1
     fi
 fi
-$SUDO mkdir -p %s/{agents,secrets/{shared,agents},config,data,router/{slack,telegram}/src,behavior,egress-proxy,logs}
+$SUDO mkdir -p %s/{agents,secrets/{shared,agents},config,data,router/{slack,telegram}/src,egress-proxy,logs}
 $SUDO chown -R %s:%s %s
 chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 `, p.remoteDir, sshUser, sshUser, p.remoteDir, p.remoteDir, p.remoteDir, p.remoteDir, p.remoteDir)
@@ -156,7 +156,7 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		repoStatus = "not set"
 		repoPath = detectRepoRoot()
 	}
-	fmt.Printf("\n[config] repo_path — Conga Line repo root for router/behavior files (%s)\n", repoStatus)
+	fmt.Printf("\n[config] repo_path — Conga Line repo root for router and agent overlay files (%s)\n", repoStatus)
 	if cfg == nil {
 		newRepoPath, err := ui.TextPromptWithDefault("  Repo path", repoPath)
 		if err != nil {

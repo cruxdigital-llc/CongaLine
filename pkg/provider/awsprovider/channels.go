@@ -458,7 +458,7 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return err
 	}
 
-	// Optional per-agent overlay (behavior/agents/<name>/agent.yaml).
+	// Optional per-agent overlay (agents/<name>/agent.yaml).
 	// AWS doesn't persist a repo_path the way the remote provider does, so we
 	// resolve the behavior directory by:
 	//   1. Trying ./behavior (cwd-relative — works when operator is at repo root).
@@ -476,7 +476,7 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		}
 	} else {
 		fmt.Fprintf(os.Stderr,
-			"warning: no behavior/ directory found in cwd or any parent; per-agent overlays not loaded for %s. Run conga from the repo root if this agent has an agent.yaml overlay configured.\n",
+			"warning: no agents/ directory found in cwd or any parent; per-agent overlays not loaded for %s. Run conga from the repo root if this agent has an agent.yaml overlay configured.\n",
 			cfg.Name)
 	}
 

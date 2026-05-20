@@ -640,7 +640,7 @@ conga --provider aws logs --agent myagent | grep "agent model"
 
 For local and remote providers, steps 1 and 3 collapse — set the secret with `conga secrets set openai-api-key --agent myagent --value <key>` and the egress allowlist in `~/.conga/conga-policy.yaml`.
 
-> **Where the CLI looks for `agent.yaml`** (provider-specific): **AWS** tries `./behavior` first, then walks up to the congaline repo root via `go.mod` and tries `<root>/behavior`; if neither resolves, a stderr warning is emitted and overlay loading is skipped. **Local** prefers `<repo_path>/behavior` (set during `conga admin setup`), falling back to the snapshot at `~/.conga/behavior/`. **Remote** always reads from `<repo_path>/behavior` on the operator's machine, then SFTP-pushes the file. The common thread: edits to a real repo's `agent.yaml` always go live without a re-sync, except when an old local install hasn't configured `repo_path` yet.
+> **Where the CLI looks for `agent.yaml`** (provider-specific): **AWS** tries `./agents` first, then walks up to the congaline repo root via `go.mod` and tries `<root>/agents`; if neither resolves, a stderr warning is emitted and overlay loading is skipped. **Local** prefers `<repo_path>/agents` (set during `conga admin setup`), falling back to the snapshot at `~/.conga/agents/`. **Remote** always reads from `<repo_path>/agents` on the operator's machine, then SFTP-pushes the file. The common thread: edits to a real repo's `agent.yaml` always go live without a re-sync, except when an old local install hasn't configured `repo_path` yet.
 
 ### See also
 
