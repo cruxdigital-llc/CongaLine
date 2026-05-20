@@ -211,6 +211,23 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent m
 - [ ] Phase 6 — AWS bootstrap shell: ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; the `regenerateAgentConfigOnInstance` upload path carries the result).
 - [ ] Phase 8 — Provider release (per CLAUDE.md `pkg/` change protocol): operator step, post-merge.
 
+### 28. DM Agent Routing — Planning
+*Lead: Architect + QA + PM*
+*See `specs/2026-04-16_feature_dm-agent-routing/` for full trace*
+- [x] Requirements defined (revised: channel membership replaces manual enrollment)
+- [x] Plan defined (9 phases, revised after pre-implementation review)
+- [x] Pre-implementation review (2026-05-19): `routing.json` schema set to Option C (single `agents` table); Phase 0 validation spike added; Phase 2 relocated into `pkg/channels/slack`
+- [ ] Spec (next: `/glados/spec-feature`)
+- [ ] Phase 0: Validation spike — OpenClaw empty-allowlist DM acceptance; Socket Mode interactive + member event delivery
+- [ ] Phase 1: Go data model — `Description` on AgentConfig; `RoutingConfig` restructure (Option C: single `agents` table, name-indexed channels/members, platform-keyed binding slices)
+- [ ] Phase 2: Team agent DM acceptance — enable `dmPolicy: "allowlist"` in `pkg/channels/slack/slack.go`
+- [ ] Phase 3: Channel membership resolution — `conversations.members` bootstrap + join/leave events
+- [ ] Phase 4: Agent descriptions — `--description` flag, post-hoc update command
+- [ ] Phase 5: Router classifier — configurable endpoint (Haiku default, `CLASSIFIER_URL` for self-hosted)
+- [ ] Phase 6: Router integration — modified resolveTarget, thread cache, clarification flow, interactive handler
+- [ ] Phase 7: Router secrets/config + SetupGuide — `ANTHROPIC_API_KEY`, `CLASSIFIER_URL`, `SLACK_BOT_TOKEN`; document event subscriptions and interactivity
+- [ ] Phase 8: Tests — add `node:test` runner; unit, router, integration, E2E
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
