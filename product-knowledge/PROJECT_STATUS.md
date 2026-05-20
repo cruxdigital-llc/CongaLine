@@ -196,34 +196,20 @@ See [TECH_STACK.md](TECH_STACK.md) for full details.
   - [x] Phase 4: Connect / SSH tunnel (4 subtests — ConnectInfo verification)
 - [ ] Verification
 
-### 27. Local Model Routing — Planning
+### 27. Local Model Routing — ✅ Verified Complete (live-tested on AWS)
 *Lead: Architect + PM + QA*
 *See `specs/2026-05-19_feature_local-model-routing/` for full trace*
 
-Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent OpenAI-compatible model override via a new `behavior/agents/<name>/agent.yaml` file in the existing overlay directory. Provider-agnostic; first use case is pointing `aaron` at Qwen 3.6 on Aaron's DGX Spark over the existing WireGuard VPN. Terraform stays infra-only; no new CLI surface; no new policy fields.
+Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent model override via a new `behavior/agents/<name>/agent.yaml` file in the existing overlay directory. Provider-agnostic across local/remote/AWS; supports `ollama` (native, no `/v1`) and `openai` (OpenAI-compatible) providers. Schema versioned (`version: 1`) with strict-key YAML parsing. Allowlist is **additive** — runtime default stays available so operators can `/model` switch mid-conversation.
 
-- [x] Requirements defined: `specs/2026-05-19_feature_local-model-routing/requirements.md`
-- [x] High-level plan defined: `specs/2026-05-19_feature_local-model-routing/plan.md`
-- [x] Pre-spec spike: `spike-openclaw-providers.md` — #45311 closed; pin bump to `v2026.5.18`; **provider path is Ollama-native (not OpenAI-compatible — that breaks tool calling per OpenClaw docs)**
-- [x] Spec defined: `specs/2026-05-19_feature_local-model-routing/spec.md`
-- [x] Persona review (architect + PM + QA — all PROCEED with non-blocking caveats; folded into spec)
-- [x] Standards gate (1 ⚠️ WARNING on Config Format Boundary doc staleness; remediation included in deliverables. No ❌ violations.)
-- [ ] Phase 1: Image pin bump (`v2026.3.11` → `v2026.5.18`) — SEPARATE PR, verify Slack survives before feature work
-- [ ] Phase 2: Type defs (`pkg/runtime/overlay.go`)
-- [ ] Phase 3: Overlay loader (`pkg/common/overlay_agent.go`)
-- [ ] Phase 4: Config generator overlay (`pkg/runtime/openclaw/config.go` `applyModelOverlay`)
-- [ ] Phase 5: Provider wiring (local/remote/aws `RefreshAgent` populate `ConfigParams.Overlay`)
-- [ ] Phase 6: AWS bootstrap (server-side JSON render, avoid shell YAML parsing)
-- [x] Architect deep-dive (durability review) — 6 spec changes applied: schema versioning, strict-key YAML, reserved keyspace, new `config-taxonomy.md`, `architecture.md` cross-link, Hermes Model field preservation note
-- [x] Phase 2: Type defs (`pkg/runtime/overlay.go`)
-- [x] Phase 3: Overlay loader (`pkg/common/overlay_agent.go`)
-- [x] Phase 4: Config generator overlay (`pkg/runtime/openclaw/config.go` `applyModelOverlay`)
-- [x] Phase 5: Provider wiring (local/remote/aws `RefreshAgent` populate `ConfigParams.Overlay`)
-- [x] Phase 7: Docs (`_example/agent.yaml.example`, `config-taxonomy.md`, CLAUDE.md, architecture.md, ROADMAP cross-link)
-- [ ] Phase 1: Image pin bump (`v2026.3.11` → `v2026.5.18`) — SEPARATE PR
-- [ ] Phase 6: AWS bootstrap shell — ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; no bootstrap changes needed)
-- [ ] Phase 8: Provider release (per `reference_provider_release_flow`)
-- [ ] Phase 9: Verification (AWS aaron→Spark, local parity, control-agent regression)
+- [x] Requirements, plan, Phase-0 spike, spec, architect durability deep-dive, persona review, pre-impl standards gate
+- [x] Phases 2–5, 7 — types (`pkg/runtime/overlay.go`), loader (`pkg/common/overlay_agent.go`), generator (`pkg/runtime/openclaw/config.go` `applyModelOverlay`), provider wiring (local/remote/aws), docs (README "Per-Agent Model Routing" section, `_example/agent.yaml.example`, `config-taxonomy.md`, CLAUDE.md, ROADMAP cross-link, terraform/README)
+- [x] **Live-tested on AWS**: a real production agent now defaults to a self-hosted LLM via LiteLLM, with `/model` switching to/from the runtime default. Two bugs caught and fixed during testing: missing `models[]` array (OpenClaw schema requirement) and clobbering-vs-additive allowlist behavior.
+- [x] Post-impl verification: full test suite passes (forced uncached); `go vet` clean; `gofmt` clean; persona review (architect + PM + QA all PASS); post-impl standards gate (0 ❌ violations, 0 ⚠️ warnings — the pre-impl Config Format Boundary warning was resolved as a deliverable).
+- [x] Observation logged for `/glados:recombobulate`: runtime config generators need integration tests against the actual runtime schema, not just internal-shape golden assertions.
+- [ ] Phase 1 — Image pin bump (`v2026.3.11` → `v2026.5.18`): no longer a hard prerequisite (the older image accepts the rendered config); deferred as desirable-not-blocking.
+- [ ] Phase 6 — AWS bootstrap shell: ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; the `regenerateAgentConfigOnInstance` upload path carries the result).
+- [ ] Phase 8 — Provider release (per CLAUDE.md `pkg/` change protocol): operator step, post-merge.
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
@@ -238,6 +224,7 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent O
 - Behavior defaults (`behavior/default/SOUL.md`, `AGENTS.md`) are manually maintained — will drift on OpenClaw image upgrades and need periodic reconciliation
 
 ## Recent Changes
+- 2026-05-20: Local Model Routing — per-agent LLM override via a new `behavior/agents/<name>/agent.yaml` overlay (schema v1, strict-key parsing). Supports `ollama` (native; no `/v1`) and `openai` (OpenAI-compatible; `/v1`) providers. Allowlist is additive — runtime default stays available for `/model` switching, `fallbacks: []` prevents silent auto-failover. New: `pkg/runtime/overlay.go` (types + validation), `pkg/common/overlay_agent.go` (loader), `applyModelOverlay` in `pkg/runtime/openclaw/config.go`. All three providers (local, remote, aws) load the overlay before `GenerateConfig`. New `product-knowledge/standards/config-taxonomy.md` documents the canonical per-agent config split (infra → tfvars, policy → `conga-policy.yaml`, runtime overlay → `agent.yaml`, persistence → JSON/SSM, secrets → secrets store). Live-tested on AWS — a production user agent now defaults to a self-hosted LLM via LiteLLM. Two bugs caught during live testing: missing `models[]` array (OpenClaw schema), clobbering-vs-additive allowlist. 22 packages pass, go vet/gofmt clean. Observation logged for `/glados:recombobulate`: runtime config generators need integration tests against actual runtime schema, not just internal-shape assertions. See `specs/2026-05-19_feature_local-model-routing/`.
 - 2026-04-07: Per-Agent Behavior Configuration — replaced the base + team/user composition model with a simpler two-layer approach: shared defaults at `behavior/default/` and per-agent overrides at `behavior/agents/<name>/`. Agent files fully replace defaults (no concatenation). New CLI: `conga agent {list,add,rm,show,diff}`. Manifest-tracked deployments with deletion reconciliation. Terraform auto-refresh trigger restarts agents when behavior files change. ExecStartPre now syncs deploy-behavior.sh from S3. OpenClaw-only files supported (SOUL.md, AGENTS.md, USER.md) — arbitrary filenames not loaded by OpenClaw. Tested end-to-end on local and AWS. See `specs/2026-04-04_feature_per-agent-config-overlay/`.
 - 2026-04-05: Agent Portability — new `Runtime` interface (`pkg/runtime/`) making the agent runtime pluggable alongside the existing `Provider` interface. OpenClaw runtime extracted from `pkg/common/` into `pkg/runtime/openclaw/` (zero behavioral change). Hermes Agent runtime implemented in `pkg/runtime/hermes/` (YAML config, port 8642, Python health detection). Local provider fully wired to Runtime interface. `--runtime openclaw|hermes` flag, runtime choice persisted during `conga admin setup`, inherited by `add-user`/`add-team`. Data model: `Runtime` field on `AgentConfig`, `Config`, `SetupConfig`, `Manifest`. 20 new files, 13 modified, 38 runtime tests, all 16 test suites pass. Remote/AWS provider wiring deferred. See `specs/2026-04-05_feature_agent-portability/`.
 - 2026-03-30: Manifest Bootstrap — new `conga bootstrap <manifest.yaml>` command for one-shot environment provisioning. Declarative YAML manifest describes provider, setup, agents, secrets, channels, bindings, and initial egress policy. Optimized 6-step pipeline, each step idempotent. Secrets referenced via `$VAR` env var expansion from `--env` file, never stored in YAML. Existing `conga-policy.yaml` takes precedence over manifest policy section. New `pkg/manifest/` package (2 files, ~350 lines), CLI command, 25 unit tests. All 17 test packages pass. See `specs/2026-03-30_feature_manifest-apply/`.
