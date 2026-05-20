@@ -78,7 +78,7 @@ func RuntimeGenerateAgentFiles(rtName runtime.RuntimeName, cfg provider.AgentCon
 
 // RuntimeGenerateAgentFilesWithOverlay is the same as RuntimeGenerateAgentFiles
 // but additionally threads an optional per-agent overlay (from
-// behavior/agents/<name>/agent.yaml) into config generation.
+// agents/<name>/agent.yaml) into config generation.
 func RuntimeGenerateAgentFilesWithOverlay(
 	rtName runtime.RuntimeName,
 	cfg provider.AgentConfig,

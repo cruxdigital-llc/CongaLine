@@ -139,9 +139,9 @@ On the host, secrets are stored in AWS Secrets Manager and injected into contain
 
 ## Per-Agent Model Routing
 
-Per-agent LLM provider/model overrides (e.g. routing one agent at a self-hosted vLLM or Ollama server while others stay on Anthropic) live in `behavior/agents/<name>/agent.yaml` at the repo root, **not** in `terraform.tfvars`. The split:
+Per-agent LLM provider/model overrides (e.g. routing one agent at a self-hosted vLLM or Ollama server while others stay on Anthropic) live in `agents/<name>/agent.yaml` at the repo root, **not** in `terraform.tfvars`. The split:
 
-| Concern | Lives in tfvars | Lives in `behavior/agents/<name>/agent.yaml` |
+| Concern | Lives in tfvars | Lives in `agents/<name>/agent.yaml` |
 |---------|-----------------|-----------------------------------------------|
 | Agent existence, type, gateway port | ✅ | — |
 | Egress allowlist for the model endpoint | ✅ (`egress_allowed_domains`) | — |

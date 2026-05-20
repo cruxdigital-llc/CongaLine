@@ -16,7 +16,7 @@ import (
 )
 
 // agentOverlayFileName is the operator-authored per-agent runtime config file.
-// Lives in behavior/agents/<name>/ alongside SOUL.md / AGENTS.md / USER.md.
+// Lives in agents/<name>/ alongside SOUL.md / AGENTS.md / USER.md.
 // See specs/2026-05-19_feature_local-model-routing/ and
 // product-knowledge/standards/config-taxonomy.md for the schema and rationale.
 const agentOverlayFileName = "agent.yaml"
@@ -25,7 +25,7 @@ const agentOverlayFileName = "agent.yaml"
 // any of these in a v1 document is rejected with a friendlier message than
 // the generic strict-key parse error so operators understand they're not
 // typos. Keep in sync with the reserved-keyspace section of
-// behavior/agents/_example/agent.yaml.example.
+// agents/_example/agent.yaml.example.
 var reservedTopLevelKeys = map[string]string{
 	"memory": "future schema version (per-agent memory backend)",
 	"tools":  "future schema version (per-agent tool/MCP allowlist)",
@@ -40,19 +40,21 @@ var reservedTopLevelKeys = map[string]string{
 // would otherwise spam stderr.
 var overlayWarningOnce sync.Map // map[string]struct{}
 
-// LoadAgentOverlay reads behavior/agents/<agent.Name>/agent.yaml if present.
+// LoadAgentOverlay reads <agents-root>/<agent.Name>/agent.yaml if present.
 //
 // Return semantics:
-//   - File missing: (nil, nil). The agent has no overlay; defaults apply.
+//   - File missing (in both new and legacy paths): (nil, nil). The agent has
+//     no overlay; defaults apply.
 //   - File present but malformed / fails validation: (nil, err) wrapped with
 //     the file path so operators can find the offending file quickly.
-//   - File present and valid: (overlay, nil).
+//   - File present and valid: (overlay, nil). If resolved via the legacy
+//     fallback path, emits a one-time deprecation warning.
 //
 // Strict-key parsing is enabled. Unknown top-level or inner keys (e.g. typo
 // `bare_url:` instead of `base_url:`) are rejected with the decoder's
 // line/key message. See spec § "Strict key parsing" for rationale.
 func LoadAgentOverlay(behaviorDir string, agent provider.AgentConfig) (*runtime.AgentOverlay, error) {
-	path := filepath.Join(behaviorDir, "agents", agent.Name, agentOverlayFileName)
+	path := filepath.Join(behaviorDir, agent.Name, agentOverlayFileName)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -111,7 +113,7 @@ func checkReservedKeys(path string, data []byte) error {
 	}
 	for key := range raw {
 		if reason, reserved := reservedTopLevelKeys[key]; reserved {
-			return fmt.Errorf("%s: key %q is reserved for a %s; not supported in v1. See behavior/agents/_example/agent.yaml.example for the current schema",
+			return fmt.Errorf("%s: key %q is reserved for a %s; not supported in v1. See agents/_example/agent.yaml.example for the current schema",
 				path, key, reason)
 		}
 	}

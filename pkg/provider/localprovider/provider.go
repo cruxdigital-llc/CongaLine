@@ -91,20 +91,25 @@ func (p *LocalProvider) agentsDir() string             { return filepath.Join(p.
 func (p *LocalProvider) configDir() string             { return filepath.Join(p.dataDir, "config") }
 func (p *LocalProvider) dataSubDir(name string) string { return filepath.Join(p.dataDir, "data", name) }
 func (p *LocalProvider) routerDir() string             { return filepath.Join(p.dataDir, "router") }
-func (p *LocalProvider) behaviorDir() string           { return filepath.Join(p.dataDir, "behavior") }
+
+// behaviorDir returns the local snapshot directory that holds per-agent
+// overlays and shipped defaults: <dataDir>/agents/.
+//
+// Note: <dataDir>/agents/ also holds the per-agent identity JSON files
+// (<name>.json). The overlay directories (<name>/) live as siblings; the
+// loader uses fixed filenames so the two never collide.
+func (p *LocalProvider) behaviorDir() string {
+	return filepath.Join(p.dataDir, "agents")
+}
 
 // overlayBehaviorDir returns the directory the overlay loader should read
-// agent.yaml from. It prefers the live repo (via repo_path) so edits to
-// behavior/agents/<name>/agent.yaml are picked up by `conga refresh` without
-// re-running `conga admin setup`. Falls back to the data-dir snapshot when
-// repo_path isn't configured — back-compat for older installations.
-//
-// Mirrors the remote provider's behavior: see
-// pkg/provider/remoteprovider/provider.go deployBehavior + channels.go
-// regenerateAgentConfig.
+// agent.yaml from. Prefers the live repo (via repo_path) so edits to
+// agents/<name>/agent.yaml are picked up by `conga refresh` without
+// re-running `conga admin setup`. Falls back to the data-dir snapshot
+// when repo_path isn't configured.
 func (p *LocalProvider) overlayBehaviorDir() string {
 	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
-		live := filepath.Join(repoPath, "behavior")
+		live := filepath.Join(repoPath, "agents")
 		if _, err := os.Stat(live); err == nil {
 			return live
 		}
@@ -1181,11 +1186,14 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		}
 		fmt.Println("  Router source copied to ~/.conga/router/")
 
-		fmt.Println("Copying behavior files...")
-		if err := copyDir(filepath.Join(repoPath, "behavior"), p.behaviorDir()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to copy behavior files: %v\n", err)
-		} else {
-			fmt.Println("  Behavior files copied to ~/.conga/behavior/")
+		fmt.Println("Copying agent overlays...")
+		src := filepath.Join(repoPath, "agents")
+		if _, err := os.Stat(src); err == nil {
+			if err := copyDir(src, p.behaviorDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to copy agent overlays: %v\n", err)
+			} else {
+				fmt.Printf("  Agent overlays copied to %s\n", p.behaviorDir())
+			}
 		}
 
 		// Copy egress proxy files

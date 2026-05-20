@@ -94,7 +94,7 @@ Every CLI command must be fully operable through all three interfaces. A feature
 | Format | Use | Library | Rationale |
 |---|---|---|---|
 | **JSON** | Machine-generated config: agent config (`agents/<name>.json`), `openclaw.json`, `routing.json`, setup config, provider config | `encoding/json` | Programmatic read/write, no ambiguity |
-| **YAML** | Operator-authored config: `conga-policy.yaml`, `behavior/agents/<name>/agent.yaml` | `gopkg.in/yaml.v3` (strict-key decoding for `agent.yaml`) | More readable for hand-authored domain lists, nested config, and version-gated schemas |
+| **YAML** | Operator-authored config: `conga-policy.yaml`, `agents/<name>/agent.yaml` | `gopkg.in/yaml.v3` (strict-key decoding for `agent.yaml`) | More readable for hand-authored domain lists, nested config, and version-gated schemas |
 
 New config files should default to JSON unless they are primarily hand-authored by operators. Two YAML files exist today — `conga-policy.yaml` (cluster policy with per-agent overrides) and `agent.yaml` (per-agent runtime overlay) — and each serves a distinct layer of the configuration taxonomy.
 

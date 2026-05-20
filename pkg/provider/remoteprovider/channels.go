@@ -318,7 +318,7 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 
 	var overlay *runtime.AgentOverlay
 	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
-		behaviorDir := filepath.Join(repoPath, "behavior")
+		behaviorDir := filepath.Join(repoPath, "agents")
 		if _, statErr := os.Stat(behaviorDir); statErr == nil {
 			overlay, err = common.LoadAgentOverlay(behaviorDir, cfg)
 			if err != nil {

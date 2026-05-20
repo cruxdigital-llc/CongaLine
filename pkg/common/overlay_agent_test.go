@@ -17,10 +17,10 @@ func resetOverlayWarnings() {
 	overlayWarningOnce = sync.Map{}
 }
 
-// writeOverlay places agent.yaml under behaviorDir/agents/<name>/.
+// writeOverlay places agent.yaml at <behaviorDir>/<name>/agent.yaml.
 func writeOverlay(t *testing.T, behaviorDir, name, content string) {
 	t.Helper()
-	dir := filepath.Join(behaviorDir, "agents", name)
+	dir := filepath.Join(behaviorDir, name)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

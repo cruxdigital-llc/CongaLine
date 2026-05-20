@@ -458,12 +458,12 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return err
 	}
 
-	// Optional per-agent overlay (behavior/agents/<name>/agent.yaml).
+	// Optional per-agent overlay (agents/<name>/agent.yaml).
 	// AWS doesn't persist a repo_path the way the remote provider does, so we
-	// resolve the behavior directory by:
-	//   1. Trying ./behavior (cwd-relative — works when operator is at repo root).
+	// resolve the agents directory by:
+	//   1. Trying ./agents (cwd-relative — works when operator is at repo root).
 	//   2. Walking up from cwd to find the congaline go.mod, then trying
-	//      <repo-root>/behavior (works when operator is in any subdir of the repo).
+	//      <repo-root>/agents (works when operator is in any subdir of the repo).
 	//   3. If neither resolves, emit a warning to stderr and skip overlay
 	//      loading. The warning is intentionally noisy because silently
 	//      skipping would let `conga refresh` revert a previously-overlay'd
@@ -476,7 +476,7 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		}
 	} else {
 		fmt.Fprintf(os.Stderr,
-			"warning: no behavior/ directory found in cwd or any parent; per-agent overlays not loaded for %s. Run conga from the repo root if this agent has an agent.yaml overlay configured.\n",
+			"warning: no agents/ directory found in cwd or any parent; per-agent overlays not loaded for %s. Run conga from the repo root if this agent has an agent.yaml overlay configured.\n",
 			cfg.Name)
 	}
 
@@ -601,20 +601,20 @@ func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script stri
 	return awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, timeout)
 }
 
-// resolveAWSBehaviorDir locates the live behavior/ directory for overlay
-// loading on the AWS provider. The directory may sit at cwd or anywhere up
-// the cwd's parent chain inside this repo (identified by a go.mod whose
+// resolveAWSBehaviorDir locates the live agent-overlays directory for the
+// AWS provider's config-gen path. The directory may sit at cwd or anywhere
+// up the cwd's parent chain inside this repo (identified by a go.mod whose
 // module path matches the congaline module). Returns "" when no candidate
 // is found — the caller emits a warning in that case.
 func resolveAWSBehaviorDir() string {
 	// Try cwd-relative first — the common case when the operator is at the
 	// repo root, matching the convention used by `terraform apply`.
-	if _, err := os.Stat("behavior"); err == nil {
-		return "behavior"
+	if info, err := os.Stat("agents"); err == nil && info.IsDir() {
+		return "agents"
 	}
 
 	// Walk up from cwd looking for the congaline go.mod, then test for
-	// <repo-root>/behavior. This handles operators running from any
+	// <repo-root>/agents/. This handles operators running from any
 	// subdirectory of the repo.
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -626,11 +626,11 @@ func resolveAWSBehaviorDir() string {
 		goMod := filepath.Join(dir, "go.mod")
 		if data, readErr := os.ReadFile(goMod); readErr == nil {
 			if bytes.Contains(data, []byte(moduleMarker)) {
-				candidate := filepath.Join(dir, "behavior")
-				if _, statErr := os.Stat(candidate); statErr == nil {
+				candidate := filepath.Join(dir, "agents")
+				if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
 					return candidate
 				}
-				// Found our repo but no behavior dir — stop here so we
+				// Found our repo but no agents/ dir — stop here so we
 				// don't accidentally pick up some unrelated parent's dir.
 				return ""
 			}

@@ -11,6 +11,16 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
+// Subdirectory names looked up inside the directory that callers pass as
+// behaviorDir:
+//
+//   - <behaviorDir>/<name>/         — per-agent overlay
+//   - <behaviorDir>/_defaults/<runtime>/<type>/  — shipped defaults
+//
+// The leading underscore on _defaults disambiguates it from any real agent
+// name (which validateAgentName forbids starting with `_`).
+const defaultsSubdir = "_defaults"
+
 // BehaviorFile holds content and metadata for a single behavior file.
 type BehaviorFile struct {
 	Content []byte
@@ -23,17 +33,17 @@ type BehaviorFiles map[string]BehaviorFile
 // resolveBehaviorFiles assembles behavior files for an agent.
 //
 // Resolution order (all files):
-//  1. agents/<agent_name>/<file> — agent-specific override (full replacement)
-//  2. default/<runtime>/<type>/<file> — runtime+type-specific default
+//  1. <behaviorDir>/<agent_name>/<file> — agent-specific override (full replacement)
+//  2. <behaviorDir>/_defaults/<runtime>/<type>/<file> — runtime+type-specific default
 //
 // USER.md.tmpl is rendered with agent template variables before deployment.
 func resolveBehaviorFiles(behaviorDir string, agent provider.AgentConfig) BehaviorFiles {
 	files := make(BehaviorFiles)
 	agentType := string(agent.Type)
-
-	agentDir := filepath.Join(behaviorDir, "agents", agent.Name)
 	rtName := string(runtime.ResolveRuntime(agent.Runtime, ""))
-	defaultDir := filepath.Join(behaviorDir, "default", rtName, agentType)
+
+	agentDir := filepath.Join(behaviorDir, agent.Name)
+	defaultDir := filepath.Join(behaviorDir, defaultsSubdir, rtName, agentType)
 
 	// SOUL.md and AGENTS.md: agent-specific > runtime+type default
 	for _, name := range []string{"SOUL.md", "AGENTS.md"} {
@@ -122,7 +132,7 @@ func ComposeAgentWorkspaceFiles(
 // (map[string]BehaviorFile) in the per-agent-config-overlay feature.
 // No external Go callers exist; safe to remove in a future release.
 // This wrapper skips manifest generation and deletion reconciliation.
-// The AWS deploy path (deploy-behavior.sh) handles file resolution
+// The AWS deploy path (deploy-agents.sh) handles file resolution
 // independently in shell.
 func ComposeBehaviorFiles(behaviorDir string, agent provider.AgentConfig) (BehaviorFiles, error) {
 	files := resolveBehaviorFiles(behaviorDir, agent)

@@ -73,9 +73,10 @@ will fall back to the shared default for that file.`,
 	rootCmd.AddCommand(agentBehaviorCmd)
 }
 
-// agentBehaviorDir returns the per-agent behavior source directory.
-// Reads repo_path from local-config.json and points at behavior/agents/.
-// Falls back to the deployed copy at ~/.conga/behavior/agents/.
+// agentBehaviorDir returns the directory that holds per-agent overlay
+// subdirectories. Prefers the live repo (via repo_path) so edits land in
+// the source tree; falls back to the data-dir snapshot when repo_path isn't
+// configured. Callers append <agent-name>/ to locate a specific agent.
 func agentBehaviorDir() string {
 	dataDir := provider.DefaultDataDir()
 	if flagDataDir != "" {
@@ -83,10 +84,10 @@ func agentBehaviorDir() string {
 	}
 
 	if repoPath := readLocalConfigValue(dataDir, "repo_path"); repoPath != "" {
-		return filepath.Join(repoPath, "behavior", "agents")
+		return filepath.Join(repoPath, "agents")
 	}
 
-	return filepath.Join(dataDir, "behavior", "agents")
+	return filepath.Join(dataDir, "agents")
 }
 
 // readLocalConfigValue reads a key from local-config.json.
@@ -102,28 +103,24 @@ func readLocalConfigValue(dataDir, key string) string {
 	return m[key]
 }
 
-// syncBehaviorToDeployed copies the repo's behavior/ tree to the deployed
-// location (~/.conga/behavior/) so that the next refresh picks up changes.
-// Also removes files from the deployed location that no longer exist in the repo.
+// syncBehaviorToDeployed copies the repo's agents/ tree to the deployed
+// location (~/.conga/agents/) so that the next refresh's prompt loader
+// (which reads from the data-dir snapshot) picks up source edits. The
+// overlay loader (agent.yaml) already prefers the live repo when repo_path
+// is configured, but the prompt resolver still uses the snapshot — see
+// pkg/provider/localprovider/provider.go behaviorDir vs overlayBehaviorDir
+// for the asymmetry.
+//
+// Also removes files from the deployed location that no longer exist in
+// the repo so the snapshot stays in sync with deletes.
 func syncBehaviorToDeployed(dataDir string) {
 	repoPath := readLocalConfigValue(dataDir, "repo_path")
 	if repoPath == "" {
 		return
 	}
 
-	// Warn if legacy behavior/overrides/ directory still has files
-	legacyDir := filepath.Join(repoPath, "behavior", "overrides")
-	if entries, err := os.ReadDir(legacyDir); err == nil {
-		for _, e := range entries {
-			if e.Name() != ".gitkeep" && e.Name() != "README.md" {
-				fmt.Fprintf(os.Stderr, "Warning: behavior/overrides/ is deprecated. Move files to behavior/agents/ instead.\n")
-				break
-			}
-		}
-	}
-
-	src := filepath.Join(repoPath, "behavior", "agents")
-	dst := filepath.Join(dataDir, "behavior", "agents")
+	src := filepath.Join(repoPath, "agents")
+	dst := filepath.Join(dataDir, "agents")
 	if _, err := os.Stat(src); err != nil {
 		return
 	}
@@ -148,7 +145,17 @@ func syncBehaviorToDeployed(dataDir string) {
 		return nil
 	})
 
-	// Remove files from dst that no longer exist in src
+	// Remove files from dst that no longer exist in src.
+	//
+	// IMPORTANT: only reconcile files INSIDE per-agent subdirectories
+	// (rel contains a path separator). Direct children of dst (e.g.
+	// dataDir/agents/<name>.json — the local provider's identity store —
+	// or dataDir/agents/README.md) are not part of the overlay surface
+	// and must not be deleted. The pre-2026-05-XX layout sidestepped this
+	// by living under dataDir/behavior/agents/, but the rename collapsed
+	// both file types into a single parent dir. See
+	// pkg/provider/localprovider/provider.go behaviorDir() doc comment
+	// for the cohabitation rules.
 	if _, err := os.Stat(dst); err != nil {
 		return
 	}
@@ -165,6 +172,11 @@ func syncBehaviorToDeployed(dataDir string) {
 			return nil
 		}
 		rel, _ := filepath.Rel(dst, path)
+		// Skip top-level files (no separator in rel) — they're not overlay
+		// content. See comment above the walk for the full rationale.
+		if !strings.Contains(rel, string(filepath.Separator)) {
+			return nil
+		}
 		if _, err := os.Stat(filepath.Join(src, rel)); os.IsNotExist(err) {
 			os.Remove(path)
 		}
@@ -206,7 +218,7 @@ func agentBehaviorListRun(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("behavior/agents/%s/\n", agentName)
+	fmt.Printf("agents/%s/\n", agentName)
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -286,7 +298,7 @@ func agentBehaviorAddRun(cmd *cobra.Command, args []string) error {
 	}
 	syncBehaviorToDeployed(dataDir)
 
-	fmt.Printf("Copied %s -> behavior/agents/%s/%s\n", filepath.Base(srcPath), agentName, targetName)
+	fmt.Printf("Copied %s -> agents/%s/%s\n", filepath.Base(srcPath), agentName, targetName)
 	fmt.Printf("Run 'conga refresh --agent %s' to deploy.\n", agentName)
 	return nil
 }
@@ -316,10 +328,10 @@ func agentBehaviorRmRun(cmd *cobra.Command, args []string) error {
 	if flagDataDir != "" {
 		dataDir = flagDataDir
 	}
-	deployedPath := filepath.Join(dataDir, "behavior", "agents", agentName, name)
+	deployedPath := filepath.Join(dataDir, "agents", agentName, name)
 	os.Remove(deployedPath)
 
-	fmt.Printf("Removed behavior/agents/%s/%s\n", agentName, name)
+	fmt.Printf("Removed agents/%s/%s\n", agentName, name)
 	fmt.Printf("Run 'conga refresh --agent %s' to apply (will fall back to default).\n", agentName)
 	return nil
 }

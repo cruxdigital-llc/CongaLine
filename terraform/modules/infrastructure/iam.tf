@@ -117,7 +117,7 @@ resource "aws_iam_role_policy" "s3_read" {
         Resource = [
           "arn:aws:s3:::${local.state_bucket}/conga/router/*",
           "arn:aws:s3:::${local.state_bucket}/conga/bootstrap/*",
-          "arn:aws:s3:::${local.state_bucket}/conga/behavior/*",
+          "arn:aws:s3:::${local.state_bucket}/conga/agents/*",
           "arn:aws:s3:::${local.state_bucket}/conga/scripts/*",
           "arn:aws:s3:::${local.state_bucket}/conga/conga-policy.yaml"
         ]

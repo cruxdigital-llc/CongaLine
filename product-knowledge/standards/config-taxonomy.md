@@ -18,7 +18,7 @@ create a new config file/format without consulting the decision rule below.
 |---|---|---|---|---|---|
 | **Infrastructure** | Agent existence, gateway port, egress allowlist (incl. private IPs), channel bindings, secret values, host resources | `terraform/environments/<env>/terraform.tfvars` `agents = {}` map | HCL (Terraform) | AWS (declarative). Local/remote use CLI flags (`conga admin add-user`). | Operator. Gitignored — only `.example` is committed. |
 | **Cluster policy** | Egress allow/deny lists, routing rules, posture (enforce/validate), drift detection | `~/.conga/conga-policy.yaml` with per-agent overrides under `agents.<name>.*` | YAML | All providers | Operator. Lifecycle via `conga policy {validate,deploy,drift}`. |
-| **Runtime overlay** | Model (provider, name, base_url), prompts (SOUL/AGENTS/USER), future: memory, tools, limits, multi-modal model refs, fallback chains | `behavior/agents/<name>/agent.yaml` + `behavior/agents/<name>/*.md` | YAML + Markdown | All providers (provider-agnostic; same files produce same runtime config on local/remote/AWS) | Operator. Gitignored — only `behavior/agents/_example/` is committed. |
+| **Runtime overlay** | Model (provider, name, base_url), prompts (SOUL/AGENTS/USER), future: memory, tools, limits, multi-modal model refs, fallback chains | `agents/<name>/agent.yaml` + `agents/<name>/*.md` | YAML + Markdown | All providers (provider-agnostic; same files produce same runtime config on local/remote/AWS) | Operator. Gitignored — only `agents/_example/` is committed. |
 | **Runtime persistence** | Identity (name, type, runtime choice, allocated port, channel binding state) | `~/.conga/agents/<name>.json` (local) / `/opt/conga/agents/<name>.json` (remote) / SSM `/conga/agents/<name>` (AWS) | JSON | Per-provider | **Materialized by the provider** at provision time, not hand-edited. |
 | **Secrets** | API keys, OAuth tokens, channel bot tokens | Files mode 0400 (`~/.conga/secrets/agents/<name>/<key>` on local/remote) or AWS Secrets Manager (`conga/agents/<name>/<key>` on AWS) | Native | Per-provider | Operator. Authored via tfvars (AWS) or `conga secrets set` (local/remote). Never in git. |
 
@@ -41,7 +41,7 @@ If two layers seem to apply, default to the lower number in the list — infrast
 - ❌ **Secret VALUES in `agent.yaml`.** OpenClaw issue #9627 — secrets in disk-resident config files. Always go through the secrets store; reference by name (e.g. `openai-api-key`) and let `SecretNameToEnvVar` inject `OPENAI_API_KEY`.
 - ❌ **A new YAML file per concern** (`tools.yaml`, `memory.yaml`, ...). Extend `agent.yaml` with a new versioned top-level key instead. The schema is designed to absorb growth (see `specs/2026-05-19_feature_local-model-routing/spec.md`).
 - ❌ **Editing files under `~/.conga/agents/<name>.json` by hand.** That file is materialized by the provider; manual edits get clobbered on the next refresh. Use the provider's API or its source-of-truth (tfvars on AWS, CLI on local/remote).
-- ❌ **Committing real agent definitions.** Only `behavior/agents/_example/`, `terraform.tfvars.example`, and `backend.tf.example` go in git. The gitignore already enforces this; do not bypass.
+- ❌ **Committing real agent definitions.** Only `agents/_example/`, `terraform.tfvars.example`, and `backend.tf.example` go in git. The gitignore already enforces this; do not bypass.
 - ❌ **Changing the location or format of an existing layer** without a deprecation cycle. This document is the contract; the cost of moving is high.
 
 ## Worked examples
@@ -50,7 +50,7 @@ If two layers seem to apply, default to the lower number in the list — infrast
 Walk the rule:
 1. Affects AWS infra? **No.** The endpoint URL is application-layer, but its *reachability* (egress allowlist) IS infra → that part goes in tfvars `agents.<name>.egress_allowed_domains`. The URL itself does not.
 2. Security/policy decision? **No** (the choice of *which* model is not a policy decision; the choice of which models are *allowed* would be).
-3. Runtime-consumed, operator-authored, provider-agnostic? **Yes.** → **`behavior/agents/<name>/agent.yaml`** with `model: { provider, name, base_url }`.
+3. Runtime-consumed, operator-authored, provider-agnostic? **Yes.** → **`agents/<name>/agent.yaml`** with `model: { provider, name, base_url }`.
 4. (also) Credential? **Yes**, the API key → secrets store (`openai-api-key`). The `base_url` and `name` go in overlay; the key goes in secrets. Two homes, deliberately.
 
 ### Example 2: "I want to restrict agent X to a single Slack channel"
@@ -66,7 +66,7 @@ Walk the rule:
 Walk the rule:
 1. Affects AWS infra? No.
 2. Policy decision? No.
-3. Runtime-consumed, operator-authored, provider-agnostic? Yes. → **`behavior/agents/<name>/SOUL.md`** (or `AGENTS.md`, `USER.md`). Already the established pattern; don't duplicate in `agent.yaml`.
+3. Runtime-consumed, operator-authored, provider-agnostic? Yes. → **`agents/<name>/SOUL.md`** (or `AGENTS.md`, `USER.md`). Already the established pattern; don't duplicate in `agent.yaml`.
 
 ## Why three layers (overlay vs policy vs infra) instead of one?
 

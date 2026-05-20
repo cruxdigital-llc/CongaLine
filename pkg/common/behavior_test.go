@@ -10,22 +10,25 @@ import (
 	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 )
 
-// setupBehaviorDir creates a temp behavior directory with the runtime+type structure:
+// setupBehaviorDir creates a temp behavior directory with the runtime+type
+// structure:
 //
-//	default/openclaw/team/{SOUL.md, AGENTS.md, USER.md.tmpl}
-//	default/openclaw/user/{SOUL.md, AGENTS.md, USER.md.tmpl}
+//	_defaults/openclaw/team/{SOUL.md, AGENTS.md, USER.md.tmpl}
+//	_defaults/openclaw/user/{SOUL.md, AGENTS.md, USER.md.tmpl}
+//
+// Per-agent overrides go directly under dir (dir/<name>/SOUL.md, etc.).
 func setupBehaviorDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	os.MkdirAll(filepath.Join(dir, "default", "openclaw", "team"), 0755)
-	os.MkdirAll(filepath.Join(dir, "default", "openclaw", "user"), 0755)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "SOUL.md"), []byte("team soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "AGENTS.md"), []byte("team agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "USER.md.tmpl"), []byte("team user: {{AGENT_NAME}}"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "user", "SOUL.md"), []byte("user soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "user", "AGENTS.md"), []byte("user agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "user", "USER.md.tmpl"), []byte("dm user: {{AGENT_NAME}}"), 0644)
+	os.MkdirAll(filepath.Join(dir, "_defaults", "openclaw", "team"), 0755)
+	os.MkdirAll(filepath.Join(dir, "_defaults", "openclaw", "user"), 0755)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "team", "SOUL.md"), []byte("team soul"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "team", "AGENTS.md"), []byte("team agents"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "team", "USER.md.tmpl"), []byte("team user: {{AGENT_NAME}}"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "user", "SOUL.md"), []byte("user soul"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "user", "AGENTS.md"), []byte("user agents"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "user", "USER.md.tmpl"), []byte("dm user: {{AGENT_NAME}}"), 0644)
 
 	return dir
 }
@@ -35,14 +38,14 @@ func setupHermesBehaviorDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	os.MkdirAll(filepath.Join(dir, "default", "hermes", "team"), 0755)
-	os.MkdirAll(filepath.Join(dir, "default", "hermes", "user"), 0755)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "team", "SOUL.md"), []byte("hermes team soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "team", "AGENTS.md"), []byte("hermes team agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "team", "USER.md.tmpl"), []byte("hermes team: {{AGENT_NAME}}"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "user", "SOUL.md"), []byte("hermes user soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "user", "AGENTS.md"), []byte("hermes user agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "user", "USER.md.tmpl"), []byte("hermes dm: {{AGENT_NAME}}"), 0644)
+	os.MkdirAll(filepath.Join(dir, "_defaults", "hermes", "team"), 0755)
+	os.MkdirAll(filepath.Join(dir, "_defaults", "hermes", "user"), 0755)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "team", "SOUL.md"), []byte("hermes team soul"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "team", "AGENTS.md"), []byte("hermes team agents"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "team", "USER.md.tmpl"), []byte("hermes team: {{AGENT_NAME}}"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "user", "SOUL.md"), []byte("hermes user soul"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "user", "AGENTS.md"), []byte("hermes user agents"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "user", "USER.md.tmpl"), []byte("hermes dm: {{AGENT_NAME}}"), 0644)
 
 	return dir
 }
@@ -111,7 +114,7 @@ func TestComposeAgentWorkspaceFiles_AgentOverridesDefault(t *testing.T) {
 	dir := setupBehaviorDir(t)
 	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
 
-	agentDir := filepath.Join(dir, "agents", "acme")
+	agentDir := filepath.Join(dir, "acme")
 	os.MkdirAll(agentDir, 0755)
 	os.WriteFile(filepath.Join(agentDir, "SOUL.md"), []byte("custom soul"), 0644)
 
@@ -139,7 +142,7 @@ func TestComposeAgentWorkspaceFiles_AgentOverridesUSERmd(t *testing.T) {
 	dir := setupBehaviorDir(t)
 	agent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}
 
-	agentDir := filepath.Join(dir, "agents", "acme")
+	agentDir := filepath.Join(dir, "acme")
 	os.MkdirAll(agentDir, 0755)
 	os.WriteFile(filepath.Join(agentDir, "USER.md"), []byte("custom user file"), 0644)
 
@@ -163,7 +166,7 @@ func TestComposeAgentWorkspaceFiles_IgnoresUnknownBehaviorFiles(t *testing.T) {
 
 	// Even if extra files exist in agents/acme/, only SOUL.md/AGENTS.md/USER.md are read.
 	// MEMORY.md in the agent dir is simply ignored (not loaded, not deployed).
-	agentDir := filepath.Join(dir, "agents", "acme")
+	agentDir := filepath.Join(dir, "acme")
 	os.MkdirAll(agentDir, 0755)
 	os.WriteFile(filepath.Join(agentDir, "MEMORY.md"), []byte("should be ignored"), 0644)
 	os.WriteFile(filepath.Join(agentDir, "SOUL.md"), []byte("custom soul"), 0644)
@@ -339,15 +342,15 @@ func TestComposeAgentWorkspaceFiles_RuntimeIsolation(t *testing.T) {
 	// Create a dir with both openclaw and hermes defaults
 	dir := t.TempDir()
 
-	os.MkdirAll(filepath.Join(dir, "default", "openclaw", "team"), 0755)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "SOUL.md"), []byte("openclaw team soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "AGENTS.md"), []byte("openclaw team agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "openclaw", "team", "USER.md.tmpl"), []byte("openclaw team: {{AGENT_NAME}}"), 0644)
+	os.MkdirAll(filepath.Join(dir, "_defaults", "openclaw", "team"), 0755)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "team", "SOUL.md"), []byte("openclaw team soul"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "team", "AGENTS.md"), []byte("openclaw team agents"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "openclaw", "team", "USER.md.tmpl"), []byte("openclaw team: {{AGENT_NAME}}"), 0644)
 
-	os.MkdirAll(filepath.Join(dir, "default", "hermes", "team"), 0755)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "team", "SOUL.md"), []byte("hermes team soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "team", "AGENTS.md"), []byte("hermes team agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "default", "hermes", "team", "USER.md.tmpl"), []byte("hermes team: {{AGENT_NAME}}"), 0644)
+	os.MkdirAll(filepath.Join(dir, "_defaults", "hermes", "team"), 0755)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "team", "SOUL.md"), []byte("hermes team soul"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "team", "AGENTS.md"), []byte("hermes team agents"), 0644)
+	os.WriteFile(filepath.Join(dir, "_defaults", "hermes", "team", "USER.md.tmpl"), []byte("hermes team: {{AGENT_NAME}}"), 0644)
 
 	// OpenClaw agent gets openclaw files
 	ocAgent := provider.AgentConfig{Name: "acme", Type: provider.AgentTypeTeam}

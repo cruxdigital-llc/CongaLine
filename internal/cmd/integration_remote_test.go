@@ -163,7 +163,7 @@ func TestRemoteTeamAgentWithBehavior(t *testing.T) {
 
 	// Create agent-specific behavior dir in the repo (remote provider reads from repo_path).
 	// Cleanup registered on the parent test so the dir persists across subtests.
-	agentBehaviorDir := filepath.Join(root, "behavior", "agents", agentName)
+	agentBehaviorDir := filepath.Join(root, "agents", agentName)
 	os.MkdirAll(agentBehaviorDir, 0755)
 	t.Cleanup(func() { os.RemoveAll(agentBehaviorDir) })
 

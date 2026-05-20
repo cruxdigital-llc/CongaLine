@@ -32,7 +32,7 @@ Pluggable provider architecture decoupled from AWS.
 - Conga Line CLI (13 commands, Go + Cobra)
 - CLI hardening (silent failure fixes, validation, 28 unit tests)
 - Agent pause/unpause (all providers)
-- Behavior management (version-controlled SOUL.md, per-agent overrides via `behavior/agents/<name>/`)
+- Behavior management (version-controlled SOUL.md, per-agent overrides via `agents/<name>/`)
 - CLI JSON input/output for LLM-driven automation
 - Remote provider (full lifecycle on VPS/bare-metal/RPi, SSH tunneling)
 - SSH auto-reconnect for MCP server
@@ -59,7 +59,7 @@ The organizing principle: local → remote → enterprise is a promotion pipelin
 
 **Goal:** Model routing via Bifrost proxy, promotion command, cost tracking.
 
-**Precursor (landed):** Per-agent model override via `behavior/agents/<name>/agent.yaml`. Supports `ollama` (native) and `openai` (compatible) providers today. Fallback chains, cost limits, and cross-provider routing live in this phase. See `specs/2026-05-19_feature_local-model-routing/`.
+**Precursor (landed):** Per-agent model override via `agents/<name>/agent.yaml`. Supports `ollama` (native) and `openai` (compatible) providers today. Fallback chains, cost limits, and cross-provider routing live in this phase. See `specs/2026-05-19_feature_local-model-routing/`.
 
 | Area | Deliverable | Status |
 |---|---|---|

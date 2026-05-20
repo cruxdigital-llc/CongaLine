@@ -1,29 +1,44 @@
-# Upload behavior files to S3 for deployment to agent workspaces.
-# Files under default/ provide shared defaults; files under agents/<name>/
-# override the defaults for specific agents. Deployed during bootstrap
-# and on every container restart via deploy-behavior.sh.
+# Upload agent overlay + default files to S3 for deployment to agent workspaces.
+# Files under _defaults/ provide shared defaults; files under <name>/ override
+# the defaults for specific agents. Deployed during bootstrap and on every
+# container restart via deploy-agents.sh.
+#
+# The S3 prefix uses "conga/agents/" (post-2026-05-XX rename) instead of the
+# legacy "conga/behavior/" — the rename PR included a one-shot terraform
+# state migration via the `moved {}` blocks below so existing state doesn't
+# trigger a destroy + recreate.
 
 locals {
-  behavior_files = {
-    for f in fileset("${var.repo_root}/behavior", "**/*") : f => f
+  agent_files = {
+    for f in fileset("${var.repo_root}/agents", "**/*") : f => f
     if !endswith(f, ".gitkeep")
   }
 }
 
-resource "aws_s3_object" "behavior" {
-  for_each = local.behavior_files
+resource "aws_s3_object" "agents" {
+  for_each = local.agent_files
   bucket   = local.state_bucket
-  key      = "conga/behavior/${each.value}"
-  content  = file("${var.repo_root}/behavior/${each.value}")
-  etag     = md5(file("${var.repo_root}/behavior/${each.value}"))
+  key      = "conga/agents/${each.value}"
+  content  = file("${var.repo_root}/agents/${each.value}")
+  etag     = md5(file("${var.repo_root}/agents/${each.value}"))
+}
+
+moved {
+  from = aws_s3_object.behavior
+  to   = aws_s3_object.agents
 }
 
 # Upload deploy helper to S3 — single source of truth for bootstrap and provisioning
-resource "aws_s3_object" "deploy_behavior_helper" {
+resource "aws_s3_object" "deploy_agents_helper" {
   bucket  = local.state_bucket
-  key     = "conga/scripts/deploy-behavior.sh"
-  content = file("${var.repo_root}/scripts/deploy-behavior.sh.tmpl")
-  etag    = md5(file("${var.repo_root}/scripts/deploy-behavior.sh.tmpl"))
+  key     = "conga/scripts/deploy-agents.sh"
+  content = file("${var.repo_root}/scripts/deploy-agents.sh.tmpl")
+  etag    = md5(file("${var.repo_root}/scripts/deploy-agents.sh.tmpl"))
+}
+
+moved {
+  from = aws_s3_object.deploy_behavior_helper
+  to   = aws_s3_object.deploy_agents_helper
 }
 
 # Upload pre-start helper — called by ExecStartPre in agent systemd units
@@ -34,35 +49,35 @@ resource "aws_s3_object" "pre_start_helper" {
   etag    = md5(file("${var.repo_root}/scripts/pre-start.sh.tmpl"))
 }
 
-# Restart all agents when behavior files or the deploy helper change.
+# Restart all agents when overlay files or the deploy helper change.
 # NOTE: This restarts every agent, not just the ones whose files changed.
 # Acceptable for small fleets (2-5 agents); for larger deployments,
 # consider scoping restarts to affected agents only.
 # The ExecStartPre in each agent's systemd unit syncs from S3 and runs
-# deploy-behavior.sh, so a restart is sufficient to pick up changes.
+# deploy-agents.sh, so a restart is sufficient to pick up changes.
 locals {
-  behavior_content_hash = md5(join("", [
-    for f in sort(keys(local.behavior_files)) :
-    md5(file("${var.repo_root}/behavior/${f}"))
+  agent_content_hash = md5(join("", [
+    for f in sort(keys(local.agent_files)) :
+    md5(file("${var.repo_root}/agents/${f}"))
   ]))
-  deploy_helper_hash    = md5(file("${var.repo_root}/scripts/deploy-behavior.sh.tmpl"))
+  deploy_helper_hash    = md5(file("${var.repo_root}/scripts/deploy-agents.sh.tmpl"))
   pre_start_helper_hash = md5(file("${var.repo_root}/scripts/pre-start.sh.tmpl"))
 }
 
-resource "terraform_data" "behavior_refresh" {
+resource "terraform_data" "agents_refresh" {
   depends_on = [
-    aws_s3_object.behavior,
-    aws_s3_object.deploy_behavior_helper,
+    aws_s3_object.agents,
+    aws_s3_object.deploy_agents_helper,
     aws_s3_object.pre_start_helper,
     terraform_data.bootstrap_ready,
   ]
 
-  triggers_replace = "${local.behavior_content_hash}-${local.deploy_helper_hash}-${local.pre_start_helper_hash}"
+  triggers_replace = "${local.agent_content_hash}-${local.deploy_helper_hash}-${local.pre_start_helper_hash}"
 
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
-      echo "Behavior files changed — restarting all agents..."
+      echo "Agent overlay files changed — restarting all agents..."
       INSTANCE_ID="${aws_instance.conga.id}"
       REGION="${var.aws_region}"
       PROFILE="${var.aws_profile}"
@@ -89,7 +104,7 @@ resource "terraform_data" "behavior_refresh" {
           --output text --query "[Status, StandardOutputContent]" 2>/dev/null || echo "")
         echo "Poll $i/12: $OUTPUT"
         if echo "$OUTPUT" | grep -qE "(Success|DONE)"; then
-          echo "All agents restarted with updated behavior files."
+          echo "All agents restarted with updated overlay files."
           break
         fi
         if echo "$OUTPUT" | grep -qE "(Failed|TimedOut|Cancelled)"; then
@@ -102,4 +117,9 @@ resource "terraform_data" "behavior_refresh" {
       fi
     EOT
   }
+}
+
+moved {
+  from = terraform_data.behavior_refresh
+  to   = terraform_data.agents_refresh
 }

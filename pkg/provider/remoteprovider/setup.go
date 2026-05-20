@@ -130,7 +130,7 @@ if [ "$(id -u)" != "0" ]; then
         exit 1
     fi
 fi
-$SUDO mkdir -p %s/{agents,secrets/{shared,agents},config,data,router/{slack,telegram}/src,behavior,egress-proxy,logs}
+$SUDO mkdir -p %s/{agents,secrets/{shared,agents},config,data,router/{slack,telegram}/src,egress-proxy,logs}
 $SUDO chown -R %s:%s %s
 chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 `, p.remoteDir, sshUser, sshUser, p.remoteDir, p.remoteDir, p.remoteDir, p.remoteDir, p.remoteDir)
@@ -156,7 +156,7 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 		repoStatus = "not set"
 		repoPath = detectRepoRoot()
 	}
-	fmt.Printf("\n[config] repo_path — Conga Line repo root for router/behavior files (%s)\n", repoStatus)
+	fmt.Printf("\n[config] repo_path — Conga Line repo root for router and agent overlay files (%s)\n", repoStatus)
 	if cfg == nil {
 		newRepoPath, err := ui.TextPromptWithDefault("  Repo path", repoPath)
 		if err != nil {
@@ -279,11 +279,14 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 			fmt.Println("  Router dependencies installed.")
 		}
 
-		fmt.Println("Uploading behavior files...")
-		if err := p.ssh.UploadDir(filepath.Join(repoPath, "behavior"), p.remoteBehaviorDir()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to upload behavior files: %v\n", err)
-		} else {
-			fmt.Println("  Behavior files uploaded to /opt/conga/behavior/")
+		fmt.Println("Uploading agent overlays...")
+		localSrc := filepath.Join(repoPath, "agents")
+		if _, err := os.Stat(localSrc); err == nil {
+			if err := p.ssh.UploadDir(localSrc, p.remoteBehaviorDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to upload agent overlays: %v\n", err)
+			} else {
+				fmt.Printf("  Agent overlays uploaded to %s\n", p.remoteBehaviorDir())
+			}
 		}
 
 		fmt.Println("Uploading egress proxy config...")

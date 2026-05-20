@@ -169,7 +169,7 @@ func TestTeamAgentWithBehavior(t *testing.T) {
 
 	t.Run("create-agent-behavior", func(t *testing.T) {
 		skipIfPriorFailed(t, parent)
-		agentBehaviorDir := filepath.Join(dataDir, "behavior", "agents", agentName)
+		agentBehaviorDir := filepath.Join(dataDir, "agents", agentName)
 		if err := os.MkdirAll(agentBehaviorDir, 0755); err != nil {
 			t.Fatalf("failed to create agent behavior dir: %v", err)
 		}
@@ -212,7 +212,7 @@ func TestTeamAgentWithBehavior(t *testing.T) {
 		skipIfPriorFailed(t, parent)
 		// Write an agent-specific AGENTS.md (overriding the default)
 		content := []byte("# Custom AGENTS.md\n\nAdded by integration test.")
-		agentDir := filepath.Join(dataDir, "behavior", "agents", agentName)
+		agentDir := filepath.Join(dataDir, "agents", agentName)
 		if err := os.WriteFile(filepath.Join(agentDir, "AGENTS.md"), content, 0644); err != nil {
 			t.Fatalf("failed to write AGENTS.md: %v", err)
 		}
@@ -231,7 +231,7 @@ func TestTeamAgentWithBehavior(t *testing.T) {
 
 	t.Run("remove-agents-md-override", func(t *testing.T) {
 		skipIfPriorFailed(t, parent)
-		os.Remove(filepath.Join(dataDir, "behavior", "agents", agentName, "AGENTS.md"))
+		os.Remove(filepath.Join(dataDir, "agents", agentName, "AGENTS.md"))
 	})
 
 	t.Run("refresh-after-rm", func(t *testing.T) {
