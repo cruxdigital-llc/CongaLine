@@ -59,9 +59,11 @@ The organizing principle: local → remote → enterprise is a promotion pipelin
 
 **Goal:** Model routing via Bifrost proxy, promotion command, cost tracking.
 
+**Precursor (landed):** Per-agent model override via `behavior/agents/<name>/agent.yaml`. Supports `ollama` (native) and `openai` (compatible) providers today. Fallback chains, cost limits, and cross-provider routing live in this phase. See `specs/2026-05-19_feature_local-model-routing/`.
+
 | Area | Deliverable | Status |
 |---|---|---|
-| **Routing policy** | Routing section of `conga-policy.yaml`: model registry, fallback chains, cost limits, task rules. Ollama auto-detection on local. | Planned (Spec 3) |
+| **Routing policy** | Routing section of `conga-policy.yaml`: model registry, fallback chains, cost limits, task rules. Ollama auto-detection on local. Extends the existing `agent.yaml` `model:` block via reserved `model.fallbacks` key (schema v2). | Planned (Spec 3) |
 | **Bifrost sidecar** | Deploy Bifrost as sidecar container on remote/AWS. Generate config from routing policy. Cost tracking via metrics endpoint. | Planned (Spec 5) |
 | **Promote command** | `conga admin promote --from local --to remote/aws`. Validates policy against target. Reports enforcement gaps. Copies config + policy (not secrets). | Planned (Spec 6) |
 | **Security posture reporting** | `conga status` security section, `conga policy audit`, CVE awareness. | Planned (Spec 4) |

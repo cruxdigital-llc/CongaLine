@@ -215,7 +215,13 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent O
 - [ ] Phase 5: Provider wiring (local/remote/aws `RefreshAgent` populate `ConfigParams.Overlay`)
 - [ ] Phase 6: AWS bootstrap (server-side JSON render, avoid shell YAML parsing)
 - [x] Architect deep-dive (durability review) — 6 spec changes applied: schema versioning, strict-key YAML, reserved keyspace, new `config-taxonomy.md`, `architecture.md` cross-link, Hermes Model field preservation note
-- [ ] Phase 7: Docs (`_example/agent.yaml.example`, `config-taxonomy.md` ✅ landed early, CLAUDE.md, architecture.md ✅ landed early, ROADMAP cross-link)
+- [x] Phase 2: Type defs (`pkg/runtime/overlay.go`)
+- [x] Phase 3: Overlay loader (`pkg/common/overlay_agent.go`)
+- [x] Phase 4: Config generator overlay (`pkg/runtime/openclaw/config.go` `applyModelOverlay`)
+- [x] Phase 5: Provider wiring (local/remote/aws `RefreshAgent` populate `ConfigParams.Overlay`)
+- [x] Phase 7: Docs (`_example/agent.yaml.example`, `config-taxonomy.md`, CLAUDE.md, architecture.md, ROADMAP cross-link)
+- [ ] Phase 1: Image pin bump (`v2026.3.11` → `v2026.5.18`) — SEPARATE PR
+- [ ] Phase 6: AWS bootstrap shell — ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; no bootstrap changes needed)
 - [ ] Phase 8: Provider release (per `reference_provider_release_flow`)
 - [ ] Phase 9: Verification (AWS aaron→Spark, local parity, control-agent regression)
 

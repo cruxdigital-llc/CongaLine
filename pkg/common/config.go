@@ -70,8 +70,22 @@ func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent
 }
 
 // RuntimeGenerateAgentFiles produces the config and .env file content for an
-// agent using the specified runtime.
+// agent using the specified runtime. Equivalent to
+// RuntimeGenerateAgentFilesWithOverlay(rtName, cfg, shared, perAgent, nil).
 func RuntimeGenerateAgentFiles(rtName runtime.RuntimeName, cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string) (configBytes []byte, envContent []byte, err error) {
+	return RuntimeGenerateAgentFilesWithOverlay(rtName, cfg, shared, perAgent, nil)
+}
+
+// RuntimeGenerateAgentFilesWithOverlay is the same as RuntimeGenerateAgentFiles
+// but additionally threads an optional per-agent overlay (from
+// behavior/agents/<name>/agent.yaml) into config generation.
+func RuntimeGenerateAgentFilesWithOverlay(
+	rtName runtime.RuntimeName,
+	cfg provider.AgentConfig,
+	shared SharedSecrets,
+	perAgent map[string]string,
+	overlay *runtime.AgentOverlay,
+) (configBytes []byte, envContent []byte, err error) {
 	rt, err := runtime.Get(rtName)
 	if err != nil {
 		return nil, nil, err
@@ -79,6 +93,7 @@ func RuntimeGenerateAgentFiles(rtName runtime.RuntimeName, cfg provider.AgentCon
 	configBytes, err = rt.GenerateConfig(runtime.ConfigParams{
 		Agent:   cfg,
 		Secrets: shared,
+		Overlay: overlay,
 	})
 	if err != nil {
 		return nil, nil, err

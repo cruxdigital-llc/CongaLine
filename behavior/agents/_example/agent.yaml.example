@@ -1,0 +1,97 @@
+# ------------------------------------------------------------------------------
+# agent.yaml — per-agent runtime overlay (OPTIONAL)
+#
+# Lives at: behavior/agents/<agent-name>/agent.yaml
+# Format:   YAML, schema v1 (see below)
+# Scope:    Provider-agnostic per-agent runtime configuration. Same file
+#           produces the same behavior on local, remote, and AWS providers.
+#
+# WHAT GOES HERE:  model selection, future memory/tools/limits configuration.
+# WHAT DOES NOT:   infra (ports, egress IPs → tfvars or CLI), secrets (→ secrets
+#                  store, never literal values here), prompts (→ SOUL.md /
+#                  AGENTS.md / USER.md alongside this file), policy (→
+#                  conga-policy.yaml).
+#
+# See product-knowledge/standards/config-taxonomy.md for the full taxonomy and
+# decision rule.
+#
+# Real agent overlays are gitignored. Only this _example file is committed.
+# Copy this file as agent.yaml in your own agent's directory and edit.
+# ------------------------------------------------------------------------------
+
+# Required. The schema version this document was authored against.
+# - 1 is the current version.
+# - A missing `version:` is accepted with a one-time warning (treated as 1).
+# - Any other value is a hard failure: conga prints "binary too old; upgrade"
+#   rather than silently mis-parsing a newer schema.
+version: 1
+
+# ------------------------------------------------------------------------------
+# model — override the agent's LLM provider, model, and endpoint.
+#
+# Absence = use the runtime's default model (Anthropic for OpenClaw today).
+# ------------------------------------------------------------------------------
+model:
+  # Supported providers (case-sensitive lowercase):
+  #   ollama  — OpenClaw's native Ollama integration. Use this for any
+  #             host running an Ollama daemon (port 11434 by default).
+  #             IMPORTANT: do NOT use Ollama's OpenAI-compatible /v1 endpoint
+  #             via the `openai` provider below — it breaks tool calling.
+  #   openai  — Native OpenAI or any OpenAI-compatible server that follows
+  #             the /v1/chat/completions contract (vLLM, llama.cpp --api,
+  #             hosted OpenAI itself, etc.).
+  provider: ollama
+
+  # Model tag as the provider expects it. For Ollama, this is the NAME column
+  # from `ollama list` on the host (e.g. "qwen3:6b", "llama3.3:latest").
+  # For OpenAI providers, e.g. "gpt-5.5", "qwen-2.5-72b-instruct".
+  name: qwen3:6b
+
+  # Endpoint URL.
+  # - For ollama: REQUIRED, and MUST NOT end in /v1 (use the native API root).
+  #   Examples:  http://192.168.1.10:11434
+  #              http://my-llm-host.lan:11434
+  # - For openai: OPTIONAL. Empty = use OpenAI's hosted API at api.openai.com.
+  #   Self-hosted servers typically use a /v1 suffix:
+  #              http://10.0.0.5:8000/v1
+  base_url: http://192.168.1.10:11434
+
+# ------------------------------------------------------------------------------
+# RESERVED KEYS — do NOT use today.
+#
+# These top-level keys are reserved for future versions of the schema. Setting
+# any of them in a `version: 1` document will fail the strict-key parser. They
+# are listed here so contributors know what's coming and don't try to wedge new
+# concerns into the existing `model:` block.
+#
+# When any of these lands, schema bumps to `version: 2` and the loader handles
+# both versions explicitly. Never silently extend; never reuse names.
+# ------------------------------------------------------------------------------
+#
+# # Fallback chain for model failover. Requires the Bifrost / Model Routing work
+# # (see product-knowledge/ROADMAP.md). Planned, not implemented.
+# model:
+#   fallbacks:
+#     - openai/gpt-5.5
+#     - anthropic/claude-opus-4-6
+#
+# # Per-agent memory backend. Planned. Anticipated shape:
+# memory:
+#   provider: ollama        # embedding provider id
+#   endpoint: http://...    # if not the same as the chat endpoint
+#
+# # Per-agent tool / MCP server allowlist. Planned.
+# tools:
+#   allowlist:
+#     - github
+#     - linear
+#
+# # Per-agent token / cost limits. Planned.
+# limits:
+#   max_tokens_per_turn: 8192
+#   daily_token_cap: 5000000
+#
+# # Per-agent multi-modal model refs (image / pdf / video). Planned.
+# images:
+#   provider: ollama
+#   name: qwen2.5vl:7b

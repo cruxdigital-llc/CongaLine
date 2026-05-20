@@ -285,10 +285,37 @@ The proposal is **structurally sound** and aligned with existing project pattern
 
 With the six changes above, this feature should land changes that survive at least the next 4–6 per-agent config features (memory, tools, limits, fallbacks, multi-modal model refs) without altering format or location. After that, a `version: 2` migration becomes a deliberate, planned event — not an accidental drift.
 
-## Handoff
-Next step: `/glados:implement-feature` — but only after the user reviews this architect deep-dive and accepts (or modifies) the six proposed spec changes. If accepted, the spec needs updating before implementation begins.
+## Implementation log — 2026-05-19
 
-Implementation order (from `spec.md` §Implementation phases):
-1. Phase 1 — Pin bump (separate PR; verify Slack survives).
-2. Phases 2–9 — Type defs → loader → generator → provider wiring → AWS bootstrap → docs → provider release → verification.
-3. Additional Phase 7 deliverable: `product-knowledge/standards/config-taxonomy.md` (per architect review).
+### Files added
+- `pkg/runtime/overlay.go` — `AgentOverlay`, `ModelOverlay`, `Validate()`, supported-provider constants, `OllamaLocalAPIKey` sentinel.
+- `pkg/runtime/overlay_test.go` — 30 sub-test cases across version, provider enum, name, base_url shape, Ollama `/v1` footgun, OpenAI non-`/v1` acceptance, URL shape, happy paths.
+- `pkg/common/overlay_agent.go` — `LoadAgentOverlay` with strict-key YAML parsing and warn-once dedup for missing-version + nonstandard OpenAI base_url.
+- `pkg/common/overlay_agent_test.go` — 16 tests covering every spec-defined case (missing file, empty file, valid Ollama/OpenAI, version 2 rejection, missing-version warning + emitted-once, unknown top-level/inner keys, malformed YAML, unknown provider, Ollama `/v1` footgun, missing/no-scheme base_url, OpenAI non-`/v1` warn-accept, casing mismatch).
+- `pkg/runtime/openclaw/config_test.go` — 5 tests: no-overlay regression guard, Ollama overlay, OpenAI overlay with self-hosted endpoint, OpenAI hosted default (no base_url), overlay-and-channels coexistence.
+- `behavior/agents/_example/agent.yaml.example` — schema v1 template with Ollama + OpenAI examples and a commented reserved-keyspace block.
+- `specs/.../tasks.md` — implementation breakdown.
+
+### Files modified
+- `pkg/runtime/runtime.go` — `ConfigParams.Overlay *AgentOverlay` added; existing `Model string` preserved with a comment clarifying Hermes consumes it.
+- `pkg/runtime/openclaw/config.go` — `applyModelOverlay` writes `agents.defaults.model.{primary,fallbacks}`, `agents.defaults.models` allowlist, and `models.providers.<id>` block. `GenerateConfig` calls it after the existing gateway + channels logic.
+- `pkg/common/config.go` — new `RuntimeGenerateAgentFilesWithOverlay`; existing `RuntimeGenerateAgentFiles` delegates with nil overlay (back-compat).
+- `pkg/provider/localprovider/provider.go` — both `ProvisionAgent` (~line 192) and `RefreshAgent` (~line 681) call `common.LoadAgentOverlay(p.behaviorDir(), cfg)` and thread the overlay into `runtime.ConfigParams`.
+- `pkg/provider/remoteprovider/channels.go` — `regenerateAgentConfig` reads overlay from `<repo_path>/behavior` (matching the deployBehavior pattern) and uses `RuntimeGenerateAgentFilesWithOverlay`.
+- `pkg/provider/awsprovider/channels.go` — `regenerateAgentConfigOnInstance` reads overlay from `./behavior` (cwd-relative, same convention as `terraform apply`); silently skipped when `./behavior` is absent.
+- `CLAUDE.md` — added per-agent runtime overlay paragraph under "Behavior files."
+- `product-knowledge/ROADMAP.md` — Bifrost / Multi-Provider Routing row now notes the landed precursor and that fallback chains extend via reserved `model.fallbacks` (schema v2).
+
+### Test results
+- `go test ./...` — all 22 packages pass.
+- `go vet ./...` — clean.
+- `gofmt -l .` — clean.
+
+### Out of scope (per `tasks.md`)
+- Phase 1 (image pin bump `v2026.3.11` → `v2026.5.18`) — separate PR; requires production Slack verification.
+- Phase 6 (AWS bootstrap shell) — discovered unnecessary; overlay consumed at config-gen time on the operator's machine, `openclaw.json` carries the result.
+- Phase 8 (provider release) — post-merge operator step.
+- Phase 9 (verification) — `/glados:verify-feature`.
+
+## Handoff
+Next step: `/glados:verify-feature` once the PR lands.

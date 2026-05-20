@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/discovery"
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
 // AddChannel configures a messaging channel platform by storing shared secrets
@@ -454,7 +456,21 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return err
 	}
 
-	openClawJSON, envContent, err := common.GenerateAgentFiles(cfg, shared, perAgent)
+	// Optional per-agent overlay (behavior/agents/<name>/agent.yaml).
+	// AWS expects the operator to run `conga` from the repo root, same as
+	// `terraform apply`. If ./behavior is missing (operator running from
+	// elsewhere), the overlay is silently skipped — defaults apply.
+	var overlay *runtime.AgentOverlay
+	if _, statErr := os.Stat("behavior"); statErr == nil {
+		overlay, err = common.LoadAgentOverlay("behavior", cfg)
+		if err != nil {
+			return fmt.Errorf("failed to load agent overlay: %w", err)
+		}
+	}
+
+	openClawJSON, envContent, err := common.RuntimeGenerateAgentFilesWithOverlay(
+		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, overlay,
+	)
 	if err != nil {
 		return err
 	}
