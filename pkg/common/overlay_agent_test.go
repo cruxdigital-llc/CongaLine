@@ -195,7 +195,7 @@ func TestLoadAgentOverlay_WarningEmittedOnce(t *testing.T) {
 	}
 }
 
-func TestLoadAgentOverlay_UnknownTopLevelKey(t *testing.T) {
+func TestLoadAgentOverlay_ReservedTopLevelKey(t *testing.T) {
 	resetOverlayWarnings()
 	dir := t.TempDir()
 	writeOverlay(t, dir, "x", `version: 1
@@ -204,10 +204,49 @@ tools:
 `)
 	_, err := LoadAgentOverlay(dir, newAgent("x"))
 	if err == nil {
-		t.Fatal("want error on unknown top-level key, got nil")
+		t.Fatal("want error on reserved top-level key, got nil")
 	}
-	if !strings.Contains(err.Error(), "tools") {
-		t.Fatalf("want error naming the unknown key, got %v", err)
+	if !strings.Contains(err.Error(), `"tools"`) {
+		t.Fatalf("want error quoting the reserved key, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "reserved for a future schema version") {
+		t.Fatalf("want error to explain the key is reserved, got %v", err)
+	}
+}
+
+func TestLoadAgentOverlay_AllReservedKeysRejected(t *testing.T) {
+	resetOverlayWarnings()
+	for _, key := range []string{"memory", "tools", "limits", "images", "pdf", "video"} {
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			writeOverlay(t, dir, "x", "version: 1\n"+key+": placeholder\n")
+			_, err := LoadAgentOverlay(dir, newAgent("x"))
+			if err == nil || !strings.Contains(err.Error(), "reserved for a future schema version") {
+				t.Fatalf("key %q: want reserved-key error, got %v", key, err)
+			}
+		})
+	}
+}
+
+func TestLoadAgentOverlay_NonReservedUnknownKey(t *testing.T) {
+	// A typo that isn't on the reserved list should still fail via the
+	// strict-key path, but with the generic "field not found" yaml.v3
+	// message rather than the reserved-key explanation.
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "x", `version: 1
+mdoel:
+  provider: ollama
+`)
+	_, err := LoadAgentOverlay(dir, newAgent("x"))
+	if err == nil {
+		t.Fatal("want error on misspelled key, got nil")
+	}
+	if !strings.Contains(err.Error(), "mdoel") {
+		t.Fatalf("want error naming the misspelled key, got %v", err)
+	}
+	if strings.Contains(err.Error(), "reserved for a future schema version") {
+		t.Fatalf("misspelled key should not get reserved-key message, got %v", err)
 	}
 }
 

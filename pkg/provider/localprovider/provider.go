@@ -92,8 +92,27 @@ func (p *LocalProvider) configDir() string             { return filepath.Join(p.
 func (p *LocalProvider) dataSubDir(name string) string { return filepath.Join(p.dataDir, "data", name) }
 func (p *LocalProvider) routerDir() string             { return filepath.Join(p.dataDir, "router") }
 func (p *LocalProvider) behaviorDir() string           { return filepath.Join(p.dataDir, "behavior") }
-func (p *LocalProvider) logsDir() string               { return filepath.Join(p.dataDir, "logs") }
-func (p *LocalProvider) egressProxyDir() string        { return filepath.Join(p.dataDir, "egress-proxy") }
+
+// overlayBehaviorDir returns the directory the overlay loader should read
+// agent.yaml from. It prefers the live repo (via repo_path) so edits to
+// behavior/agents/<name>/agent.yaml are picked up by `conga refresh` without
+// re-running `conga admin setup`. Falls back to the data-dir snapshot when
+// repo_path isn't configured — back-compat for older installations.
+//
+// Mirrors the remote provider's behavior: see
+// pkg/provider/remoteprovider/provider.go deployBehavior + channels.go
+// regenerateAgentConfig.
+func (p *LocalProvider) overlayBehaviorDir() string {
+	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
+		live := filepath.Join(repoPath, "behavior")
+		if _, err := os.Stat(live); err == nil {
+			return live
+		}
+	}
+	return p.behaviorDir()
+}
+func (p *LocalProvider) logsDir() string        { return filepath.Join(p.dataDir, "logs") }
+func (p *LocalProvider) egressProxyDir() string { return filepath.Join(p.dataDir, "egress-proxy") }
 
 // --- Identity & Discovery ---
 
@@ -189,7 +208,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to read agent secrets: %w", err)
 	}
 
-	overlay, err := common.LoadAgentOverlay(p.behaviorDir(), cfg)
+	overlay, err := common.LoadAgentOverlay(p.overlayBehaviorDir(), cfg)
 	if err != nil {
 		return fmt.Errorf("failed to load agent overlay: %w", err)
 	}
@@ -682,7 +701,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		}
 	}
 
-	overlay, err := common.LoadAgentOverlay(p.behaviorDir(), *cfg)
+	overlay, err := common.LoadAgentOverlay(p.overlayBehaviorDir(), *cfg)
 	if err != nil {
 		return fmt.Errorf("failed to load agent overlay: %w", err)
 	}

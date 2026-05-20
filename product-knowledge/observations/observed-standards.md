@@ -9,7 +9,7 @@
 - **Proposed Standard**: "Tests for runtime config generators (`pkg/runtime/<rt>/config_test.go`) MUST include at least one scenario that validates the rendered config against the runtime's actual schema. Acceptable mechanisms: (a) launch the runtime's own validator in a CI container against the rendered file, e.g. `openclaw doctor --check-only`; (b) maintain a schema reference file (JSON Schema, OpenAPI, or runtime-specific) and cross-check the rendered output; (c) any other mechanism that catches a divergence between generator output and runtime expectations. Pure internal-shape assertions are not sufficient."
 - **Suggested Severity**: should
 - **Confidence**: High
-- **Status**: pending
+- **Status**: pending — tracked at [#46](https://github.com/cruxdigital-llc/CongaLine/issues/46) for resolution in the next `/glados:recombobulate` cycle.
 
 ### 2026-04-07 - Workspace path resolution must go through Runtime interface
 - **Source**: Explicit user direction — "focus on OpenClaw, scaffold Hermes"

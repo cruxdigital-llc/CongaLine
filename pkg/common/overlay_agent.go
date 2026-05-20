@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -19,6 +20,20 @@ import (
 // See specs/2026-05-19_feature_local-model-routing/ and
 // product-knowledge/standards/config-taxonomy.md for the schema and rationale.
 const agentOverlayFileName = "agent.yaml"
+
+// reservedTopLevelKeys are keys claimed by future schema versions. Setting
+// any of these in a v1 document is rejected with a friendlier message than
+// the generic strict-key parse error so operators understand they're not
+// typos. Keep in sync with the reserved-keyspace section of
+// behavior/agents/_example/agent.yaml.example.
+var reservedTopLevelKeys = map[string]string{
+	"memory": "future schema version (per-agent memory backend)",
+	"tools":  "future schema version (per-agent tool/MCP allowlist)",
+	"limits": "future schema version (per-agent token/cost limits)",
+	"images": "future schema version (per-agent image model)",
+	"pdf":    "future schema version (per-agent PDF model)",
+	"video":  "future schema version (per-agent video model)",
+}
 
 // overlayWarningOnce dedupes "missing version" and "non-standard base_url"
 // warnings so they fire at most once per file path per process. Refresh loops
@@ -47,6 +62,12 @@ func LoadAgentOverlay(behaviorDir string, agent provider.AgentConfig) (*runtime.
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	// Pre-pass: detect reserved top-level keys before strict-key parsing so we
+	// can emit a friendlier "reserved for future version" error.
+	if err := checkReservedKeys(path, data); err != nil {
+		return nil, err
+	}
+
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 
@@ -54,7 +75,7 @@ func LoadAgentOverlay(behaviorDir string, agent provider.AgentConfig) (*runtime.
 	if err := dec.Decode(&overlay); err != nil {
 		// An empty file decodes to io.EOF; treat that as the version-0 case
 		// (empty overlay, warn-and-accept).
-		if errors.Is(err, fs.ErrInvalid) || isEmptyYAMLError(err) {
+		if errors.Is(err, io.EOF) {
 			emitMissingVersionWarning(path)
 			return &overlay, nil
 		}
@@ -78,10 +99,23 @@ func LoadAgentOverlay(behaviorDir string, agent provider.AgentConfig) (*runtime.
 	return &overlay, nil
 }
 
-// isEmptyYAMLError detects the yaml.v3 sentinel returned for empty input.
-// yaml.v3 wraps io.EOF in a TypeError; check the message as a fallback.
-func isEmptyYAMLError(err error) bool {
-	return err != nil && err.Error() == "EOF"
+// checkReservedKeys decodes the raw YAML into a generic map and reports
+// whether any top-level keys are reserved for future schema versions.
+// Returns nil if no reserved keys are present (including for entirely empty
+// or unparseable input — the main decode path handles those).
+func checkReservedKeys(path string, data []byte) error {
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		// Defer to the main decoder for syntax errors.
+		return nil
+	}
+	for key := range raw {
+		if reason, reserved := reservedTopLevelKeys[key]; reserved {
+			return fmt.Errorf("%s: key %q is reserved for a %s; not supported in v1. See behavior/agents/_example/agent.yaml.example for the current schema",
+				path, key, reason)
+		}
+	}
+	return nil
 }
 
 func emitMissingVersionWarning(path string) {

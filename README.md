@@ -556,16 +556,27 @@ Only `_example/` is committed; everything under `behavior/agents/<real-name>/` i
 ### Schema (v1)
 
 ```yaml
-version: 1            # required; unknown future versions fail with a clear "binary too old" message
+version: 1                                # required; unknown future versions fail with a clear "binary too old" message
 
 model:
-  provider: openai    # one of: ollama, openai
-  name: qwen36        # model tag as the provider expects it
-  base_url: http://192.168.1.10:4000/v1   # endpoint URL
+  # Two shapes are valid — pick the one matching what's actually running on
+  # your host. Mixing them up will break tool calling at runtime.
+
+  # (A) Native Ollama daemon:
+  provider: ollama
+  name: qwen3:6b                          # exact NAME from `ollama list`
+  base_url: http://192.168.1.10:11434     # NO /v1 suffix
+
+  # (B) Any OpenAI-compatible server (vLLM, llama.cpp --api, LiteLLM proxy,
+  #     hosted OpenAI). Replaces the block above; don't keep both:
+  # provider: openai
+  # name: qwen36
+  # base_url: http://192.168.1.10:4000/v1  # /v1 suffix REQUIRED
 ```
 
 - The loader uses strict-key YAML parsing — a typo like `bare_url:` fails loudly with a line number instead of silently falling back to defaults.
-- Top-level keys other than `version:` and `model:` are reserved for future versions (`memory:`, `tools:`, `limits:`, `model.fallbacks:`, multi-modal model refs) and rejected today by the parser. See `behavior/agents/_example/agent.yaml.example` for the full reserved keyspace.
+- Top-level keys other than `version:` and `model:` are reserved for future versions (`memory:`, `tools:`, `limits:`, `model.fallbacks:`, multi-modal model refs) and rejected today by the parser with an explicit "reserved for a future schema version" error.
+- The committed template at `behavior/agents/_example/agent.yaml.example` shows the Ollama variant with the full reserved keyspace as commented-out documentation.
 
 ### Provider matrix
 
@@ -627,6 +638,8 @@ conga --provider aws logs --agent myagent | grep "agent model"
 ```
 
 For local and remote providers, steps 1 and 3 collapse — set the secret with `conga secrets set openai-api-key --agent myagent --value <key>` and the egress allowlist in `~/.conga/conga-policy.yaml`.
+
+> **Where the CLI looks for `agent.yaml`** (provider-specific): **AWS** tries `./behavior` first, then walks up to the congaline repo root via `go.mod` and tries `<root>/behavior`; if neither resolves, a stderr warning is emitted and overlay loading is skipped. **Local** prefers `<repo_path>/behavior` (set during `conga admin setup`), falling back to the snapshot at `~/.conga/behavior/`. **Remote** always reads from `<repo_path>/behavior` on the operator's machine, then SFTP-pushes the file. The common thread: edits to a real repo's `agent.yaml` always go live without a re-sync, except when an old local install hasn't configured `repo_path` yet.
 
 ### See also
 
