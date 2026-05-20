@@ -91,22 +91,44 @@ func (p *LocalProvider) agentsDir() string             { return filepath.Join(p.
 func (p *LocalProvider) configDir() string             { return filepath.Join(p.dataDir, "config") }
 func (p *LocalProvider) dataSubDir(name string) string { return filepath.Join(p.dataDir, "data", name) }
 func (p *LocalProvider) routerDir() string             { return filepath.Join(p.dataDir, "router") }
-func (p *LocalProvider) behaviorDir() string           { return filepath.Join(p.dataDir, "behavior") }
+
+// behaviorDir returns the local snapshot directory that holds per-agent
+// overlays and shipped defaults. Prefers the new layout (<dataDir>/agents/)
+// post-2026-05-XX rename; falls back to <dataDir>/behavior/ for hosts that
+// haven't run scripts/migrate-behavior-to-agents.sh yet. Returns the new
+// path when neither exists — Setup() creates it.
+//
+// Note: <dataDir>/agents/ also holds the per-agent identity JSON files
+// (<name>.json). The overlay directories (<name>/) live as siblings; the
+// loader uses fixed filenames so the two never collide.
+func (p *LocalProvider) behaviorDir() string {
+	newDir := filepath.Join(p.dataDir, "agents")
+	if _, err := os.Stat(newDir); err == nil {
+		return newDir
+	}
+	legacyDir := filepath.Join(p.dataDir, "behavior")
+	if _, err := os.Stat(legacyDir); err == nil {
+		return legacyDir
+	}
+	return newDir
+}
 
 // overlayBehaviorDir returns the directory the overlay loader should read
-// agent.yaml from. It prefers the live repo (via repo_path) so edits to
-// behavior/agents/<name>/agent.yaml are picked up by `conga refresh` without
-// re-running `conga admin setup`. Falls back to the data-dir snapshot when
-// repo_path isn't configured — back-compat for older installations.
+// agent.yaml from. Prefers the live repo (via repo_path) so edits to
+// agents/<name>/agent.yaml are picked up by `conga refresh` without
+// re-running `conga admin setup`. Falls back to the legacy repo layout
+// (repo/behavior/) then to the data-dir snapshot when repo_path isn't set.
 //
-// Mirrors the remote provider's behavior: see
-// pkg/provider/remoteprovider/provider.go deployBehavior + channels.go
-// regenerateAgentConfig.
+// Mirrors the remote provider's pattern.
 func (p *LocalProvider) overlayBehaviorDir() string {
 	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
-		live := filepath.Join(repoPath, "behavior")
-		if _, err := os.Stat(live); err == nil {
-			return live
+		liveNew := filepath.Join(repoPath, "agents")
+		if _, err := os.Stat(liveNew); err == nil {
+			return liveNew
+		}
+		liveLegacy := filepath.Join(repoPath, "behavior")
+		if _, err := os.Stat(liveLegacy); err == nil {
+			return liveLegacy
 		}
 	}
 	return p.behaviorDir()
@@ -1181,11 +1203,23 @@ func (p *LocalProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) er
 		}
 		fmt.Println("  Router source copied to ~/.conga/router/")
 
-		fmt.Println("Copying behavior files...")
-		if err := copyDir(filepath.Join(repoPath, "behavior"), p.behaviorDir()); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to copy behavior files: %v\n", err)
-		} else {
-			fmt.Println("  Behavior files copied to ~/.conga/behavior/")
+		fmt.Println("Copying agent overlays...")
+		// Prefer the new layout (repo/agents) post-2026-05-XX rename; fall back
+		// to the legacy layout (repo/behavior) so a stale repo still works.
+		srcAgents := filepath.Join(repoPath, "agents")
+		srcLegacy := filepath.Join(repoPath, "behavior")
+		var src string
+		if _, err := os.Stat(srcAgents); err == nil {
+			src = srcAgents
+		} else if _, err := os.Stat(srcLegacy); err == nil {
+			src = srcLegacy
+		}
+		if src != "" {
+			if err := copyDir(src, p.behaviorDir()); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to copy agent overlays: %v\n", err)
+			} else {
+				fmt.Printf("  Agent overlays copied from %s to %s\n", src, p.behaviorDir())
+			}
 		}
 
 		// Copy egress proxy files

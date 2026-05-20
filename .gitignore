@@ -28,8 +28,15 @@ bin/
 # User-specific policy config
 conga-policy.yaml
 
-# Per-agent behavior files (may contain client/project-sensitive data)
-# Examples are checked in; real agent configs are gitignored.
+# Per-agent definitions (may contain client/project-sensitive data).
+# Only the underscore-prefixed structural entries are committed.
+agents/*/
+!agents/_example/
+!agents/_defaults/
+
+# Legacy layout (pre-2026-05-XX rename). Operators may still have on-disk
+# files under behavior/agents/ until they run scripts/migrate-behavior-to-agents.sh.
+# Keep ignored so the loader's backward-compat fallback doesn't surface them.
 behavior/agents/*/
 !behavior/agents/_example/
 

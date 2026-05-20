@@ -21,16 +21,16 @@ if [ -z "$STATE_BUCKET" ]; then
 fi
 
 # Sync behavior files from S3
-aws s3 sync "s3://$STATE_BUCKET/conga/behavior/" /opt/conga/behavior/ --region "$AWS_REGION" 2>/dev/null || true
+aws s3 sync "s3://$STATE_BUCKET/conga/agents/" /opt/conga/agents/ --region "$AWS_REGION" 2>/dev/null || true
 
 # Update the deploy helper itself
-aws s3 cp "s3://$STATE_BUCKET/conga/scripts/deploy-behavior.sh" /opt/conga/bin/deploy-behavior.sh --region "$AWS_REGION" 2>/dev/null || true
-chmod +x /opt/conga/bin/deploy-behavior.sh 2>/dev/null || true
+aws s3 cp "s3://$STATE_BUCKET/conga/scripts/deploy-agents.sh" /opt/conga/bin/deploy-agents.sh --region "$AWS_REGION" 2>/dev/null || true
+chmod +x /opt/conga/bin/deploy-agents.sh 2>/dev/null || true
 
 # Deploy behavior files to the agent's workspace
 AGENT_TYPE=$(cat "/opt/conga/config/$AGENT_NAME.type" 2>/dev/null || echo "user")
 AGENT_RUNTIME=$(cat "/opt/conga/config/$AGENT_NAME.runtime" 2>/dev/null || echo "openclaw")
-/opt/conga/bin/deploy-behavior.sh "$AGENT_NAME" "$AGENT_TYPE" "$AGENT_RUNTIME" 2>/dev/null || true
+/opt/conga/bin/deploy-agents.sh "$AGENT_NAME" "$AGENT_TYPE" "$AGENT_RUNTIME" 2>/dev/null || true
 
 # Fix ownership — workspace uid depends on runtime
 if [ "$AGENT_RUNTIME" = "hermes" ]; then

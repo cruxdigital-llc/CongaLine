@@ -17,10 +17,12 @@ func resetOverlayWarnings() {
 	overlayWarningOnce = sync.Map{}
 }
 
-// writeOverlay places agent.yaml under behaviorDir/agents/<name>/.
+// writeOverlay places agent.yaml at the new-layout path
+// behaviorDir/<name>/agent.yaml (post-2026-05-XX rename).
+// Legacy-layout fixtures use writeLegacyOverlay below.
 func writeOverlay(t *testing.T, behaviorDir, name, content string) {
 	t.Helper()
-	dir := filepath.Join(behaviorDir, "agents", name)
+	dir := filepath.Join(behaviorDir, name)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -387,5 +389,109 @@ model:
 	}
 	if !strings.Contains(err.Error(), `"ollama"`) {
 		t.Fatalf("want canonical-form hint, got %v", err)
+	}
+}
+
+// --- 2026-05-XX rename fallback tests ---
+
+// writeLegacyOverlay places agent.yaml at the legacy path
+// behaviorDir/agents/<name>/agent.yaml (pre-2026-05-XX rename layout).
+func writeLegacyOverlay(t *testing.T, behaviorDir, name, content string) {
+	t.Helper()
+	dir := filepath.Join(behaviorDir, "agents", name)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte(content), 0600); err != nil {
+		t.Fatalf("write legacy overlay: %v", err)
+	}
+}
+
+func TestLoadAgentOverlay_LegacyFallback(t *testing.T) {
+	resetOverlayWarnings()
+	behaviorPathWarningOnce = sync.Map{}
+	dir := t.TempDir()
+	writeLegacyOverlay(t, dir, "aaron", `version: 1
+model:
+  provider: ollama
+  name: qwen3:6b
+  base_url: http://10.0.0.5:11434
+`)
+
+	var got *runtime.AgentOverlay
+	var err error
+	stderr := captureStderr(t, func() {
+		got, err = LoadAgentOverlay(dir, newAgent("aaron"))
+	})
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if got == nil || got.Model == nil || got.Model.Name != "qwen3:6b" {
+		t.Fatalf("want populated overlay from legacy path, got %+v", got)
+	}
+	if !strings.Contains(stderr, "legacy path") {
+		t.Fatalf("want legacy-path warning on stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "agents/aaron/agent.yaml") {
+		t.Fatalf("warning should name the legacy file path, got %q", stderr)
+	}
+}
+
+func TestLoadAgentOverlay_PrefersNewOverLegacy(t *testing.T) {
+	resetOverlayWarnings()
+	behaviorPathWarningOnce = sync.Map{}
+	dir := t.TempDir()
+
+	// Legacy file with one model.
+	writeLegacyOverlay(t, dir, "aaron", `version: 1
+model:
+  provider: ollama
+  name: legacy-model
+  base_url: http://legacy:11434
+`)
+	// New file with a different model — should win.
+	writeOverlay(t, dir, "aaron", `version: 1
+model:
+  provider: ollama
+  name: new-model
+  base_url: http://new:11434
+`)
+
+	var got *runtime.AgentOverlay
+	var err error
+	stderr := captureStderr(t, func() {
+		got, err = LoadAgentOverlay(dir, newAgent("aaron"))
+	})
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if got.Model.Name != "new-model" {
+		t.Fatalf("want new-layout model 'new-model', got %q", got.Model.Name)
+	}
+	if stderr != "" {
+		t.Fatalf("new-path taking precedence should NOT warn, got %q", stderr)
+	}
+}
+
+func TestLoadAgentOverlay_LegacyWarningEmittedOnce(t *testing.T) {
+	resetOverlayWarnings()
+	behaviorPathWarningOnce = sync.Map{}
+	dir := t.TempDir()
+	writeLegacyOverlay(t, dir, "aaron", `version: 1
+model:
+  provider: ollama
+  name: qwen
+  base_url: http://h:11434
+`)
+
+	stderr := captureStderr(t, func() {
+		_, _ = LoadAgentOverlay(dir, newAgent("aaron"))
+		_, _ = LoadAgentOverlay(dir, newAgent("aaron"))
+		_, _ = LoadAgentOverlay(dir, newAgent("aaron"))
+	})
+
+	count := strings.Count(stderr, "legacy path")
+	if count != 1 {
+		t.Fatalf("want exactly 1 legacy-path warning across 3 loads, got %d in %q", count, stderr)
 	}
 }

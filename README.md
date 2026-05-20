@@ -540,18 +540,17 @@ Each agent can point at its own LLM provider, model, and endpoint via a small op
 ### Where it lives
 
 ```
-behavior/
-├── default/<runtime>/<type>/      # Defaults (SOUL.md, AGENTS.md, USER.md.tmpl)
-└── agents/
-    ├── _example/                  # COMMITTED: agent.yaml.example template + prompt examples
-    └── <agent-name>/              # Gitignored. One directory per real agent.
-        ├── SOUL.md                # Optional prompt overrides
-        ├── AGENTS.md
-        ├── USER.md
-        └── agent.yaml             # Optional runtime overlay (THIS feature)
+agents/
+├── _defaults/<runtime>/<type>/    # COMMITTED: defaults (SOUL.md, AGENTS.md, USER.md.tmpl)
+├── _example/                      # COMMITTED: agent.yaml.example template + prompt examples
+└── <agent-name>/                  # Gitignored. One directory per real agent.
+    ├── SOUL.md                    # Optional prompt overrides
+    ├── AGENTS.md
+    ├── USER.md
+    └── agent.yaml                 # Optional runtime overlay (THIS feature)
 ```
 
-Only `_example/` is committed; everything under `behavior/agents/<real-name>/` is gitignored.
+Only the leading-underscore entries (`_defaults/`, `_example/`) are committed; everything under `agents/<real-name>/` is gitignored. Agent names cannot start with `_`, so the underscore-prefixed entries can't collide with real agents.
 
 ### Schema (v1)
 
@@ -576,7 +575,7 @@ model:
 
 - The loader uses strict-key YAML parsing — a typo like `bare_url:` fails loudly with a line number instead of silently falling back to defaults.
 - Top-level keys other than `version:` and `model:` are reserved for future versions (`memory:`, `tools:`, `limits:`, `model.fallbacks:`, multi-modal model refs) and rejected today by the parser with an explicit "reserved for a future schema version" error.
-- The committed template at `behavior/agents/_example/agent.yaml.example` shows the Ollama variant with the full reserved keyspace as commented-out documentation.
+- The committed template at `agents/_example/agent.yaml.example` shows the Ollama variant with the full reserved keyspace as commented-out documentation.
 
 ### Provider matrix
 
@@ -617,8 +616,8 @@ For a user agent that should default to a self-hosted Qwen model running behind 
 #    }
 
 # 2. Author the per-agent overlay (gitignored, never committed):
-mkdir -p behavior/agents/myagent
-cat > behavior/agents/myagent/agent.yaml <<'YAML'
+mkdir -p agents/myagent
+cat > agents/myagent/agent.yaml <<'YAML'
 version: 1
 model:
   provider: openai
@@ -643,7 +642,7 @@ For local and remote providers, steps 1 and 3 collapse — set the secret with `
 
 ### See also
 
-- [`behavior/agents/_example/agent.yaml.example`](behavior/agents/_example/agent.yaml.example) — annotated template
+- [`agents/_example/agent.yaml.example`](agents/_example/agent.yaml.example) — annotated template
 - [`product-knowledge/standards/config-taxonomy.md`](product-knowledge/standards/config-taxonomy.md) — full taxonomy of where each per-agent concern lives (infra vs. policy vs. overlay vs. persistence vs. secrets)
 - [`specs/2026-05-19_feature_local-model-routing/`](specs/2026-05-19_feature_local-model-routing/) — design rationale and OpenClaw schema notes
 
@@ -782,7 +781,7 @@ go build -o conga ./cmd/conga
 ├── router/                     # Channel event routers (Node.js)
 │   ├── slack/                  # Slack router (Socket Mode → HTTP fan-out)
 │   └── telegram/               # Telegram router (long-polling → HTTP fan-out)
-└── behavior/                   # Agent personality files (SOUL.md, AGENTS.md, USER.md.tmpl) + per-agent agent.yaml overlay (model routing). Only behavior/agents/_example/ is committed; real agent overlays are gitignored.
+└── agents/                     # Per-agent definitions: prompts (SOUL.md, AGENTS.md, USER.md.tmpl) + agent.yaml runtime overlay. Defaults at agents/_defaults/<runtime>/<type>/. Only _defaults/ and _example/ are committed; real agents are gitignored.
 ```
 
 **Module boundary:** `pkg/` is the public API — external modules (like `terraform-provider-conga`) import these packages. `internal/` holds interface layers (CLI, MCP server) that only the `conga` binary uses.

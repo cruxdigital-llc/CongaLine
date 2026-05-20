@@ -601,21 +601,25 @@ func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script stri
 	return awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, timeout)
 }
 
-// resolveAWSBehaviorDir locates the live behavior/ directory for overlay
-// loading on the AWS provider. The directory may sit at cwd or anywhere up
+// resolveAWSBehaviorDir locates the live agent-overlays directory for the
+// AWS provider's config-gen path. Prefers the new layout (./agents/) added
+// in the 2026-05-XX rename; falls back to the legacy layout (./behavior/)
+// so stale repos still work. The directory may sit at cwd or anywhere up
 // the cwd's parent chain inside this repo (identified by a go.mod whose
 // module path matches the congaline module). Returns "" when no candidate
 // is found — the caller emits a warning in that case.
 func resolveAWSBehaviorDir() string {
 	// Try cwd-relative first — the common case when the operator is at the
 	// repo root, matching the convention used by `terraform apply`.
-	if _, err := os.Stat("behavior"); err == nil {
-		return "behavior"
+	for _, candidate := range []string{"agents", "behavior"} {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
 	}
 
 	// Walk up from cwd looking for the congaline go.mod, then test for
-	// <repo-root>/behavior. This handles operators running from any
-	// subdirectory of the repo.
+	// <repo-root>/agents (new) or <repo-root>/behavior (legacy). This
+	// handles operators running from any subdirectory of the repo.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -626,12 +630,15 @@ func resolveAWSBehaviorDir() string {
 		goMod := filepath.Join(dir, "go.mod")
 		if data, readErr := os.ReadFile(goMod); readErr == nil {
 			if bytes.Contains(data, []byte(moduleMarker)) {
-				candidate := filepath.Join(dir, "behavior")
-				if _, statErr := os.Stat(candidate); statErr == nil {
-					return candidate
+				for _, sub := range []string{"agents", "behavior"} {
+					candidate := filepath.Join(dir, sub)
+					if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+						return candidate
+					}
 				}
-				// Found our repo but no behavior dir — stop here so we
-				// don't accidentally pick up some unrelated parent's dir.
+				// Found our repo but no agents/ or behavior/ dir — stop
+				// here so we don't accidentally pick up some unrelated
+				// parent's dir.
 				return ""
 			}
 		}

@@ -4,7 +4,23 @@ set -euo pipefail
 AGENT_NAME="$1"
 AGENT_TYPE="$2"
 AGENT_RUNTIME="${3:-openclaw}"
-STAGING="/opt/conga/behavior"
+
+# Staging directory holds the agent overlays + defaults rsync'd from S3.
+# Prefer the new layout (post-2026-05-XX rename) and fall back to the legacy
+# /opt/conga/behavior/ for hosts that haven't run
+# scripts/migrate-behavior-to-agents.sh yet.
+if [ -d /opt/conga/agents ]; then
+  STAGING="/opt/conga/agents"
+  DEFAULT_SUBDIR="_defaults"
+  AGENT_DIR="$STAGING/$AGENT_NAME"
+elif [ -d /opt/conga/behavior ]; then
+  STAGING="/opt/conga/behavior"
+  DEFAULT_SUBDIR="default"
+  AGENT_DIR="$STAGING/agents/$AGENT_NAME"
+else
+  echo "deploy-agents: neither /opt/conga/agents nor /opt/conga/behavior found; nothing to deploy"
+  exit 0
+fi
 
 # Runtime-aware workspace path and file ownership
 if [ "$AGENT_RUNTIME" = "hermes" ]; then
@@ -18,8 +34,7 @@ fi
 # Read Slack identifier for template substitution
 SLACK_ID=$(cat "/opt/conga/config/$AGENT_NAME.slack-id" 2>/dev/null || echo "")
 
-AGENT_DIR="$STAGING/agents/$AGENT_NAME"
-DEFAULT_DIR="$STAGING/default"
+DEFAULT_DIR="$STAGING/$DEFAULT_SUBDIR"
 
 # --- SOUL.md: agent-specific > runtime+type default ---
 if [ -f "$AGENT_DIR/SOUL.md" ]; then
@@ -40,7 +55,7 @@ if [ -f "$AGENT_DIR/USER.md" ]; then
   cp "$AGENT_DIR/USER.md" "$WORKSPACE/USER.md"
 elif [ -f "$DEFAULT_DIR/$AGENT_RUNTIME/$AGENT_TYPE/USER.md.tmpl" ]; then
   # Legacy {{AGENT_NAME}} form — can be dropped once all USER.md.tmpl
-  # files in behavior/default/*/USER.md.tmpl are migrated to {{.AgentName}}.
+  # files use {{.AgentName}}.
   sed -e "s|{{.AgentName}}|$AGENT_NAME|g" \
       -e "s|{{AGENT_NAME}}|$AGENT_NAME|g" \
       -e "s|{{.SlackChannel}}|$SLACK_ID|g" \
@@ -51,4 +66,4 @@ fi
 # Fix ownership — runtime-aware uid
 chown $OWNER "$WORKSPACE/SOUL.md" "$WORKSPACE/AGENTS.md" "$WORKSPACE/USER.md" 2>/dev/null || true
 
-echo "Behavior files deployed for $AGENT_NAME ($AGENT_TYPE, $AGENT_RUNTIME)"
+echo "Overlay files deployed for $AGENT_NAME ($AGENT_TYPE, $AGENT_RUNTIME) from $STAGING"

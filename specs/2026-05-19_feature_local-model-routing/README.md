@@ -2,6 +2,8 @@
 
 **Trace log for GLaDOS feature workflow.**
 
+> **Path rename note (2026-05-20)**: This spec predates the directory rename. Wherever it says `behavior/agents/<name>/`, the current path is `agents/<name>/`. Wherever it says `behavior/default/<runtime>/<type>/`, the current path is `agents/_defaults/<runtime>/<type>/`. See `specs/2026-05-20_feature_behavior-to-agents-rename/` for the migration. Backward-compat loader fallback handles the legacy paths transparently for one release.
+
 ## Session Start — 2026-05-19
 
 **Initiated by**: `/glados:plan-feature`

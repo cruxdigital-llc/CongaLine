@@ -142,10 +142,10 @@ aws s3 cp s3://${state_bucket}/conga/router/slack/package.json /opt/conga/router
 aws s3 cp s3://${state_bucket}/conga/router/slack/src/index.js /opt/conga/router/slack/src/index.js --region "$AWS_REGION" || {
   log "FATAL: Failed to download slack router index.js from S3"; exit 1; }
 
-# Download behavior files from S3
-log "Downloading behavior files from S3..."
-aws s3 sync s3://${state_bucket}/conga/behavior/ /opt/conga/behavior/ --region "$AWS_REGION" || {
-  log "WARNING: Failed to sync behavior files from S3 — agents may use stale behavior"; }
+# Download agent overlay + default files from S3
+log "Downloading agent overlays from S3..."
+aws s3 sync s3://${state_bucket}/conga/agents/ /opt/conga/agents/ --region "$AWS_REGION" || {
+  log "WARNING: Failed to sync agent overlays from S3 — agents may use stale config"; }
 
 # Download policy file from S3 (if uploaded by operator)
 aws s3 cp s3://${state_bucket}/conga/conga-policy.yaml /opt/conga/conga-policy.yaml --region "$AWS_REGION" 2>&1 || {
@@ -270,8 +270,8 @@ systemctl enable conga-router-networks.service
 echo "Router configured"
 
 # Download behavior deployment helpers from S3
-aws s3 cp s3://${state_bucket}/conga/scripts/deploy-behavior.sh /opt/conga/bin/deploy-behavior.sh --region "$AWS_REGION"
-chmod +x /opt/conga/bin/deploy-behavior.sh
+aws s3 cp s3://${state_bucket}/conga/scripts/deploy-agents.sh /opt/conga/bin/deploy-agents.sh --region "$AWS_REGION"
+chmod +x /opt/conga/bin/deploy-agents.sh
 aws s3 cp s3://${state_bucket}/conga/scripts/pre-start.sh /opt/conga/bin/pre-start.sh --region "$AWS_REGION"
 chmod +x /opt/conga/bin/pre-start.sh
 
@@ -778,7 +778,7 @@ setup_agent_common() {
   chown 1000:1000 /opt/conga/data/$AGENT_NAME/openclaw.json
 
   # Deploy behavior files (SOUL.md, AGENTS.md, USER.md) to workspace
-  /opt/conga/bin/deploy-behavior.sh "$AGENT_NAME" "$AGENT_TYPE"
+  /opt/conga/bin/deploy-agents.sh "$AGENT_NAME" "$AGENT_TYPE"
   # Re-chown workspace after behavior deployment (files created as root)
   chown -R 1000:1000 /opt/conga/data/$AGENT_NAME/data/workspace
 

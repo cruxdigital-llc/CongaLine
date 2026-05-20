@@ -85,8 +85,20 @@ func (p *RemoteProvider) remoteConfigDir() string { return posixpath.Join(p.remo
 func (p *RemoteProvider) remoteDataSubDir(name string) string {
 	return posixpath.Join(p.remoteDir, "data", name)
 }
-func (p *RemoteProvider) remoteRouterDir() string   { return posixpath.Join(p.remoteDir, "router") }
-func (p *RemoteProvider) remoteBehaviorDir() string { return posixpath.Join(p.remoteDir, "behavior") }
+func (p *RemoteProvider) remoteRouterDir() string { return posixpath.Join(p.remoteDir, "router") }
+
+// remoteBehaviorDir returns the remote-host directory that holds per-agent
+// overlays and shipped defaults. Returns the new layout
+// (<remoteDir>/agents/) unconditionally — for hosts that pre-date the
+// 2026-05-XX rename, the operator runs scripts/migrate-behavior-to-agents.sh
+// to migrate <remoteDir>/behavior/ to <remoteDir>/agents/ before deploying
+// the new binary.
+//
+// Local-side fallback (reading overlays from <repo_path>/agents or, for
+// stale repos, <repo_path>/behavior) is handled in regenerateAgentConfig.
+func (p *RemoteProvider) remoteBehaviorDir() string {
+	return posixpath.Join(p.remoteDir, "agents")
+}
 func (p *RemoteProvider) remoteEgressProxyDir() string {
 	return posixpath.Join(p.remoteDir, "egress-proxy")
 }
@@ -1057,13 +1069,19 @@ func (p *RemoteProvider) regenerateRouting(ctx context.Context) error {
 }
 
 func (p *RemoteProvider) deployBehavior(ctx context.Context, cfg provider.AgentConfig) error {
-	// Read behavior files from local repo (stored in remote-config.json repo_path)
+	// Read behavior files from local repo (stored in remote-config.json repo_path).
+	// Prefers the new layout (repo/agents) post-2026-05-XX rename; falls back to
+	// the legacy layout (repo/behavior) so stale repos still work.
 	repoPath := p.getConfigValue("repo_path")
 	if repoPath == "" {
 		return nil
 	}
-	behaviorDir := filepath.Join(repoPath, "behavior")
-	if _, err := os.Stat(behaviorDir); os.IsNotExist(err) {
+	var behaviorDir string
+	if d := filepath.Join(repoPath, "agents"); statDir(d) {
+		behaviorDir = d
+	} else if d := filepath.Join(repoPath, "behavior"); statDir(d) {
+		behaviorDir = d
+	} else {
 		return nil
 	}
 

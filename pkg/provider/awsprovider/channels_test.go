@@ -235,17 +235,44 @@ func TestReadAgentSecrets_ReadsFromSecretsManager(t *testing.T) {
 }
 
 func TestResolveAWSBehaviorDir(t *testing.T) {
-	// All scenarios use a sandboxed cwd so the real repo's behavior/ dir
-	// (visible at the test runner's cwd) doesn't pollute results.
+	// All scenarios use a sandboxed cwd so the real repo's agents/ or
+	// behavior/ dir (visible at the test runner's cwd) doesn't pollute results.
 
-	t.Run("cwd has behavior dir", func(t *testing.T) {
+	t.Run("cwd has new agents/ dir", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "agents"), 0700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		withCwd(t, dir, func() {
+			if got := resolveAWSBehaviorDir(); got != "agents" {
+				t.Fatalf("want 'agents', got %q", got)
+			}
+		})
+	})
+
+	t.Run("cwd has legacy behavior/ dir only", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "behavior"), 0700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 		withCwd(t, dir, func() {
 			if got := resolveAWSBehaviorDir(); got != "behavior" {
-				t.Fatalf("want 'behavior', got %q", got)
+				t.Fatalf("want legacy 'behavior', got %q", got)
+			}
+		})
+	})
+
+	t.Run("both layouts present prefers new agents/", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "agents"), 0700); err != nil {
+			t.Fatalf("mkdir agents: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "behavior"), 0700); err != nil {
+			t.Fatalf("mkdir behavior: %v", err)
+		}
+		withCwd(t, dir, func() {
+			if got := resolveAWSBehaviorDir(); got != "agents" {
+				t.Fatalf("want 'agents' (new preferred over legacy), got %q", got)
 			}
 		})
 	})

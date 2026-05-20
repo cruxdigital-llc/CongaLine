@@ -318,8 +318,17 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 
 	var overlay *runtime.AgentOverlay
 	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
-		behaviorDir := filepath.Join(repoPath, "behavior")
-		if _, statErr := os.Stat(behaviorDir); statErr == nil {
+		// Prefer the new layout (repo/agents) post-2026-05-XX rename; fall
+		// back to the legacy layout (repo/behavior) so a stale repo still
+		// works. The loader itself also handles the subdirectory fallback
+		// internally — see pkg/common/behavior.go for details.
+		var behaviorDir string
+		if d := filepath.Join(repoPath, "agents"); statDir(d) {
+			behaviorDir = d
+		} else if d := filepath.Join(repoPath, "behavior"); statDir(d) {
+			behaviorDir = d
+		}
+		if behaviorDir != "" {
 			overlay, err = common.LoadAgentOverlay(behaviorDir, cfg)
 			if err != nil {
 				return fmt.Errorf("failed to load agent overlay: %w", err)
@@ -361,4 +370,10 @@ func (p *RemoteProvider) writeRouterEnv() error {
 
 	routerEnvPath := posixpath.Join(p.remoteConfigDir(), "router.env")
 	return p.ssh.Upload(routerEnvPath, []byte(common.BuildRouterEnvContent(shared)), 0400)
+}
+
+// statDir returns true if path exists and is a directory.
+func statDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
