@@ -110,8 +110,10 @@ func TestGenerateConfig_OllamaOverlay(t *testing.T) {
 	if _, ok := allow["ollama/qwen3:6b"]; !ok {
 		t.Fatalf("allowlist missing ollama/qwen3:6b: %+v", allow)
 	}
-	if _, ok := allow["anthropic/claude-opus-4-6"]; ok {
-		t.Fatalf("allowlist should not retain anthropic default: %+v", allow)
+	// The runtime default (anthropic/claude-opus-4-6 from openclaw-defaults.json)
+	// must be preserved so operators can /model into it mid-conversation.
+	if _, ok := allow["anthropic/claude-opus-4-6"]; !ok {
+		t.Fatalf("allowlist should preserve anthropic default for /model switching: %+v", allow)
 	}
 
 	providers := cfg["models"].(map[string]any)["providers"].(map[string]any)
@@ -123,6 +125,9 @@ func TestGenerateConfig_OllamaOverlay(t *testing.T) {
 		"baseUrl": "http://192.168.181.97:11434",
 		"apiKey":  "ollama-local",
 		"api":     "ollama",
+		"models": []any{
+			map[string]any{"id": "qwen3:6b", "name": "qwen3:6b"},
+		},
 	}
 	if !reflect.DeepEqual(ollama, want) {
 		t.Fatalf("ollama provider: want %+v, got %+v", want, ollama)
@@ -171,6 +176,13 @@ func TestGenerateConfig_OpenAIOverlay(t *testing.T) {
 	if got, ok := openai["api"]; ok {
 		t.Fatalf("api key is ollama-only; openai should omit it, got %v", got)
 	}
+	// models array required by OpenClaw schema when models.providers.<id> is set explicitly.
+	wantModels := []any{
+		map[string]any{"id": "qwen-2.5-72b-instruct", "name": "qwen-2.5-72b-instruct"},
+	}
+	if !reflect.DeepEqual(openai["models"], wantModels) {
+		t.Fatalf("openai.models: want %+v, got %+v", wantModels, openai["models"])
+	}
 }
 
 func TestGenerateConfig_OpenAIOverlay_HostedDefault(t *testing.T) {
@@ -194,6 +206,14 @@ func TestGenerateConfig_OpenAIOverlay_HostedDefault(t *testing.T) {
 	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
 	if _, ok := openai["baseUrl"]; ok {
 		t.Fatalf("baseUrl should be omitted for hosted OpenAI (no base_url in overlay), got %+v", openai)
+	}
+	// Even with hosted OpenAI, the models array is required when the provider
+	// block is set explicitly.
+	wantModels := []any{
+		map[string]any{"id": "gpt-5.5", "name": "gpt-5.5"},
+	}
+	if !reflect.DeepEqual(openai["models"], wantModels) {
+		t.Fatalf("openai.models: want %+v, got %+v", wantModels, openai["models"])
 	}
 }
 

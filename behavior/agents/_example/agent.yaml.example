@@ -30,6 +30,14 @@ version: 1
 # model — override the agent's LLM provider, model, and endpoint.
 #
 # Absence = use the runtime's default model (Anthropic for OpenClaw today).
+#
+# ADDITIVE BEHAVIOR: setting this block changes the agent's *default* model
+# (agents.defaults.model.primary in openclaw.json) but keeps the runtime's
+# default model in the allowlist. Operators can still /model into the default
+# mid-conversation (and back). If you want to fully lock an agent to one
+# model, do it at the egress policy layer (remove api.anthropic.com from the
+# agent's allowed_domains in terraform.tfvars or conga-policy.yaml), not by
+# trimming the allowlist.
 # ------------------------------------------------------------------------------
 model:
   # Supported providers (case-sensitive lowercase):

@@ -317,5 +317,41 @@ With the six changes above, this feature should land changes that survive at lea
 - Phase 8 (provider release) — post-merge operator step.
 - Phase 9 (verification) — `/glados:verify-feature`.
 
+## Test-iteration findings — 2026-05-20
+
+Tested end-to-end against a real OpenClaw 2026.3.11 container by building the CLI locally (`go build -o ./bin/conga ./cmd/conga`) and running `./bin/conga refresh --agent aaron` against AWS — the EC2 host doesn't need a new binary because the local CLI renders `openclaw.json` and uploads it via SSM. This caught two bugs my unit tests missed:
+
+### Bug 1: missing `models[]` array required by OpenClaw schema
+
+OpenClaw's runtime config validator rejected the rendered `openclaw.json` with:
+```
+Invalid config at /home/node/.openclaw/openclaw.json:
+- models.providers.openai.models: Invalid input: expected array, received undefined
+```
+
+My initial `applyModelOverlay` wrote `models.providers.<id> = { baseUrl, apiKey, api }` but omitted the `models: [{id, name, ...}]` array. The OpenClaw docs I'd read during the spike *showed* the array (`models: [{ id, name, reasoning, input, cost, ... }]`), but I'd treated it as illustrative rather than required. The schema enforces it.
+
+**Fix**: `applyModelOverlay` now writes `models: [{id: <name>, name: <name>}]` inside every provider block. Minimal entry — OpenClaw fills in capability metadata via `/api/show` or its catalog.
+
+**Test gap**: the golden tests passed because they asserted *my* rendered shape, not OpenClaw's actual schema. A real integration test would launch the container against a rendered config and check `openclaw doctor` (or watch for the validator's `Invalid config` log). Out of scope for this PR but flagged as a follow-up.
+
+### Bug 2: allowlist was clobbering, not merging
+
+Original spec said "replace the `models` allowlist entirely: `{modelRef: {}}` — removes the hardcoded `anthropic/claude-opus-4-6` entry." The rationale was loud failure: if `OPENAI_API_KEY` were broken, OpenClaw couldn't silently fall through to Anthropic.
+
+In practice, operators want **both** models available so they can `/model anthropic/claude-opus-4-6` mid-conversation when they need stronger reasoning, then `/model openai/qwen36` for routine work. Clobbering the allowlist broke this UX.
+
+**Fix**: `applyModelOverlay` now **merges** the overlay's model into the existing allowlist instead of replacing it. The runtime default (`anthropic/claude-opus-4-6` from `openclaw-defaults.json`) stays available. `fallbacks: []` still prevents silent auto-failover — switches happen explicitly via `/model`.
+
+**Trade-off documented**: if an operator genuinely wants to lock an agent to a single model (privacy, cost), they should do it at the egress policy layer (remove `api.anthropic.com` from that agent's `allowed_domains`), not via the allowlist. The allowlist is a UX surface for `/model` selection, not a security boundary. This is now called out in the README and the `agent.yaml.example`.
+
+### Verified working
+
+```
+[gateway] agent model: openai/qwen36
+```
+
+Container is healthy, Slack provider listening, both `OPENAI_API_KEY` (per-agent) and `ANTHROPIC_API_KEY` (global) present in env, `/model` switching works between Qwen and Opus.
+
 ## Handoff
 Next step: `/glados:verify-feature` once the PR lands.

@@ -69,16 +69,36 @@ func applyModelOverlay(config map[string]any, m *runtime.ModelOverlay) error {
 	if !ok {
 		return fmt.Errorf("openclaw-defaults.json missing agents.defaults section")
 	}
+	// agents.defaults.model: set primary to the overlay's choice. Fallbacks stay
+	// empty so OpenClaw won't auto-switch on errors — operators control model
+	// selection explicitly via /model in chat.
 	defaults["model"] = map[string]any{
 		"primary":   modelRef,
 		"fallbacks": []any{},
 	}
-	defaults["models"] = map[string]any{
-		modelRef: map[string]any{},
+	// agents.defaults.models: MERGE the overlay's model into the existing
+	// allowlist rather than replacing it. This preserves the runtime defaults
+	// (e.g. anthropic/claude-opus-4-6 from openclaw-defaults.json) so operators
+	// can /model into them mid-conversation. Lockdown — if you want it — should
+	// be enforced at the egress policy layer, not by trimming the allowlist.
+	allowlist, ok := defaults["models"].(map[string]any)
+	if !ok {
+		allowlist = map[string]any{}
+		defaults["models"] = allowlist
 	}
+	allowlist[modelRef] = map[string]any{}
 
-	// models.providers.<id> — endpoint and auth marker
-	providerCfg := map[string]any{}
+	// models.providers.<id> — endpoint, auth marker, and model entries.
+	// OpenClaw's schema validator requires `models` to be a non-empty array
+	// when models.providers.<id> is set explicitly; auto-discovery is bypassed
+	// (see docs/providers/ollama.md "explicit config" section).
+	providerModels := []any{
+		map[string]any{
+			"id":   m.Name,
+			"name": m.Name,
+		},
+	}
+	providerCfg := map[string]any{"models": providerModels}
 	switch m.Provider {
 	case runtime.ProviderOllama:
 		providerCfg["baseUrl"] = m.BaseURL
