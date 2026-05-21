@@ -42,7 +42,12 @@ func (p *RemoteProvider) ReadProxyManifest(ctx context.Context, agentName string
 //   - cat fallback: wraps the shell's "No such file or directory" stderr
 //     plus a session exit error. Detected here via substring match on the
 //     common variants.
+//
+// Returns false for nil so callers can chain unconditionally.
 func isNotExist(err error) bool {
+	if err == nil {
+		return false
+	}
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
