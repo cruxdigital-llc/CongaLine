@@ -717,7 +717,16 @@ func (p *AWSProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) erro
 		paramName := fmt.Sprintf("/conga/config/%s", key)
 		current, err := awsutil.GetParameter(ctx, p.clients.SSM, paramName)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not read %s: %v\n", paramName, err)
+			// Only "the parameter doesn't exist yet" is a recoverable
+			// state for the loop (it means "ask the user / use the
+			// default"). Auth/network failures must abort: silently
+			// treating them as "not set" would overwrite already-set
+			// values in SSM with whatever cfg.Secrets or the prompt
+			// supplies — silent data loss on transient SSM blips.
+			var notFound *ssmtypes.ParameterNotFound
+			if !errors.As(err, &notFound) {
+				return fmt.Errorf("failed to read config %s: %w", paramName, err)
+			}
 			current = ""
 		}
 
@@ -778,10 +787,13 @@ func (p *AWSProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) erro
 	secretPaths := sortedKeys(manifest.Secrets)
 	for _, path := range secretPaths {
 		description := manifest.Secrets[path]
+		// awsutil.GetSecretValue returns ("", nil) for a missing secret,
+		// so any non-nil error here is a real failure (auth, network,
+		// throttling). Aborting prevents the same silent-overwrite
+		// scenario as the config loop above.
 		current, err := awsutil.GetSecretValue(ctx, p.clients.SecretsManager, path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not read secret %s: %v\n", path, err)
-			current = ""
+			return fmt.Errorf("failed to read secret %s: %w", path, err)
 		}
 
 		status := "set"
