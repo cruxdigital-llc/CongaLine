@@ -1,9 +1,9 @@
 # --- AWS ---
 aws_region   = "us-east-2"
-aws_profile  = "openclaw"
+aws_profile  = "default"
 project_name = "conga-line"
 
-# Path to repo root (for behavior files, router source, etc.)
+# Path to repo root (for agent overlays, router source, etc.)
 repo_root = "/path/to/congaline"
 
 # --- Infrastructure ---
@@ -18,29 +18,60 @@ alert_email   = ""
 #   { protocol = "tcp", port = 443, description = "HTTPS (Slack WSS, LLM APIs, Docker Hub, SSM)" },
 #   { protocol = "tcp", port = 53, cidr = "vpc", description = "DNS TCP (VPC resolver)" },
 #   { protocol = "udp", port = 53, cidr = "vpc", description = "DNS UDP (VPC resolver)" },
-#   { protocol = "udp", port = 51820, description = "WireGuard VPN to local infrastructure" },
+#   { protocol = "udp", port = 51820, description = "WireGuard VPN (self-hosted LLM / private network)" },
 # ]
 
 # --- Global Egress Policy ---
-egress_mode            = "enforce"  # "enforce" or "validate"
-egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com"]
+# Domains every agent can reach. Per-agent egress_allowed_domains merge
+# ADDITIVELY on top of this list (see the agents block below).
+egress_mode = "enforce" # "enforce" or "validate"
+egress_allowed_domains = [
+  # LLM endpoints
+  "api.anthropic.com",
+
+  # Messaging platform (Slack example)
+  "*.slack.com",
+  "*.slack-edge.com",
+
+  # Add any other domains shared by every agent here (OAuth, metrics, etc.)
+  # "auth.google.com",
+  # "oauth2.googleapis.com",
+  # "www.googleapis.com",
+  # "accounts.google.com",
+]
 
 # --- Global Secrets ---
-# Applied to every agent
+# Applied to every agent. Each key becomes an env var on the container,
+# uppercased with dashes converted to underscores
+# (e.g. anthropic-api-key → ANTHROPIC_API_KEY).
 global_secrets = {
   "anthropic-api-key" = ""
+  # "openai-api-key"   = ""  # if any agent overlay points at an OpenAI-compatible endpoint
 }
 
 # --- Agents ---
 # Define your fleet. Key is the agent name.
 # Ports auto-assigned alphabetically from 18789 if omitted.
+#
+# egress_allowed_domains merges ADDITIVELY with the global list above (and
+# blocked_domains likewise) — only list each agent's *additional* domains
+# here. egress_mode replaces the global mode if set. To deny a
+# globally-allowed domain for one agent, use egress_blocked_domains on that
+# agent. See product-knowledge/standards/egress-controls.md.
+#
+# Per-agent runtime config (model overrides, prompts) lives in
+# agents/<name>/ — see agents/_example/.
 agents = {
   myagent = {
     type = "user"
-    # Optional: per-agent egress overrides (inherit global if omitted)
-    # egress_mode            = "validate"  # "enforce" or "validate"
-    # egress_allowed_domains = ["api.anthropic.com", "*.slack.com", "*.slack-edge.com", "*.trello.com"]
-    # Optional: per-agent secrets
+    # Optional: only list the *additional* domains this agent needs beyond
+    # the global allowlist above.
+    # egress_allowed_domains = ["*.trello.com"]
+    # Optional: deny a globally-allowed domain for this agent only.
+    # egress_blocked_domains = ["*.slack-edge.com"]
+    # Optional: override the global mode for this agent.
+    # egress_mode = "validate"
+    # Optional: per-agent secrets.
     # secrets = {
     #   "trello-api-key" = "..."
     #   "trello-token"   = "..."
@@ -48,7 +79,13 @@ agents = {
   }
   myteam = {
     type = "team"
+    # No per-agent egress overrides — this agent inherits the global allowlist.
   }
+  # Example: a team agent that also reaches a domain none of the others need.
+  # specialty-team = {
+  #   type                   = "team"
+  #   egress_allowed_domains = ["*.linear.com"]
+  # }
 }
 
 # --- Channels ---

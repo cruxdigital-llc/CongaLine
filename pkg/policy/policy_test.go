@@ -3,6 +3,7 @@ package policy
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -184,19 +185,133 @@ func TestMergeForAgentWithOverride(t *testing.T) {
 
 	merged := pf.MergeForAgent("myagent")
 
-	if len(merged.Egress.AllowedDomains) != 2 {
-		t.Fatalf("expected 2 allowed domains, got %d", len(merged.Egress.AllowedDomains))
+	// Additive merge: globals are inherited, agent additions are appended.
+	// api.anthropic.com appears once (deduped), *.slack.com from global stays,
+	// *.trello.com is the agent's contribution.
+	want := []string{"api.anthropic.com", "*.slack.com", "*.trello.com"}
+	if !reflect.DeepEqual(merged.Egress.AllowedDomains, want) {
+		t.Errorf("merged allowed_domains = %v, want %v", merged.Egress.AllowedDomains, want)
 	}
-	if merged.Egress.AllowedDomains[1] != "*.trello.com" {
-		t.Errorf("expected *.trello.com, got %s", merged.Egress.AllowedDomains[1])
-	}
-	// Mode should be normalized to enforce (default) after merge
+	// Mode replaces (override mode "" → normalized to enforce at end of merge).
 	if merged.Egress.Mode != EgressModeEnforce {
 		t.Errorf("expected mode %q after normalization, got %q", EgressModeEnforce, merged.Egress.Mode)
 	}
-	// Posture should remain from global (no override)
+	// Posture should remain from global (no override).
 	if merged.Posture.IsolationLevel != "standard" {
 		t.Errorf("expected standard isolation, got %q", merged.Posture.IsolationLevel)
+	}
+}
+
+func TestMergeForAgentEgressUnionDedupCaseInsensitive(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress: &EgressPolicy{
+			AllowedDomains: []string{"API.Anthropic.com"},
+			Mode:           EgressModeEnforce,
+		},
+		Agents: map[string]*AgentOverride{
+			"a": {
+				Egress: &EgressPolicy{
+					AllowedDomains: []string{"api.anthropic.com", "*.trello.com"},
+					Mode:           EgressModeEnforce,
+				},
+			},
+		},
+	}
+
+	merged := pf.MergeForAgent("a")
+
+	// Casing of the first occurrence wins; the agent's lowercase dup is collapsed.
+	want := []string{"API.Anthropic.com", "*.trello.com"}
+	if !reflect.DeepEqual(merged.Egress.AllowedDomains, want) {
+		t.Errorf("merged allowed_domains = %v, want %v", merged.Egress.AllowedDomains, want)
+	}
+}
+
+func TestMergeForAgentEgressBlockedSubtractsGlobal(t *testing.T) {
+	// Scenario: global allows *.slack.com for all agents, but one agent must
+	// not reach Slack. The agent uses blocked_domains to subtract.
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress: &EgressPolicy{
+			AllowedDomains: []string{"api.anthropic.com", "*.slack.com"},
+			Mode:           EgressModeEnforce,
+		},
+		Agents: map[string]*AgentOverride{
+			"isolated": {
+				Egress: &EgressPolicy{
+					BlockedDomains: []string{"*.slack.com"},
+					Mode:           EgressModeEnforce,
+				},
+			},
+		},
+	}
+
+	merged := pf.MergeForAgent("isolated")
+
+	// Inherited allow list is intact; the agent's block is unioned in.
+	wantAllowed := []string{"api.anthropic.com", "*.slack.com"}
+	wantBlocked := []string{"*.slack.com"}
+	if !reflect.DeepEqual(merged.Egress.AllowedDomains, wantAllowed) {
+		t.Errorf("merged allowed_domains = %v, want %v", merged.Egress.AllowedDomains, wantAllowed)
+	}
+	if !reflect.DeepEqual(merged.Egress.BlockedDomains, wantBlocked) {
+		t.Errorf("merged blocked_domains = %v, want %v", merged.Egress.BlockedDomains, wantBlocked)
+	}
+
+	// EffectiveAllowedDomains subtracts blocked from allowed → Slack gone.
+	effective := EffectiveAllowedDomains(merged.Egress)
+	wantEffective := []string{"api.anthropic.com"}
+	if !reflect.DeepEqual(effective, wantEffective) {
+		t.Errorf("effective allowed = %v, want %v", effective, wantEffective)
+	}
+}
+
+func TestMergeForAgentEgressModeOverrideWins(t *testing.T) {
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Egress: &EgressPolicy{
+			AllowedDomains: []string{"a.com"},
+			Mode:           EgressModeValidate,
+		},
+		Agents: map[string]*AgentOverride{
+			"strict": {
+				Egress: &EgressPolicy{
+					AllowedDomains: []string{"b.com"},
+					Mode:           EgressModeEnforce,
+				},
+			},
+		},
+	}
+
+	merged := pf.MergeForAgent("strict")
+	if merged.Egress.Mode != EgressModeEnforce {
+		t.Errorf("override mode should win: got %q, want %q", merged.Egress.Mode, EgressModeEnforce)
+	}
+}
+
+func TestMergeForAgentNoGlobalEgress(t *testing.T) {
+	// Agent override with no global egress should fall through to the
+	// nil-base branch and produce a policy whose egress is just the override.
+	pf := &PolicyFile{
+		APIVersion: CurrentAPIVersion,
+		Agents: map[string]*AgentOverride{
+			"solo": {
+				Egress: &EgressPolicy{
+					AllowedDomains: []string{"only.com"},
+					Mode:           EgressModeEnforce,
+				},
+			},
+		},
+	}
+
+	merged := pf.MergeForAgent("solo")
+	if merged.Egress == nil {
+		t.Fatal("expected merged egress, got nil")
+	}
+	want := []string{"only.com"}
+	if !reflect.DeepEqual(merged.Egress.AllowedDomains, want) {
+		t.Errorf("merged allowed_domains = %v, want %v", merged.Egress.AllowedDomains, want)
 	}
 }
 
@@ -361,7 +476,7 @@ func TestMergeForAgentDeepCopy(t *testing.T) {
 		Agents: map[string]*AgentOverride{
 			"myagent": {
 				Egress: &EgressPolicy{
-					AllowedDomains: []string{"api.anthropic.com", "*.trello.com"},
+					AllowedDomains: []string{"*.trello.com"},
 				},
 			},
 		},
@@ -371,8 +486,8 @@ func TestMergeForAgentDeepCopy(t *testing.T) {
 	merged.Egress.AllowedDomains = append(merged.Egress.AllowedDomains, "evil.com")
 
 	// Original agent override must not be affected
-	if len(pf.Agents["myagent"].Egress.AllowedDomains) != 2 {
-		t.Errorf("mutation leaked to original: got %d domains, want 2", len(pf.Agents["myagent"].Egress.AllowedDomains))
+	if len(pf.Agents["myagent"].Egress.AllowedDomains) != 1 {
+		t.Errorf("mutation leaked to agent override: got %d domains, want 1", len(pf.Agents["myagent"].Egress.AllowedDomains))
 	}
 
 	// Merge without override — mutating merged must not affect global

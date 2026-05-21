@@ -88,7 +88,14 @@ type PostureDeclarations struct {
 }
 
 // AgentOverride allows per-agent policy sections. All fields are optional.
-// When present, the section replaces (not deep-merges) the corresponding global section.
+//
+// Merge semantics (see MergeForAgent):
+//   - Egress: allowed_domains and blocked_domains UNION with the global lists
+//     so an agent always inherits global egress and can only add to it.
+//     mode replaces the global mode. To deny a specific global-allowed domain
+//     for one agent, list it in the agent's blocked_domains.
+//   - Routing, Posture: still replace the corresponding global section
+//     entirely.
 type AgentOverride struct {
 	Egress  *EgressPolicy        `yaml:"egress,omitempty"`
 	Routing *RoutingPolicy       `yaml:"routing,omitempty"`
@@ -276,8 +283,18 @@ func validateDomain(d string) error {
 }
 
 // MergeForAgent returns an effective policy for a specific agent.
-// Per-agent overrides shallow-replace entire sections (egress, routing, posture).
-// The returned policy is a deep copy — safe to mutate without affecting the original.
+//
+// Egress domain lists merge additively: allowed_domains and blocked_domains
+// are the case-insensitive union of global and per-agent values, so every
+// agent always inherits the global egress baseline. Mode replaces the global
+// mode (a single value cannot union). The subtract case — denying a
+// global-allowed domain for one agent — is expressed via blocked_domains.
+//
+// Routing and Posture overrides still shallow-replace the corresponding
+// global section.
+//
+// The returned policy is a deep copy — safe to mutate without affecting the
+// original.
 func (pf *PolicyFile) MergeForAgent(agentName string) *PolicyFile {
 	merged := &PolicyFile{
 		APIVersion: pf.APIVersion,
@@ -292,7 +309,13 @@ func (pf *PolicyFile) MergeForAgent(agentName string) *PolicyFile {
 	}
 
 	if override.Egress != nil {
-		merged.Egress = copyEgress(override.Egress)
+		if merged.Egress == nil {
+			merged.Egress = copyEgress(override.Egress)
+		} else {
+			merged.Egress.AllowedDomains = unionDomains(merged.Egress.AllowedDomains, override.Egress.AllowedDomains)
+			merged.Egress.BlockedDomains = unionDomains(merged.Egress.BlockedDomains, override.Egress.BlockedDomains)
+			merged.Egress.Mode = override.Egress.Mode
+		}
 	}
 	if override.Routing != nil {
 		merged.Routing = copyRouting(override.Routing)
@@ -303,6 +326,33 @@ func (pf *PolicyFile) MergeForAgent(agentName string) *PolicyFile {
 
 	normalizeDefaults(merged)
 	return merged
+}
+
+// unionDomains returns the case-insensitive union of two domain lists,
+// preserving order: base first, then any new entries from extra. Casing of
+// the first occurrence is preserved (lowercasing is the enforcement layer's
+// job, not the policy layer's).
+func unionDomains(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	out := make([]string, 0, len(base)+len(extra))
+	seen := make(map[string]bool, len(base)+len(extra))
+	for _, d := range base {
+		key := strings.ToLower(d)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, d)
+		}
+	}
+	for _, d := range extra {
+		key := strings.ToLower(d)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func copyEgress(e *EgressPolicy) *EgressPolicy {

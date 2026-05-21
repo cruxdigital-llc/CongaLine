@@ -604,22 +604,21 @@ generate_egress_conf() {
     fi
   done < "$POLICY_FILE"
 
-  # Agent override replaces global (shallow merge per spec)
-  local ALLOWED="" BLOCKED=""
-  if [ -n "$AGENT_ALLOWED" ]; then
-    ALLOWED="$AGENT_ALLOWED"
-    BLOCKED="$AGENT_BLOCKED"
-  else
-    ALLOWED="$GLOBAL_ALLOWED"
-    BLOCKED="$GLOBAL_BLOCKED"
-  fi
+  # Egress merge is additive: agent allowed_domains and blocked_domains UNION
+  # with the global lists, so every agent inherits the global baseline. Agent
+  # mode replaces the global mode if set. To deny a globally-allowed domain
+  # for one agent, list it in the agent's blocked_domains. Keep in sync with
+  # pkg/policy/policy.go MergeForAgent.
+  local ALLOWED BLOCKED
+  ALLOWED="$GLOBAL_ALLOWED $AGENT_ALLOWED"
+  BLOCKED="$GLOBAL_BLOCKED $AGENT_BLOCKED"
 
-  # Resolve effective mode (agent override takes precedence, default is "enforce")
-  if [ -n "$AGENT_ALLOWED" ]; then
-    EFFECTIVE_MODE="$${AGENT_MODE:-$$GLOBAL_MODE}"
-  else
-    EFFECTIVE_MODE="$GLOBAL_MODE"
-  fi
+  # Dedupe (case-insensitive), preserve first-seen casing.
+  ALLOWED=$(printf '%s\n' $ALLOWED | awk 'NF && !seen[tolower($0)]++' | tr '\n' ' ')
+  BLOCKED=$(printf '%s\n' $BLOCKED | awk 'NF && !seen[tolower($0)]++' | tr '\n' ' ')
+
+  # Resolve effective mode: agent override wins if set, else global, else enforce.
+  EFFECTIVE_MODE="$${AGENT_MODE:-$$GLOBAL_MODE}"
   EFFECTIVE_MODE="$${EFFECTIVE_MODE:-enforce}"
 
   # Remove blocked domains from allowed list
