@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -217,7 +218,7 @@ func TestGetParameter_Success(t *testing.T) {
 func TestGetParameter_NotFound(t *testing.T) {
 	mock := &mockSSMClient{
 		getParameterFn: func(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
-			return nil, fmt.Errorf("ParameterNotFound")
+			return nil, &ssmtypes.ParameterNotFound{}
 		},
 	}
 
@@ -225,8 +226,41 @@ func TestGetParameter_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from GetParameter")
 	}
-	if !strings.Contains(err.Error(), "parameter") {
-		t.Errorf("expected wrapped error with parameter context, got: %v", err)
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' in error, got: %v", err)
+	}
+	// The underlying ParameterNotFound type must remain unwrappable so callers
+	// can distinguish missing parameters from auth/network errors.
+	var notFound *ssmtypes.ParameterNotFound
+	if !errors.As(err, &notFound) {
+		t.Errorf("expected error to wrap *ssmtypes.ParameterNotFound, got: %v", err)
+	}
+}
+
+// Regression test for the bug where every AWS failure (expired SSO token,
+// IAM denied, network error) was reported as "parameter not found",
+// masking the real cause and sending users down the wrong debugging path.
+func TestGetParameter_GenericErrorIsNotMaskedAsNotFound(t *testing.T) {
+	ssoErr := fmt.Errorf("SSOProviderInvalidToken: Error when retrieving token from sso: Token has expired and refresh failed")
+	mock := &mockSSMClient{
+		getParameterFn: func(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+			return nil, ssoErr
+		},
+	}
+
+	_, err := GetParameter(context.Background(), mock, "/test/param")
+	if err == nil {
+		t.Fatal("expected error from GetParameter")
+	}
+	if strings.Contains(err.Error(), "not found") {
+		t.Errorf("non-ParameterNotFound error must NOT be reported as 'not found'; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Token has expired") {
+		t.Errorf("expected the real SSO error to be surfaced, got: %v", err)
+	}
+	// The original error must remain unwrappable via errors.Is / errors.As.
+	if !errors.Is(err, ssoErr) {
+		t.Errorf("expected wrapped error to unwrap to original SSO error")
 	}
 }
 

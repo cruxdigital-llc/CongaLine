@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,12 +11,20 @@ import (
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
+// GetParameter reads a single SSM parameter. Distinguishes "the parameter
+// doesn't exist" from other AWS failures (expired SSO token, network error,
+// IAM denied, throttling) so callers can see the actual cause instead of
+// hiding everything behind a "not found" message.
 func GetParameter(ctx context.Context, client SSMClient, name string) (string, error) {
 	out, err := client.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String(name),
 	})
 	if err != nil {
-		return "", fmt.Errorf("parameter %s not found: %w", name, err)
+		var notFound *ssmtypes.ParameterNotFound
+		if errors.As(err, &notFound) {
+			return "", fmt.Errorf("parameter %s not found: %w", name, err)
+		}
+		return "", fmt.Errorf("failed to read parameter %s: %w", name, err)
 	}
 	return aws.ToString(out.Parameter.Value), nil
 }
