@@ -580,13 +580,17 @@ echo "Router restarted"
 // Uses base64 encoding to safely transmit binary/special-character content.
 func (p *AWSProvider) uploadFile(ctx context.Context, instanceID, path string, content []byte, mode string) error {
 	encoded := base64.StdEncoding.EncodeToString(content)
-	// Write atomically: stage in <path>.tmp.$$, fsync via cp, then rename.
-	// A killed or failing decode/chmod leaves the existing file untouched
-	// rather than half-written. The previous version is preserved as
-	// <path>.bak so a botched refresh can be recovered without an SSH session.
+	// Write atomically: stage in <path>.tmp.$$, then mv into place. The
+	// rename(2) is atomic on the same filesystem, so a killed or failing
+	// decode/chmod/cp leaves the existing file untouched rather than
+	// half-written. The previous version is preserved as <path>.bak so a
+	// botched refresh can be recovered without an SSH session. The trap
+	// sweeps the staging file on any error path; after a successful mv it
+	// no longer exists and `rm -f` is a no-op.
 	script := fmt.Sprintf(`set -euo pipefail
 target=%q
 tmp="${target}.tmp.$$"
+trap 'rm -f "$tmp"' EXIT
 mkdir -p "$(dirname "$target")"
 echo %q | base64 -d > "$tmp"
 chmod %s "$tmp"
@@ -614,7 +618,13 @@ func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script stri
 // AWS provider's config-gen path. The directory may sit at cwd or anywhere
 // up the cwd's parent chain inside this repo (identified by a go.mod whose
 // module path matches the congaline module). Returns "" when no candidate
-// is found — the caller emits a warning in that case.
+// is found.
+//
+// Callers MUST treat "" as a hard error and refuse to regenerate agent
+// config: writing a defaults-only openclaw.json over the live one silently
+// strips per-agent model and runtime overrides (e.g. agent.yaml pointing
+// at a self-hosted LLM). Emitting a warning and proceeding is unsafe under
+// MCP because stderr is invisible to the operator.
 func resolveAWSBehaviorDir() string {
 	// Try cwd-relative first — the common case when the operator is at the
 	// repo root, matching the convention used by `terraform apply`.
