@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -309,6 +310,41 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 				t.Fatalf("want empty, got %q", got)
 			}
 		})
+	})
+}
+
+// regenerateAgentConfigOnInstance must fail closed when the agents/ overlay
+// directory cannot be resolved. The previous behavior — emit a warning and
+// proceed — silently stripped per-agent model overrides (e.g. agent.yaml
+// pointing at a self-hosted LLM) the next time the operator refreshed from
+// outside the repo (notably via MCP, where stderr is invisible).
+//
+// We construct an AWSProvider with NIL clients on purpose: if the overlay
+// check passes through, the next line (readSharedSecrets) will dereference
+// p.clients.SecretsManager and panic. The test therefore proves both that
+// the function returns an error AND that it short-circuits before any AWS
+// call.
+func TestRegenerateAgentConfigOnInstance_FailsClosedWhenOverlayUnresolvable(t *testing.T) {
+	dir := t.TempDir() // no go.mod, no agents/
+	withCwd(t, dir, func() {
+		p := &AWSProvider{} // nil clients — would panic if AWS path is entered
+		err := p.regenerateAgentConfigOnInstance(
+			context.Background(),
+			"i-doesnt-matter",
+			provider.AgentConfig{Name: "test-agent"},
+		)
+		if err == nil {
+			t.Fatal("expected error when agents/ dir cannot be resolved, got nil")
+		}
+		// Sanity-check the error wording so a future refactor doesn't quietly
+		// downgrade this to a warning again.
+		want := "cannot locate the congaline agents/ overlay directory"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q should mention %q", err, want)
+		}
+		if !strings.Contains(err.Error(), "test-agent") {
+			t.Fatalf("error %q should name the agent that would have been refreshed", err)
+		}
 	})
 }
 

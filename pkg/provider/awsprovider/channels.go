@@ -449,6 +449,27 @@ func (p *AWSProvider) saveAgentToSSM(ctx context.Context, a provider.AgentConfig
 // common.GenerateAgentFiles(), then uploads them to the EC2 instance via SSM.
 // This ensures the same config generation logic as local and remote providers.
 func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, instanceID string, cfg provider.AgentConfig) error {
+	// Resolve the per-agent overlay directory FIRST, before any AWS calls.
+	// AWS doesn't persist a repo_path the way the remote provider does, so we
+	// resolve the agents directory by:
+	//   1. Trying ./agents (cwd-relative — works when operator is at repo root).
+	//   2. Walking up from cwd to find the congaline go.mod, then trying
+	//      <repo-root>/agents (works when operator is in any subdir of the repo).
+	// If neither resolves we fail closed: writing a defaults-only openclaw.json
+	// over the live one would silently strip per-agent model and runtime
+	// overrides (e.g. agent.yaml pointing at a self-hosted LLM). MCP-launched
+	// invocations are especially susceptible because the operator never sees
+	// the stderr warning, so silent skip is unsafe.
+	behaviorDir := resolveAWSBehaviorDir()
+	if behaviorDir == "" {
+		cwd, _ := os.Getwd()
+		return fmt.Errorf("cannot locate the congaline agents/ overlay directory from cwd %q. Refusing to regenerate %s/openclaw.json without overlay context: doing so would silently strip per-agent model and runtime overrides on the host. Run `conga` from the congaline repo root or any subdirectory of it", cwd, cfg.Name)
+	}
+	overlay, err := common.LoadAgentOverlay(behaviorDir, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to load agent overlay: %w", err)
+	}
+
 	shared, err := p.readSharedSecrets(ctx)
 	if err != nil {
 		return err
@@ -456,28 +477,6 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 	perAgent, err := p.readAgentSecrets(ctx, cfg.Name)
 	if err != nil {
 		return err
-	}
-
-	// Optional per-agent overlay (agents/<name>/agent.yaml).
-	// AWS doesn't persist a repo_path the way the remote provider does, so we
-	// resolve the agents directory by:
-	//   1. Trying ./agents (cwd-relative — works when operator is at repo root).
-	//   2. Walking up from cwd to find the congaline go.mod, then trying
-	//      <repo-root>/agents (works when operator is in any subdir of the repo).
-	//   3. If neither resolves, emit a warning to stderr and skip overlay
-	//      loading. The warning is intentionally noisy because silently
-	//      skipping would let `conga refresh` revert a previously-overlay'd
-	//      agent to defaults without the operator noticing.
-	var overlay *runtime.AgentOverlay
-	if behaviorDir := resolveAWSBehaviorDir(); behaviorDir != "" {
-		overlay, err = common.LoadAgentOverlay(behaviorDir, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to load agent overlay: %w", err)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr,
-			"warning: no agents/ directory found in cwd or any parent; per-agent overlays not loaded for %s. Run conga from the repo root if this agent has an agent.yaml overlay configured.\n",
-			cfg.Name)
 	}
 
 	openClawJSON, envContent, err := common.RuntimeGenerateAgentFilesWithOverlay(
@@ -581,10 +580,24 @@ echo "Router restarted"
 // Uses base64 encoding to safely transmit binary/special-character content.
 func (p *AWSProvider) uploadFile(ctx context.Context, instanceID, path string, content []byte, mode string) error {
 	encoded := base64.StdEncoding.EncodeToString(content)
-	script := fmt.Sprintf(
-		"mkdir -p \"$(dirname '%s')\" && echo '%s' | base64 -d > '%s' && chmod %s '%s'",
-		path, encoded, path, mode, path,
-	)
+	// Write atomically: stage in <path>.tmp.$$, then mv into place. The
+	// rename(2) is atomic on the same filesystem, so a killed or failing
+	// decode/chmod/cp leaves the existing file untouched rather than
+	// half-written. The previous version is preserved as <path>.bak so a
+	// botched refresh can be recovered without an SSH session. The trap
+	// sweeps the staging file on any error path; after a successful mv it
+	// no longer exists and `rm -f` is a no-op.
+	script := fmt.Sprintf(`set -euo pipefail
+target=%q
+tmp="${target}.tmp.$$"
+trap 'rm -f "$tmp"' EXIT
+mkdir -p "$(dirname "$target")"
+echo %q | base64 -d > "$tmp"
+chmod %s "$tmp"
+if [ -f "$target" ]; then
+  cp -p "$target" "${target}.bak"
+fi
+mv "$tmp" "$target"`, path, encoded, mode)
 
 	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, 60*time.Second)
 	if err != nil {
@@ -605,7 +618,13 @@ func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script stri
 // AWS provider's config-gen path. The directory may sit at cwd or anywhere
 // up the cwd's parent chain inside this repo (identified by a go.mod whose
 // module path matches the congaline module). Returns "" when no candidate
-// is found — the caller emits a warning in that case.
+// is found.
+//
+// Callers MUST treat "" as a hard error and refuse to regenerate agent
+// config: writing a defaults-only openclaw.json over the live one silently
+// strips per-agent model and runtime overrides (e.g. agent.yaml pointing
+// at a self-hosted LLM). Emitting a warning and proceeding is unsafe under
+// MCP because stderr is invisible to the operator.
 func resolveAWSBehaviorDir() string {
 	// Try cwd-relative first — the common case when the operator is at the
 	// repo root, matching the convention used by `terraform apply`.
