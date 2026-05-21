@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	awsutil "github.com/cruxdigital-llc/conga-line/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
@@ -127,7 +129,15 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 
 	stateBucket, err := awsutil.GetParameter(ctx, p.clients.SSM, "/conga/config/state-bucket")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not resolve state bucket — behavior files will not sync. Run 'terraform apply' first.\n")
+		// Only treat a genuine "parameter doesn't exist" as recoverable
+		// (infra not provisioned yet — log a warning and continue without
+		// agent overlay sync). Auth/network failures must abort instead
+		// of silently provisioning a broken agent.
+		var notFound *ssmtypes.ParameterNotFound
+		if !errors.As(err, &notFound) {
+			return fmt.Errorf("failed to resolve state bucket from SSM: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: state bucket parameter not found — agent overlay files will not sync. Run 'terraform apply' first.\n")
 		stateBucket = ""
 	}
 
@@ -676,7 +686,11 @@ func (p *AWSProvider) Connect(ctx context.Context, agentName string, localPort i
 func (p *AWSProvider) Setup(ctx context.Context, cfg *provider.SetupConfig) error {
 	manifestJSON, err := awsutil.GetParameter(ctx, p.clients.SSM, "/conga/config/setup-manifest")
 	if err != nil {
-		return fmt.Errorf("setup manifest not found in SSM. Run `terraform apply` first to create infrastructure")
+		var notFound *ssmtypes.ParameterNotFound
+		if errors.As(err, &notFound) {
+			return fmt.Errorf("setup manifest not found in SSM. Run `terraform apply` first to create infrastructure")
+		}
+		return fmt.Errorf("failed to read setup manifest from SSM: %w", err)
 	}
 
 	var manifest struct {

@@ -28,8 +28,9 @@ func parseAgentConfig(paramName, jsonValue string) (*provider.AgentConfig, error
 // ResolveAgent loads an agent's config by name. Returns provider.ErrNotFound
 // (wrapped) only when SSM confirmed the parameter doesn't exist; every other
 // AWS failure (expired SSO token, network error, IAM denied, throttling) is
-// surfaced verbatim so the caller — and the human reading the error — can
-// tell "this agent isn't provisioned" from "I can't talk to AWS".
+// wrapped with context but the underlying cause is preserved via errors.Is
+// / errors.As, so the caller — and the human reading the error — can tell
+// "this agent isn't provisioned" from "I can't talk to AWS".
 func ResolveAgent(ctx context.Context, ssmClient awsutil.SSMClient, name string) (*provider.AgentConfig, error) {
 	paramName := fmt.Sprintf("/conga/agents/%s", name)
 	value, err := awsutil.GetParameter(ctx, ssmClient, paramName)

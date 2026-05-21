@@ -1,3 +1,13 @@
+//go:build !windows
+
+// TestGetAgent_GenericReadErrorIsSurfaced engineers a non-IsNotExist read
+// failure by making the agent's JSON path a directory — on POSIX, os.ReadFile
+// then returns EISDIR ("is a directory"). Windows os.ReadFile on a directory
+// returns a different error shape, so the assertion would flake there. Conga's
+// CLI doesn't target Windows today (Docker host CLI assumptions in
+// localprovider/provider.go), but this constraint prevents a flake if Windows
+// CI ever lands.
+
 package localprovider
 
 import (
