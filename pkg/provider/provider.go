@@ -120,7 +120,14 @@ type Provider interface {
 	// ListAgents returns all configured agents.
 	ListAgents(ctx context.Context) ([]AgentConfig, error)
 
-	// GetAgent returns a single agent by name, or error if not found.
+	// GetAgent returns a single agent by name.
+	//
+	// On a genuine missing-agent case, implementations MUST return an error
+	// wrapping provider.ErrNotFound so callers can distinguish "this agent
+	// isn't provisioned" from transport-layer failures (auth, network,
+	// permissions). Every other failure must surface the underlying cause
+	// through errors.Is / errors.As — do NOT rebrand transport errors as
+	// "not found".
 	GetAgent(ctx context.Context, name string) (*AgentConfig, error)
 
 	// ResolveAgentByIdentity finds the agent mapped to the current caller.

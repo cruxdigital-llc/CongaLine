@@ -169,11 +169,21 @@ func (p *RemoteProvider) ListAgents(ctx context.Context) ([]provider.AgentConfig
 	return agents, nil
 }
 
+// GetAgent loads an agent's config from the remote host. Returns
+// provider.ErrNotFound (wrapped) only when the SSH/SFTP layer confirmed
+// the file doesn't exist; every other SSH failure (dial timeout, auth
+// failure, permission denied, network drop, remote disk full) is wrapped
+// with context but the underlying cause is preserved via errors.Is /
+// errors.As, so the caller — and the human reading the error — can tell
+// "this agent isn't provisioned" from "I can't talk to the host".
 func (p *RemoteProvider) GetAgent(ctx context.Context, name string) (*provider.AgentConfig, error) {
 	path := posixpath.Join(p.remoteAgentsDir(), name+".json")
 	data, err := p.ssh.Download(path)
 	if err != nil {
-		return nil, fmt.Errorf("agent %q not found: %w", name, provider.ErrNotFound)
+		if isNotExist(err) {
+			return nil, fmt.Errorf("agent %q not found: %w", name, provider.ErrNotFound)
+		}
+		return nil, fmt.Errorf("failed to read agent %q config from host: %w", name, err)
 	}
 	var cfg provider.AgentConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {

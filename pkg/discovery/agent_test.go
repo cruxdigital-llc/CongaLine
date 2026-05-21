@@ -1,8 +1,15 @@
 package discovery
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 )
@@ -82,5 +89,70 @@ func TestParseAgentConfig_WithoutChannels(t *testing.T) {
 	}
 	if cfg.ChannelBinding("slack") != nil {
 		t.Error("expected nil for agent with no channels")
+	}
+}
+
+func TestResolveAgent_Success(t *testing.T) {
+	ssmMock := &mockSSMClient{
+		getParameterFn: func(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+			return &ssm.GetParameterOutput{
+				Parameter: &ssmtypes.Parameter{
+					Value: aws.String(`{"type":"user","gateway_port":18789}`),
+				},
+			}, nil
+		},
+	}
+
+	cfg, err := ResolveAgent(context.Background(), ssmMock, "myagent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Name != "myagent" {
+		t.Errorf("expected name myagent, got %s", cfg.Name)
+	}
+}
+
+func TestResolveAgent_ParameterNotFound_ReturnsErrNotFound(t *testing.T) {
+	ssmMock := &mockSSMClient{
+		getParameterFn: func(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+			return nil, &ssmtypes.ParameterNotFound{}
+		},
+	}
+
+	_, err := ResolveAgent(context.Background(), ssmMock, "nope")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, provider.ErrNotFound) {
+		t.Errorf("expected error to wrap provider.ErrNotFound, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "nope") {
+		t.Errorf("expected error to mention the agent name, got: %v", err)
+	}
+}
+
+// Regression: an expired SSO session (or any non-ParameterNotFound AWS
+// error) was being masked as "agent not found", sending operators down the
+// wrong debugging path. The real error must survive.
+func TestResolveAgent_GenericAWSErrorIsSurfaced(t *testing.T) {
+	ssoErr := fmt.Errorf("SSOProviderInvalidToken: Token has expired and refresh failed")
+	ssmMock := &mockSSMClient{
+		getParameterFn: func(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+			return nil, ssoErr
+		},
+	}
+
+	_, err := ResolveAgent(context.Background(), ssmMock, "aaron")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if errors.Is(err, provider.ErrNotFound) {
+		t.Errorf("expected error NOT to be ErrNotFound for SSO failure, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Token has expired") {
+		t.Errorf("expected real SSO cause to appear in error, got: %v", err)
+	}
+	if !errors.Is(err, ssoErr) {
+		t.Errorf("expected wrapped error to unwrap to original SSO error")
 	}
 }

@@ -3,10 +3,12 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	awsutil "github.com/cruxdigital-llc/conga-line/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 )
@@ -23,11 +25,21 @@ func parseAgentConfig(paramName, jsonValue string) (*provider.AgentConfig, error
 	return &cfg, nil
 }
 
+// ResolveAgent loads an agent's config by name. Returns provider.ErrNotFound
+// (wrapped) only when SSM confirmed the parameter doesn't exist; every other
+// AWS failure (expired SSO token, network error, IAM denied, throttling) is
+// wrapped with context but the underlying cause is preserved via errors.Is
+// / errors.As, so the caller — and the human reading the error — can tell
+// "this agent isn't provisioned" from "I can't talk to AWS".
 func ResolveAgent(ctx context.Context, ssmClient awsutil.SSMClient, name string) (*provider.AgentConfig, error) {
 	paramName := fmt.Sprintf("/conga/agents/%s", name)
 	value, err := awsutil.GetParameter(ctx, ssmClient, paramName)
 	if err != nil {
-		return nil, fmt.Errorf("agent %q not found: %w", name, provider.ErrNotFound)
+		var notFound *ssmtypes.ParameterNotFound
+		if errors.As(err, &notFound) {
+			return nil, fmt.Errorf("agent %q not found: %w", name, provider.ErrNotFound)
+		}
+		return nil, fmt.Errorf("failed to look up agent %q: %w", name, err)
 	}
 
 	cfg, err := parseAgentConfig(paramName, value)

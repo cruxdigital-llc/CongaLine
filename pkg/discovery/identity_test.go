@@ -21,6 +21,7 @@ func (m *mockSTSClient) GetCallerIdentity(ctx context.Context, params *sts.GetCa
 
 type mockSSMClient struct {
 	getParametersByPathFn func(ctx context.Context, params *ssm.GetParametersByPathInput, optFns ...func(*ssm.Options)) (*ssm.GetParametersByPathOutput, error)
+	getParameterFn        func(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
 }
 
 func (m *mockSSMClient) SendCommand(ctx context.Context, params *ssm.SendCommandInput, optFns ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -30,6 +31,9 @@ func (m *mockSSMClient) GetCommandInvocation(ctx context.Context, params *ssm.Ge
 	return nil, fmt.Errorf("not implemented")
 }
 func (m *mockSSMClient) GetParameter(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	if m.getParameterFn != nil {
+		return m.getParameterFn(ctx, params, optFns...)
+	}
 	return nil, fmt.Errorf("not implemented")
 }
 func (m *mockSSMClient) PutParameter(ctx context.Context, params *ssm.PutParameterInput, optFns ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {

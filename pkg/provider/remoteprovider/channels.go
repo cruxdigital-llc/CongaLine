@@ -40,9 +40,26 @@ func (p *RemoteProvider) ReadProxyManifest(ctx context.Context, agentName string
 //   - SFTP path: wraps os.ErrNotExist / fs.ErrNotExist via *sftp.StatusError,
 //     which satisfies errors.Is.
 //   - cat fallback: wraps the shell's "No such file or directory" stderr
-//     plus a session exit error. Detected here via substring match on the
-//     common variants.
+//     plus a session exit error. Detected via substring match on the three
+//     observed variants ("file does not exist", "No such file", "no such
+//     file") — these are the only strings allowed to trigger the not-found
+//     branch.
+//
+// The classification is deliberately conservative on the negative side.
+// The following must NOT be treated as not-exist, because the entire point
+// of this helper is to let callers distinguish a missing file from a
+// transport failure:
+//   - "cat: command not found" (exit 127 when cat isn't on PATH)
+//   - "permission denied"
+//   - SSH dial/auth failures ("ssh: handshake failed", "unable to authenticate")
+//   - the bare string "not found" (too generic to be load-bearing)
+//
+// Returns false for nil so callers can chain unconditionally. See
+// isnotexist_test.go for the full contract.
 func isNotExist(err error) bool {
+	if err == nil {
+		return false
+	}
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, fs.ErrNotExist) {
 		return true
 	}

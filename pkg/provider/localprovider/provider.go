@@ -162,6 +162,11 @@ func (p *LocalProvider) ListAgents(ctx context.Context) ([]provider.AgentConfig,
 	return agents, nil
 }
 
+// GetAgent loads an agent's config from disk. Returns provider.ErrNotFound
+// (wrapped) only when the file genuinely doesn't exist; other read failures
+// (permission denied, IO error, the path being a directory) surface with
+// context so the caller can tell "this agent isn't provisioned" from
+// "I can't read the file".
 func (p *LocalProvider) GetAgent(ctx context.Context, name string) (*provider.AgentConfig, error) {
 	path := filepath.Join(p.agentsDir(), name+".json")
 	data, err := os.ReadFile(path)
@@ -169,11 +174,11 @@ func (p *LocalProvider) GetAgent(ctx context.Context, name string) (*provider.Ag
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("agent %q not found: %w", name, provider.ErrNotFound)
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to read agent %q config: %w", name, err)
 	}
 	var cfg provider.AgentConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse agent %q config: %w", name, err)
 	}
 	cfg.Name = name
 	return &cfg, nil
