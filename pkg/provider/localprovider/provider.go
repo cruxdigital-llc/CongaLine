@@ -222,11 +222,20 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	if err != nil {
 		return fmt.Errorf("failed to load agent overlay: %w", err)
 	}
+	// Generate the gateway auth token at provision time. OpenClaw v2026.3.22+
+	// refuses to bind a non-loopback gateway without auth, so the token must be
+	// in the config before the container starts. RefreshAgent preserves this
+	// token on subsequent restarts via ReadGatewayToken.
+	gatewayToken, err := generateToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate gateway token: %w", err)
+	}
 	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
-		Agent:   cfg,
-		Secrets: shared,
-		Model:   p.getConfigValue("model"),
-		Overlay: overlay,
+		Agent:        cfg,
+		Secrets:      shared,
+		GatewayToken: gatewayToken,
+		Model:        p.getConfigValue("model"),
+		Overlay:      overlay,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)

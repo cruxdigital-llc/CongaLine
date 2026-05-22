@@ -219,7 +219,15 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		return fmt.Errorf("failed to read agent secrets: %w", err)
 	}
 
-	openClawJSON, err := common.GenerateOpenClawConfig(cfg, shared, "")
+	// Generate the gateway auth token at provision time. OpenClaw v2026.3.22+
+	// refuses to bind a non-loopback gateway without auth, so the token must be
+	// in the config before the container starts. RefreshAgent preserves this
+	// token on subsequent restarts via readExistingGatewayToken.
+	gatewayToken, err := generateToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate gateway token: %w", err)
+	}
+	openClawJSON, err := common.GenerateOpenClawConfig(cfg, shared, gatewayToken)
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
 	}

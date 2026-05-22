@@ -211,32 +211,49 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent m
 - [ ] Phase 6 — AWS bootstrap shell: ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; the `regenerateAgentConfigOnInstance` upload path carries the result).
 - [ ] Phase 8 — Provider release (per CLAUDE.md `pkg/` change protocol): operator step, post-merge.
 
-### 28. OpenClaw Upgrade Latest — Spec'd, Ready for Implementation
+### 28. OpenClaw Upgrade Latest — Code Landed + Migration Applied, AWS Bootstrap Auth Deferred
 *Lead: Architect + QA*
 *See `specs/2026-05-21_feature_openclaw-upgrade-latest/` for full trace*
 
 Bump the OpenClaw image pin `v2026.3.11` → `v2026.5.18`. Upstream Slack
 socket-mode regression (`openclaw/openclaw#45311`) that gated the pin
-is CLOSED — fix shipped in `v2026.3.22` via PR #45953. Scope-locked to
-the pin change; bisectable single commit.
+is CLOSED — fix shipped in `v2026.3.22` via PR #45953. Scope **expanded
+during live S3 smoke** — the new image enforces two safety checks the
+old one didn't, both caught only by booting the container with our
+rendered config: (1) `gateway.mode=remote` is rejected without
+`--allow-unconfigured` — fixed by switching to `mode=local` (the
+documentation in CLAUDE.md was wrong about which knob controls
+0.0.0.0 binding; it's `gateway.bind`, not `gateway.mode`), and (2) a
+non-loopback gateway is rejected without auth — fixed by generating a
+token at provision time in both local and remote ProvisionAgent paths
+(was a latent security gap; old image silently allowed it).
 - [x] Requirements defined
 - [x] Plan defined
-- [x] Spec defined — 5 phases (changelog audit → 14-file edit → parity
-  audit → 5-scenario verification → opt-in rollout)
-- [x] Persona review passed (Architect + QA approve; QA folded three
-  asks: extend S5 to remote, define soak window, require AWS rollback
-  rehearsal)
-- [x] Pre-implementation standards gate PASSES — caught 9 additional
-  hardcoded version-string locations missed by the initial enumeration
-  (README/TECH_STACK/security.md/manifest test/integration test
-  const/CI cache key); all folded into spec Phase 1
-- [ ] Phase 0: upstream changelog audit (`v2026.3.12` … `v2026.5.18`),
-  produces `changelog-review.md`; blocks on any schema-breaking entry
-- [ ] Phase 1: single-commit edit across 14 files (~20 line changes)
-- [ ] Phase 3: 5-scenario verification per provider (local → remote →
-  AWS, with AWS rollback rehearsal first)
-- [ ] Phase 4: opt-in per-environment rollout
-- [ ] Phase 5: docs/memory hygiene + 7-day soak window before fast-follow
+- [x] Spec defined — 5 phases
+- [x] Persona review passed (Architect + QA)
+- [x] Pre-implementation standards gate passed (caught 9 additional
+  hardcoded locations; all absorbed into Phase 1)
+- [x] **Phase 0**: upstream changelog audit complete —
+  `changelog-review.md` published; 0 Blocking entries across 35+
+  releases / 7,173 lines; only `### Breaking` section in window was
+  BlueBubbles iMessage removal (irrelevant)
+- [x] **Phase 1**: single commit `685649e` on `chore/upgrade-openclaw`
+  — 14 files / ~20 line edits across A. defaults, B. docs/standards,
+  C. tests/CI; `go build/vet/gofmt` clean, full test suite passes
+- [x] **Phase 3 (S3 only, local provider, live)**: live smoke uncovered
+  two latent compatibility issues with the new image — applied
+  migrations (gateway.mode=local + provision-time gateway token); S3
+  re-verified clean. AWS bootstrap auth gap deferred (separate fix —
+  user-data heredocs need bash-side token generation).
+- [ ] **Phase 3** for S1/S2 (Slack), S4 (model overlay), S5 (egress) —
+  operator task on real environments
+- [ ] **Phase 3 follow-up**: AWS user-data heredocs need
+  `gateway.auth.token` injection so first-boot agents satisfy the new
+  image's non-loopback-bind-requires-auth check
+- [ ] **Phase 4**: opt-in per-environment rollout — operator task
+- [ ] **Phase 4**: opt-in per-environment rollout — operator task
+- [ ] **Phase 5**: docs/memory hygiene + 7-day soak window before any
+  fast-follow or dependent feature work
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)

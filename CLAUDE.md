@@ -70,7 +70,7 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - **Agents are keyed by agent name** (e.g. `myagent`, `leadership`), not Slack member ID or username
 - Two agent types: **user agents** (DM-only, `dmPolicy: "allowlist"`) and **team agents** (channel-based, `groupPolicy: "allowlist"`)
 - Gateway listens on port **18789** inside every container (`BaseGatewayPort` in `pkg/common/ports.go`). Each agent gets a unique **host** port (18789, 18791, 18792, etc.) via Docker `-p 127.0.0.1:{hostPort}:18789`. The `agent.GatewayPort` field is the host port, NOT the container port.
-- **Gateway mode is always `"remote"`** (binds `0.0.0.0` inside the container) with `remote.url: "http://localhost:18789"`. This is an OpenClaw setting unrelated to the congaline "remote" provider — it means the gateway accepts connections from outside its network namespace (required for Docker port mapping and inter-container routing).
+- **Gateway runs in `mode: "local"`** (gateway + agent runtime in the same container — this is the default OpenClaw topology, unrelated to the congaline "remote" provider). The 0.0.0.0 binding inside the container that Docker `-p 127.0.0.1:<host>:18789` port forwarding requires comes from `gateway.bind: "lan"`, not from `mode`. OpenClaw v2026.3.22+ explicitly rejects `mode: "remote"` (split remote-transport topology) without `--allow-unconfigured`; we are not that topology.
 - **`allowedOrigins`** must include both `localhost:18789` (for CLI tools inside the container) and `localhost:{hostPort}` (for browser access via SSM/SSH tunnels). Without both, `conga connect` gets "origin not allowed".
 
 ## Planning

@@ -202,3 +202,132 @@ Folded into `spec.md`:
   the previous pin) plus two in `PROJECT_STATUS.md` (feature-#28
   description and Local Model Routing deferred-Phase-1 note); both
   documented as intentional history per spec "Out of bounds".
+
+- **2026-05-21 (live S3 smoke on local provider)**: **BLOCKING REGRESSION
+  FOUND.** Provisioned a gateway-only test agent against the new image
+  in an isolated `~/.conga-verify` data dir. Image pulled fine; the
+  container exited with status 78 a few seconds after startup. Logs:
+  ```
+  [gateway] loading configuration…
+  [gateway] resolving authentication…
+  Gateway start blocked: set gateway.mode=local (current: remote) or
+  pass --allow-unconfigured.
+  Config write audit: /home/node/.openclaw/logs/config-audit.jsonl
+  ```
+  Traced to `/app/dist/run-B3RJX50x.js` in the new image:
+  ```js
+  if (params.allowUnconfigured || params.mode === "local") return [];
+  // …
+  return [`Gateway start blocked: set gateway.mode=local (current: ${params.mode}) or pass --allow-unconfigured.`, …];
+  ```
+  Our rendered `openclaw.json` emits `gateway.mode: "remote"`
+  deliberately (CLAUDE.md line 88) — we need 0.0.0.0 bind inside the
+  container so Docker `-p 127.0.0.1:<host>:18789` can deliver traffic.
+  The new image treats `mode=remote` as a configuration requiring
+  explicit opt-in. **My Phase 0 changelog audit missed this entirely.**
+  My grep rubric scanned for "schema change / breaking / env var / data
+  dir layout" — this validation was added without any of those
+  signal-words in the changelog entry.
+- **2026-05-21 (live S3 smoke)**: Verification environment torn down
+  cleanly (`conga admin teardown --delete-data --force`); no leftover
+  containers or networks. The repo's Phase 1 commit `685649e` on
+  `chore/upgrade-openclaw` remains intact — not pushed, decision pending.
+
+## Phase 0 Audit Gap — Postmortem
+
+The Phase 0 rubric in spec.md asked four questions to identify Blocking
+entries: schema change? env var change? on-disk layout? required
+host-side migration? **None caught a new runtime validation on an
+existing-and-still-accepted config field.** The field is unchanged in
+shape — `gateway.mode` is still a string, still accepts `"remote"`,
+still accepts `"local"`. What changed is that startup now rejects
+`"remote"` without `--allow-unconfigured` (or with `--allow-unconfigured`).
+
+**Concrete rubric fix for future bumps**: extend Phase 0 to include a
+*live boot test* before signing off the audit — pull the candidate image,
+mount the current rendered config, run the container, watch for any
+non-zero exit within the first 30 seconds. This would have caught the
+regression in seconds rather than after the commit landed.
+
+(This rubric fix is itself a follow-up; not part of this bump.)
+
+## Migration applied (in-scope expansion of the bump)
+
+After consulting the user, the bump was expanded to absorb the
+migration needed to keep our deployment compatible with the new image's
+stricter validation. Two parallel issues surfaced during live testing:
+
+### Migration 1 — gateway.mode "remote" → "local"
+
+The OpenClaw schema doc in the new image is explicit:
+> `gateway.mode`: "local" runs channels and agent runtime on this host,
+> while "remote" connects through remote transport. Keep "local" unless
+> you intentionally run a split remote gateway topology.
+
+Our deployment runs gateway + agent runtime in the same container — we
+are literally `mode=local`. The 0.0.0.0 binding (required for Docker
+`-p` port forwarding) comes from `gateway.bind: "lan"`, not from `mode`.
+CLAUDE.md's claim that "Gateway mode is always 'remote' (binds 0.0.0.0)"
+conflated the two settings — a long-standing doc bug, not a behavior
+need.
+
+**Files changed (in-scope expansion):**
+- `pkg/runtime/openclaw/config.go` — `mode: "remote"` → `"local"`,
+  removed the now-dead `gateway.remote.url` block.
+- `terraform/modules/infrastructure/user-data.sh.tftpl` — same edit in
+  both bash JSON heredocs (lines 364, 453).
+- `CLAUDE.md` line 73 — paragraph rewritten to explain
+  mode-vs-bind distinction.
+
+### Migration 2 — gateway auth token at provision time
+
+The new image refuses to bind a non-loopback gateway without auth:
+> Refusing to bind gateway to lan without auth.
+> Container environment detected — the gateway defaults to bind=auto
+> (0.0.0.0) for port-forwarding compatibility.
+> Set OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD, or pass
+> --token/--password […]
+
+**Root cause in our code**: both `ProvisionAgent` paths (local and
+remote) were passing `""` as the gateway token to the config generator
+on initial provision — so fresh agents booted with an unauthenticated
+gateway config. `RefreshAgent` correctly generates/preserves a token,
+but only after the first refresh. Old image silently allowed this; new
+image refuses.
+
+This was a latent security bug exposed by the new image. The fix is
+also a real improvement.
+
+**Files changed (in-scope expansion):**
+- `pkg/provider/localprovider/provider.go` ProvisionAgent — generate
+  token via `generateToken()`, pass to `GenerateConfig`.
+- `pkg/provider/remoteprovider/provider.go` ProvisionAgent — same
+  pattern, parity with local.
+
+### Files NOT yet fixed (deferred to a follow-up spec)
+
+- `terraform/modules/infrastructure/user-data.sh.tftpl` —
+  `setup_user_agent` and `setup_team_agent` bash heredocs emit the
+  initial AWS agent config with NO `gateway.auth` block. Same latent
+  bug. Fix is bash-side (generate UUID, inject into heredoc + env
+  file). Not part of this commit — needs operator validation on AWS
+  before landing, which the spec's Phase 4 rollout will exercise.
+- The `regenerateAgentConfigOnInstance` Go path on AWS DOES thread the
+  token (it uses the same `pkg/runtime/openclaw/config.go` generator
+  we just fixed), so the AWS gap is bootstrap-only.
+
+### Live verification result (S3, local provider)
+
+After both migrations:
+- Container healthy on v2026.5.18 within ~5s of provisioning.
+- `docker inspect` confirms image tag = `ghcr.io/openclaw/openclaw:2026.5.18`.
+- `curl http://127.0.0.1:18789/` returns HTTP 200 (three probes:
+  `/`, `/healthz`, and `/` with explicit `Origin: http://localhost:18789`).
+- `docker logs conga-verify-gw | grep -iE 'origin not allowed|fallbacks'`
+  is empty — both audit belt-and-suspenders checks clean (#83286 and
+  #79369).
+- `conga connect` returns a usable URL+token. Browser handoff still
+  available to the operator if they want to finish the chat-reply +
+  `/model` parts of S3.
+- Verification env will be torn down after the operator decides on
+  next steps.
