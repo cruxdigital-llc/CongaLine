@@ -89,7 +89,7 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - `SLACK_APP_TOKEN` is held only by the router (in `router.env`) — containers do not need it
 - Router must be connected to each agent's Docker network (`docker network connect conga-<agent_name> conga-router`) so it can reach the container's webhook endpoint
 - Routing config at routing.json maps channels and member IDs to container webhook URLs (`http://conga-{name}:18789/slack/events`)
-- The deployed image is pinned to `ghcr.io/openclaw/openclaw:2026.3.11` (`29dc654`), the last stable release before a Slack socket mode regression in v2026.3.12 ([#45311](https://github.com/openclaw/openclaw/issues/45311))
+- The deployed image is pinned to `ghcr.io/openclaw/openclaw:2026.5.18`. Pinning to a specific minor (rather than tracking `:latest`) keeps deploys bisectable across upstream releases. Historical note: an earlier Slack socket-mode regression ([openclaw/openclaw#45311](https://github.com/openclaw/openclaw/issues/45311)) held the pin at `v2026.3.11` until it was resolved upstream in `v2026.3.22` (PR [#45953](https://github.com/openclaw/openclaw/pull/45953), Slack Bolt import-interop hardening).
 
 ## OpenClaw Behavioral Issues
 

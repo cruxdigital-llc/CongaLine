@@ -175,3 +175,30 @@ Folded into `spec.md`:
   into A. defaults (5), B. docs/standards (7), C. tests/CI (6).
 - **2026-05-21**: PROJECT_STATUS.md updated to reflect spec'd /
   reviewed / gate-passed state.
+- **2026-05-21 (implementation)**: `tasks.md` drafted and approved.
+  Phase 0 audit complete — `changelog-review.md` produced; 0 Blocking
+  entries across 35+ releases / 7,173 lines (only `### Breaking`
+  section was BlueBubbles iMessage removal, irrelevant to us). Two
+  belt-and-suspenders Phase 3 checks added: `allowedOrigins` doctor
+  seeding (#83286) and `fallbacks` warn (#79369).
+- **2026-05-21 (implementation)**: Phase 1 commit prepared — all 14
+  edits applied:
+  - A1 `terraform/environments/production/variables.tf:60`
+  - A2 `terraform/modules/congaline/variables.tf:4`
+  - A3 `terraform/modules/infrastructure/variables.tf:49`
+  - A4–A5 `pkg/provider/remoteprovider/setup.go:190, :193`
+  - B1 `CLAUDE.md:92` (paragraph rewritten)
+  - B2–B5 `README.md:67, :717, :720, :723` (last is a deletion)
+  - B6 `product-knowledge/standards/security.md:41` (rationale rewritten)
+  - B7 `product-knowledge/TECH_STACK.md:38`
+  - C1 `internal/cmd/json_schema.go:43`
+  - C2 `internal/cmd/integration_helpers_test.go:26`
+  - C3–C4 `pkg/manifest/manifest_test.go:14, :55`
+  - C5–C6 `.github/workflows/ci.yml:58, :65, :67`
+- **2026-05-21 (implementation)**: Verification clean — `go build ./...`,
+  `go vet ./...`, `gofmt -l .` all silent; `go test ./... -count=1`
+  passes (20 packages, ~80s including pkg/aws). One intentional
+  `2026.3.11` reference remains in `CLAUDE.md` (historical note about
+  the previous pin) plus two in `PROJECT_STATUS.md` (feature-#28
+  description and Local Model Routing deferred-Phase-1 note); both
+  documented as intentional history per spec "Out of bounds".
