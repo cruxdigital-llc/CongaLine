@@ -340,27 +340,34 @@ error message present; type mismatch caught with actionable message. ✅
 
 ## Phase 7 — Docs
 
-- [ ] **7.1** `agents/_example/agent.yaml.example`:
-  - bump opening `version:` from 1 → 2
-  - add `subagents:` block with all fields commented + a worked
-    example
-  - keep a "v1 still works" reference comment for back-compat
-- [ ] **7.2** `product-knowledge/standards/config-taxonomy.md`:
-  - extend the runtime overlay row to mention `subagents`
-  - add Worked Example #5: "I want this agent to delegate mechanical
-    work to a cheap model"
-- [ ] **7.3** `CLAUDE.md`:
-  - new section "Delegation Model" with:
-    - the five-role catalog table
-    - one paragraph on v2 overlay + `subagents:` block
-    - upstream vocabulary map (subagent → `sessions_spawn` /
-      `delegate_task`; "delegate" is upstream's org-identity concept)
-- [ ] **7.4** Update `agents/_defaults/openclaw/<role>/README.md`
-  files (already covered in Phase 5.7) — cross-check consistency.
+- [x] **7.1** `agents/_example/agent.yaml.example`:
+  - bumped `version: 1` → `version: 2`; documented the v1/v2 split
+    in the header comment (v1 still works for Feature #27 documents)
+  - replaced the "reserved keys do not use" reserved-keys note for
+    `subagents` (now claimed by v2) with a full documented
+    `subagents:` block showing all fields + per-runtime applicability
+  - kept the other reserved keys (memory/tools/limits/images/pdf/video)
+- [x] **7.2** `product-knowledge/standards/config-taxonomy.md`:
+  - extended the runtime overlay row to mention `subagents` and
+    `agents/_defaults/` is now also committed (role packages live
+    under `_defaults/<runtime>/role-*/`)
+  - added Worked Example #5 ("Opus primary + Qwen subagent") with
+    the full agent.yaml shape and a pointer to `conga admin
+    add-user --role role-code-dev`
+  - bumped doc Last Updated to 2026-05-22
+- [x] **7.3** `CLAUDE.md`:
+  - new "Delegation Model" section with the five-role catalog
+    table, one paragraph on v2 overlay + `subagents:` block,
+    upstream vocabulary map ("subagent" matches upstream;
+    "delegate" is OpenClaw's org-identity concept), egress
+    requirements, and the customization-before-first-use note
+  - touched the per-agent overlay paragraph to reference v1 vs v2
+- [x] **7.4** Role package READMEs (created in Phase 5) cross-
+  checked for consistency — they were authored in the same pass and
+  reference the same patterns as CLAUDE.md's new section.
 
-**Phase 7 acceptance**: docs render cleanly; manual scan for stale
-references to "delegate" in the Tier-1 sense (we should never use that
-term post-rename).
+**Phase 7 acceptance**: docs render cleanly; no stale "delegate"
+references in the Tier-1 sense post-rename. ✅
 
 ---
 

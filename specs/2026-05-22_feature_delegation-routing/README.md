@@ -593,3 +593,41 @@ versions — same personality, same workflows, same boundaries.
 **Next**: Phase 7 (docs — `agent.yaml.example` bump to v2,
 `config-taxonomy.md` worked example, `CLAUDE.md` Delegation Model
 section).
+
+### 2026-05-22 — Phase 7 implementation complete
+
+**Files modified**:
+- [agents/_example/agent.yaml.example](../../agents/_example/agent.yaml.example)
+  — bumped `version: 1` → `version: 2`; documented v1/v2 split in
+  the header; replaced the reserved-keys note for `subagents` (now
+  claimed by v2) with a full documented `subagents:` block showing
+  all fields with per-runtime applicability notes
+  (`delegation_mode`: OpenClaw-only; `max_spawn_depth`: Hermes-only;
+  `max_concurrent`: universal); kept other reserved keys
+  (memory/tools/limits/images/pdf/video).
+- [product-knowledge/standards/config-taxonomy.md](../../product-knowledge/standards/config-taxonomy.md)
+  — extended the runtime overlay row to mention `subagents` and to
+  acknowledge that `agents/_defaults/` is now committed (role
+  packages live under `_defaults/<runtime>/role-*/`); added Worked
+  Example #5 ("Opus primary + Qwen subagent") with the full
+  agent.yaml shape and a pointer to `--role role-code-dev`; bumped
+  doc's Last Updated date.
+- [CLAUDE.md](../../CLAUDE.md) — new "Delegation Model" section
+  with: tier 1 (subagents) v2 overlay shape, tier 2 (role agents)
+  catalog table, upstream vocabulary map (subagent = `sessions_spawn`
+  / `delegate_task`; delegate = OpenClaw's org-identity concept),
+  egress requirements, customization-before-first-use note. Also
+  touched the per-agent overlay paragraph to reference v1 vs v2.
+
+**Verification**:
+- `go test ./...` full suite: green (docs changes don't affect tests
+  directly, but the example file still parses through the v2 loader
+  — covered by existing TestLoadAgentOverlay_V2* tests).
+- `go vet ./...`: clean.
+- `gofmt -l`: clean.
+- Manual grep for stale "delegate" references in the Tier-1 sense:
+  none found outside `upstream-capability.md` (which explicitly
+  documents the upstream vocabulary collision).
+
+**Next**: Phase 8 (verification — live smoke + verify-feature +
+PROJECT_STATUS roll-forward).
