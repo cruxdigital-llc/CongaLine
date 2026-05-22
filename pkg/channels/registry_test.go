@@ -7,6 +7,7 @@ type testChannel struct{ name string }
 
 func (t *testChannel) Name() string                          { return t.name }
 func (t *testChannel) ValidateBinding(string, string) error  { return nil }
+func (t *testChannel) SupportsRuntime(string) (bool, string) { return true, "" }
 func (t *testChannel) SharedSecrets() []SecretDef            { return nil }
 func (t *testChannel) HasCredentials(map[string]string) bool { return false }
 func (t *testChannel) OpenClawChannelConfig(string, ChannelBinding, map[string]string) (map[string]any, error) {
@@ -94,6 +95,16 @@ func TestParseBinding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestChannelInterface_Compile is a compile-time guard ensuring testChannel
+// stays in sync with the Channel interface as the interface evolves. If a
+// future method gets added to Channel and testChannel isn't updated, the
+// other registry tests still fail to compile — but they fail at the
+// Register() call site, which is less obviously about interface evolution
+// than this dedicated assertion.
+func TestChannelInterface_Compile(t *testing.T) {
+	var _ Channel = (*testChannel)(nil)
 }
 
 func TestAll(t *testing.T) {

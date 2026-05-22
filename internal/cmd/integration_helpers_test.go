@@ -51,6 +51,9 @@ func resetCLIState() {
 	ui.JSONInputActive = false
 	secretValue = ""
 	secretForce = false
+	adminGatewayPort = 0
+	adminIAMIdentity = ""
+	adminChannel = ""
 	adminForce = false
 	adminDeleteSecrets = false
 	behaviorAsName = ""

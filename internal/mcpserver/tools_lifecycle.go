@@ -7,6 +7,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -76,6 +77,15 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 				ch, ok := channels.Get(binding.Platform)
 				if !ok {
 					return mcp.NewToolResultError(fmt.Sprintf("unknown channel platform %q", binding.Platform)), nil
+				}
+				// MCP doesn't expose a runtime parameter today; defaults to
+				// openclaw via runtime.ResolveRuntime. The gate fires against
+				// that resolved value so unsupported channel × runtime
+				// combinations (e.g. telegram on openclaw) are refused before
+				// any provisioning side effects.
+				resolvedRuntime := string(runtime.ResolveRuntime("", ""))
+				if supported, reason := ch.SupportsRuntime(resolvedRuntime); !supported {
+					return mcp.NewToolResultError(fmt.Sprintf("channel %s is not supported for the %s runtime: %s", binding.Platform, resolvedRuntime, reason)), nil
 				}
 				if err := ch.ValidateBinding(agentType, binding.ID); err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
