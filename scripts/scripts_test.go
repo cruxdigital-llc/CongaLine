@@ -136,6 +136,58 @@ func TestRefreshUserScriptTemplateRender(t *testing.T) {
 	if !strings.Contains(output, "us-east-1") {
 		t.Error("expected AWS region in rendered output")
 	}
+
+	// v2026.5.18 compat: the rebuilt systemd unit must seed @openclaw/slack
+	// before the persistent container starts (the plugin is no longer
+	// bundled in the OpenClaw image starting v2026.5.x).
+	want := "openclaw plugins install @openclaw/slack"
+	if !strings.Contains(output, want) {
+		t.Errorf("missing %q ExecStartPre — fresh refresh on v2026.5.18+ leaves channel WARNing", want)
+	}
+	// Regression: --yes is not a valid plugins-install flag and causes
+	// the systemd ExecStartPre to silently fail.
+	if strings.Contains(output, "plugins install @openclaw/slack --yes") {
+		t.Error(`plugins install line still passes --yes; v2026.5.18 rejects it as unrecognized`)
+	}
+}
+
+// assertOpenClawV5Shape exercises the assertions a rendered OpenClaw config
+// heredoc must satisfy on v2026.5.18+. Shared across add-user / add-team
+// tests because the gateway / streaming / update / plugin-install shape is
+// identical between the two agent types. Type-specific assertions
+// (allowFrom vs channels) live in the per-test bodies.
+func assertOpenClawV5Shape(t *testing.T, rendered string) {
+	t.Helper()
+
+	// Positive: every v2026.5.18-mandatory shape must be present.
+	positives := map[string]string{
+		"GATEWAY_TOKEN generation":    "GATEWAY_TOKEN=$(openssl rand -hex 32)",
+		"gateway.auth.token block":    `"auth": { "mode": "token", "token": "$GATEWAY_TOKEN" }`,
+		"streaming object form":       `"streaming": { "mode": "partial", "nativeTransport": true }`,
+		"update.checkOnStart false":   `"update": { "checkOnStart": false, "auto": { "enabled": false } }`,
+		"plugin install ExecStartPre": "openclaw plugins install @openclaw/slack",
+	}
+	for desc, want := range positives {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("missing %s: want %q in rendered template", desc, want)
+		}
+	}
+
+	// Negative: every legacy v2026.3.x shape must be absent. These produced
+	// real production agent crashes during the v2026.5.18 rollout and the
+	// fixes are what this PR is about — assert they can't regress.
+	negatives := map[string]string{
+		`legacy streaming string form`: `"streaming": "partial"`,
+		`legacy nativeStreaming key`:   `"nativeStreaming"`,
+		`legacy gateway.remote block`:  `"remote": { "url"`,
+		`legacy --yes install flag`:    "plugins install @openclaw/slack --yes",
+		`gateway.mode=remote`:          `"mode": "remote"`,
+	}
+	for desc, banned := range negatives {
+		if strings.Contains(rendered, banned) {
+			t.Errorf("legacy shape still present (%s): %q must not appear in rendered template", desc, banned)
+		}
+	}
 }
 
 func TestAddUserScriptTemplateRender(t *testing.T) {
@@ -180,6 +232,14 @@ func TestAddUserScriptTemplateRender(t *testing.T) {
 			t.Errorf("expected %s (%q) in rendered output", desc, want)
 		}
 	}
+
+	// v2026.5.18-mandatory shape (shared with add-team).
+	assertOpenClawV5Shape(t, output)
+
+	// User-agent-specific: DM allowlist tied to the slack member ID.
+	if !strings.Contains(output, `"allowFrom": ["$SLACK_MEMBER_ID"]`) {
+		t.Error("user agent must emit allowFrom bound to SLACK_MEMBER_ID")
+	}
 }
 
 func TestAddTeamScriptTemplateRender(t *testing.T) {
@@ -222,5 +282,18 @@ func TestAddTeamScriptTemplateRender(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %s (%q) in rendered output", desc, want)
 		}
+	}
+
+	// v2026.5.18-mandatory shape (shared with add-user).
+	assertOpenClawV5Shape(t, output)
+
+	// Team-agent-specific: per-channel binding must use the new "enabled"
+	// key. v2026.5.x rejects the legacy "allow" key with
+	//   channels.slack.channels.<id>: must NOT have additional properties
+	if !strings.Contains(output, `"$SLACK_CHANNEL": { "enabled": true, "requireMention": false }`) {
+		t.Error(`team agent must emit channels.<id>.{enabled:true,requireMention:false} (the v2026.5.x canonical shape)`)
+	}
+	if strings.Contains(output, `"$SLACK_CHANNEL": { "allow": true`) {
+		t.Error(`team agent still emits legacy channels.<id>.allow:true — v2026.5.x rejects it`)
 	}
 }
