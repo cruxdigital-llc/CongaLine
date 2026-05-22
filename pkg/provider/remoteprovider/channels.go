@@ -228,6 +228,13 @@ func (p *RemoteProvider) BindChannel(ctx context.Context, agentName string, bind
 			agentName, binding.Platform, provider.ErrBindingExists)
 	}
 
+	// Runtime-compatibility gate: refuse unsupported channel × runtime
+	// combinations (e.g. telegram on openclaw) before ValidateBinding.
+	resolvedRuntime := string(runtime.ResolveRuntime(a.Runtime, ""))
+	if supported, reason := ch.SupportsRuntime(resolvedRuntime); !supported {
+		return fmt.Errorf("channel %s is not supported for the %s runtime: %s", binding.Platform, resolvedRuntime, reason)
+	}
+
 	// Validate binding
 	if err := ch.ValidateBinding(string(a.Type), binding.ID); err != nil {
 		return err

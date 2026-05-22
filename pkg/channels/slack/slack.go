@@ -22,6 +22,13 @@ type Slack struct{}
 
 func (s *Slack) Name() string { return "slack" }
 
+// SupportsRuntime — Slack works for all agent runtimes (the channel
+// abstraction layer is runtime-neutral and the router fans out via
+// HTTP webhook regardless of who's receiving).
+func (s *Slack) SupportsRuntime(runtimeName string) (bool, string) {
+	return true, ""
+}
+
 func (s *Slack) ValidateBinding(agentType, id string) error {
 	switch agentType {
 	case "user":

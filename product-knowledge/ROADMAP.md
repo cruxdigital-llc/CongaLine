@@ -109,7 +109,9 @@ Fallback chains, cost limits, and cross-provider request-time routing (Bifrost) 
 - [ ] Per-user custom SSM documents (each user can only use their own port)
 - [ ] Rewrite Slack router in Go (replace Node.js `router/slack/src/index.js`, land in `channels/slack/`)
 - [ ] Update AWS bootstrap scripts (`add-user.sh.tmpl`, `add-team.sh.tmpl`) for `channels` JSON format
-- [ ] Add second channel implementation (Discord/Telegram) to validate Channel interface
+- [x] Telegram channel implementation (Hermes-only; OpenClaw + Telegram gated as unsupported — see [specs/2026-05-22_feature_telegram-v2026.5-revamp/](../specs/2026-05-22_feature_telegram-v2026.5-revamp/))
+- [ ] Add second OpenClaw-compatible channel implementation (Discord) to fully validate Channel interface for OpenClaw runtime
+- [ ] OpenClaw + Telegram (Option B in the telegram-v2026.5-revamp spec) — per-agent direct bots, deferred until an operator needs it
 - [ ] Self-service container restart via signal file
 - [ ] Automated secret rotation
 - [ ] EBS snapshot backups

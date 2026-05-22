@@ -28,8 +28,17 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve runtime first so resolveChannelBinding can run the
+	// runtime-compat gate before validating the binding ID format.
+	agentRuntime := flagRuntime
+	if agentRuntime == "" {
+		if s, ok := ui.GetString("runtime"); ok {
+			agentRuntime = s
+		}
+	}
+
 	// Channel binding: flag > JSON > none (gateway-only)
-	bindings, err := resolveChannelBinding("user")
+	bindings, err := resolveChannelBinding("user", agentRuntime)
 	if err != nil {
 		return err
 	}
@@ -61,14 +70,6 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 		iamIdentity, err = ui.TextPromptWithDefault("SSO username/email of the user to add", defaultIdentity)
 		if err != nil {
 			return err
-		}
-	}
-
-	// Runtime: flag > JSON > empty (uses environment default from setup)
-	agentRuntime := flagRuntime
-	if agentRuntime == "" {
-		if s, ok := ui.GetString("runtime"); ok {
-			agentRuntime = s
 		}
 	}
 
@@ -131,8 +132,17 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve runtime first so resolveChannelBinding can run the
+	// runtime-compat gate before validating the binding ID format.
+	teamRuntime := flagRuntime
+	if teamRuntime == "" {
+		if s, ok := ui.GetString("runtime"); ok {
+			teamRuntime = s
+		}
+	}
+
 	// Channel binding: flag > JSON > none (gateway-only)
-	bindings, err := resolveChannelBinding("team")
+	bindings, err := resolveChannelBinding("team", teamRuntime)
 	if err != nil {
 		return err
 	}
@@ -146,14 +156,6 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 	gatewayPort, err := resolveGatewayPort(ctx)
 	if err != nil {
 		return err
-	}
-
-	// Runtime: flag > JSON > empty (uses environment default from setup)
-	teamRuntime := flagRuntime
-	if teamRuntime == "" {
-		if s, ok := ui.GetString("runtime"); ok {
-			teamRuntime = s
-		}
 	}
 
 	// Role: flag > JSON > none. See adminAddUserRun for full semantics.
@@ -205,7 +207,14 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 }
 
 // resolveChannelBinding parses the --channel flag or JSON input into a binding slice.
-func resolveChannelBinding(agentType string) ([]channels.ChannelBinding, error) {
+//
+// agentRuntime is the resolved runtime name ("openclaw", "hermes"). The
+// runtime-compat check fires BEFORE validation so the operator sees the
+// most actionable error first: "telegram is not supported on openclaw"
+// beats "telegram ID is valid, but…". Pass the resolved runtime, not the
+// raw flag value — empty-string runtime defaults to openclaw via the
+// runtime registry, which the unsupported-combo error needs to know.
+func resolveChannelBinding(agentType, agentRuntime string) ([]channels.ChannelBinding, error) {
 	chStr := adminChannel
 	if chStr == "" {
 		if s, ok := ui.GetString("channel"); ok {
@@ -223,6 +232,10 @@ func resolveChannelBinding(agentType string) ([]channels.ChannelBinding, error) 
 	ch, ok := channels.Get(binding.Platform)
 	if !ok {
 		return nil, fmt.Errorf("unknown channel platform %q", binding.Platform)
+	}
+	resolvedRuntime := string(runtime.ResolveRuntime(agentRuntime, ""))
+	if supported, reason := ch.SupportsRuntime(resolvedRuntime); !supported {
+		return nil, fmt.Errorf("channel %s is not supported for the %s runtime: %s", binding.Platform, resolvedRuntime, reason)
 	}
 	if err := ch.ValidateBinding(agentType, binding.ID); err != nil {
 		return nil, err

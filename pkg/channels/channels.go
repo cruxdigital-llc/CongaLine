@@ -34,6 +34,22 @@ type Channel interface {
 	// agentType is "user" or "team".
 	ValidateBinding(agentType string, id string) error
 
+	// SupportsRuntime reports whether this channel can be used with the
+	// named agent runtime ("openclaw", "hermes"). Provisioning and
+	// binding paths consult this before generating config or accepting a
+	// binding, so an unsupported combination fails early with an
+	// operator-actionable message rather than surfacing as a runtime
+	// config-generation error.
+	//
+	// Returns (true, "") when supported. Returns (false, reason) when
+	// not, with reason being a single sentence the operator can act on.
+	//
+	// Note: runtime is passed as a string rather than runtime.RuntimeName
+	// because pkg/runtime already imports pkg/channels — taking the typed
+	// name here would create an import cycle. Call sites pass
+	// string(resolved-runtime).
+	SupportsRuntime(runtimeName string) (supported bool, reason string)
+
 	// SharedSecrets returns the secrets this channel needs during admin setup.
 	SharedSecrets() []SecretDef
 

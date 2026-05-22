@@ -120,6 +120,18 @@ The orchestrator's runtime decides when to spawn a subagent — Conga's job is j
 - Security standards in `product-knowledge/standards/security.md` — review before making security-relevant changes
 - Roadmap in `product-knowledge/ROADMAP.md`
 
+## Channel × Runtime Compatibility
+
+| Channel | OpenClaw runtime | Hermes runtime |
+|---|---|---|
+| `slack` | ✅ Supported | ✅ Supported |
+| `telegram` | ❌ Unsupported — the v2026.5.x OpenClaw telegram plugin has no router-fanout receiver mode (see `specs/2026-05-22_feature_telegram-v2026.5-revamp/`) | ✅ Supported via the existing router |
+
+Channels enforce this at provision + bind time via `Channel.SupportsRuntime`.
+`conga admin add-user --runtime openclaw --channel telegram:<id>` (and the
+`channels bind` equivalent) refuse with an operator-actionable error
+pointing at the spec dir.
+
 ## Slack Architecture
 
 - **Slack is optional** — agents can run in gateway-only mode (web UI) without any Slack configuration
