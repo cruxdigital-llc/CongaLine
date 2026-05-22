@@ -53,8 +53,31 @@ func (t *Telegram) HasCredentials(sv map[string]string) bool {
 }
 
 func (t *Telegram) OpenClawChannelConfig(agentType string, binding channels.ChannelBinding, sv map[string]string) (map[string]any, error) {
-	// OpenClaw has a Telegram plugin. Configure it in HTTP webhook mode
-	// so it receives events from the Conga router (not direct long polling).
+	// WARNING — this emission is PRE-v2026.5.18 and is rejected by OpenClaw
+	// v2026.5.x's strict-additional-properties channel schema. Specifically:
+	//
+	//   - `mode: "http"` is not a valid telegram key (telegram has long
+	//     polling vs webhook, not a generic http/socket toggle)
+	//   - team agents emit `channels: {<id>: {allow: true}}`, but the
+	//     canonical v2026.5.x shape is `groups: {<id>: {requireMention: ...}}`
+	//   - dropping `allow: true` in favour of `requireMention`/`allowFrom`
+	//
+	// Additionally, the matching router in `router/telegram/src/index.js`
+	// was built for Hermes Agent (it POSTs to /v1/chat/completions on port
+	// 8642), not for OpenClaw — so even after fixing this config shape, the
+	// inbound delivery path wouldn't reach an OpenClaw agent.
+	//
+	// Production fleet does not currently use Telegram + OpenClaw; the bug
+	// is dormant. A full revamp is scoped in:
+	//
+	//   specs/2026-05-22_feature_telegram-v2026.5-revamp/
+	//
+	// — read requirements.md and plan.md there before touching this file.
+	// The spec covers topology choice (router fanout vs per-agent direct),
+	// the channel config shape migration, the router rewrite, and the live
+	// validation plan. Do not "fix the allow→enabled key" here in isolation
+	// without that broader context — the rest of the path won't deliver
+	// events end-to-end.
 	cfg := map[string]any{
 		"mode":    "http",
 		"enabled": true,
