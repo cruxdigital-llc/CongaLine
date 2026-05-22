@@ -590,7 +590,7 @@ model:
 
 ### Additive allowlist behavior
 
-When an overlay is applied, the runtime's default model (`anthropic/claude-opus-4-6` for OpenClaw) **stays in the allowlist**. The overlay just adds the new model and changes the primary. So operators can `/model anthropic/claude-opus-4-6` mid-conversation to swap, then `/model openai/qwen36` to switch back. Both keys (`OPENAI_API_KEY` from per-agent secrets, `ANTHROPIC_API_KEY` from global secrets) are present in the container env.
+When an overlay is applied, the runtime's default model (`anthropic/claude-opus-4-7` for OpenClaw) **stays in the allowlist**. The overlay just adds the new model and changes the primary. So operators can `/model anthropic/claude-opus-4-7` mid-conversation to swap, then `/model openai/qwen36` to switch back. Both keys (`OPENAI_API_KEY` from per-agent secrets, `ANTHROPIC_API_KEY` from global secrets) are present in the container env.
 
 If you want to **lock** an agent to one model, do it at the egress policy layer (remove `api.anthropic.com` from that agent's `allowed_domains`), not via the overlay — the allowlist is a UX surface for `/model` selection, not a security boundary.
 
