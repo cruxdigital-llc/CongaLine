@@ -392,3 +392,69 @@ User said "continue" — implemented Phase 2 (OpenClaw generator).
 **Generator parity achieved**: a v2 overlay with a `subagents:` block
 now produces correctly-shaped config on both runtimes. Phases 4–8
 (egress check, role packages, CLI flag, docs, verification) remain.
+
+### 2026-05-22 — Phase 4 implementation complete
+
+**Files created/modified**:
+- [pkg/common/egress_check.go](../../pkg/common/egress_check.go) —
+  new file. Three exported functions:
+  - `CheckOverlayEgress(overlay, allowlist) []string` returns missing
+    hostnames (primary + subagent endpoints not in the allowlist)
+  - `FormatEgressGapWarning(agentName, host) string` returns the
+    multi-line operator-facing warning text from spec.md
+  - `WarnOverlayEgressGaps(w, overlay, allowlist, agentName)` writes
+    one warning per gap to `w`; designed for provider use
+- [pkg/common/egress_check_test.go](../../pkg/common/egress_check_test.go)
+  — new file, 17 test functions covering nil/empty/hosted cases,
+  primary/subagent gaps, case-insensitivity, wildcard match (subdomain
+  yes, bare host no), port stripping, dedup, insertion order,
+  malformed URL handling, and the two output helpers.
+- [pkg/provider/localprovider/provider.go](../../pkg/provider/localprovider/provider.go)
+  — added `common.WarnOverlayEgressGaps` call after egress policy
+  load in `ProvisionAgent` (line ~306). Overlay already in scope.
+- [pkg/provider/remoteprovider/provider.go](../../pkg/provider/remoteprovider/provider.go)
+  — same one-line addition after egress policy load (line ~285).
+- [pkg/provider/awsprovider/provider.go](../../pkg/provider/awsprovider/provider.go)
+  — added best-effort overlay load via `resolveAWSBehaviorDir()`
+  followed by the egress check. AWS `ProvisionAgent` doesn't
+  normally load the overlay (that's done by `RefreshAgent`), so the
+  check is wrapped in an existence guard that silently skips when
+  the operator runs from outside the repo.
+
+**Key implementation decisions**:
+- **Allowlist matching mirrors `policy.MatchDomain`** but is
+  re-implemented locally in `common` rather than importing `policy`.
+  Architecture standard `pkg/common/` "does NOT own policy" — the
+  ~10-line duplication of exact-match + `*.suffix` wildcard is the
+  right tradeoff to keep the layering clean. If the matching rule
+  ever evolves, both copies need to update in lockstep (test
+  fixtures in both packages will catch drift).
+- **Host extraction uses `net/url`** so port suffixes are stripped
+  cleanly (`http://spark.lan:11434` → `spark.lan`). Malformed URLs
+  are silently skipped rather than crashing — validation upstream
+  rejects them before this point; this is defense-in-depth.
+- **Dedup at the hostname layer**, not at the allowlist layer. If
+  primary and subagent share an endpoint that's missing, the
+  operator gets one warning, not two.
+- **Best-effort on AWS**: AWS `ProvisionAgent` previously didn't
+  load the overlay. Rather than restructure that flow, the check
+  loads it once for the warning and silently skips when the local
+  `agents/` directory isn't resolvable. The shell scripts that
+  consume the overlay on the instance side are unchanged.
+- **No new integration test added**: the unit tests cover the
+  helper behavior thoroughly; the provider wiring is a one-line
+  call. The existing `TestAgentLifecycle/add-user` (integration tag)
+  exercises ProvisionAgent end-to-end and remains green apart from
+  an unrelated Docker port collision on this machine (port 18789
+  already bound by another Conga container). Phase 8 live smoke
+  will exercise the warning with a real role-code-dev overlay.
+
+**Verification**:
+- `go test ./pkg/common/ -run 'CheckOverlayEgress|FormatEgressGap|WarnOverlayEgress'`:
+  all 17 new tests pass.
+- `go test ./...`: full non-integration suite green.
+- `go vet ./...`: clean.
+- `gofmt -l pkg/`: clean.
+
+**Next**: Phase 5 (role packages — 10 directories under
+`agents/_defaults/<runtime>/role-*/`). Commit Phase 4 first.

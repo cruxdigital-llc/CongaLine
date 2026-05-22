@@ -168,6 +168,21 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 	}
 	proxyBootstrapJS := policy.ProxyBootstrapJS()
 
+	// Pre-flight: warn if the overlay's primary or subagent endpoints are
+	// not in the effective egress allowlist. Best-effort — if the local
+	// agents/ overlay directory isn't resolvable (operator invoking from
+	// outside the repo), skip the check. Provisioning itself proceeds via
+	// the shell scripts uploaded to the instance; the overlay is consumed
+	// inside the bootstrap heredoc rather than here.
+	if behaviorDir := resolveAWSBehaviorDir(); behaviorDir != "" {
+		overlay, overlayErr := common.LoadAgentOverlay(behaviorDir, cfg)
+		if overlayErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load agent overlay for egress check: %v\n", overlayErr)
+		} else {
+			common.WarnOverlayEgressGaps(os.Stderr, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+		}
+	}
+
 	var scriptTemplate string
 	var templateData interface{}
 	type provisionData struct {

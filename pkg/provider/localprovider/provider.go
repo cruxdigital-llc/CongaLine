@@ -303,6 +303,11 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "No egress policy configured — proxy will deny all outbound traffic. Use 'conga policy set-egress' to allow domains.\n")
 	}
 
+	// 6b. Pre-flight: warn if the overlay's primary or subagent endpoints
+	// are not in the effective egress allowlist. Non-blocking; the operator
+	// can fix the policy file before first use.
+	common.WarnOverlayEgressGaps(os.Stderr, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+
 	// 7. Create Docker network
 	netName := networkName(cfg.Name)
 	if !networkExists(ctx, netName) {
