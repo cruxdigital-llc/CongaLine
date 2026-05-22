@@ -1,0 +1,10 @@
+# role-data — Qwen-backed data/reporting agent (no subagent).
+#
+# Customize the base_url + model name to match your environment.
+version: 2
+model:
+  provider: openai
+  name: qwen-2.5-72b-instruct
+  base_url: https://litellm.internal/v1
+  # context_window: 131072
+  # max_tokens: 8192

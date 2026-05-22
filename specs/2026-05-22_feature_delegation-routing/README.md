@@ -458,3 +458,58 @@ now produces correctly-shaped config on both runtimes. Phases 4–8
 
 **Next**: Phase 5 (role packages — 10 directories under
 `agents/_defaults/<runtime>/role-*/`). Commit Phase 4 first.
+
+### 2026-05-22 — Phase 5 implementation complete
+
+**Directories created** (10 — 5 roles × 2 runtimes):
+- `agents/_defaults/openclaw/role-{ops,data,research,code-dev,writing}/`
+- `agents/_defaults/hermes/role-{ops,data,research,code-dev,writing}/`
+
+Each role package ships 6 files: `role.meta`, `agent.yaml`, `SOUL.md`,
+`AGENTS.md`, `USER.md.tmpl`, `README.md` — 60 new files total.
+
+**Role-to-type mapping** (from `role.meta`):
+- `role-ops`, `role-data`, `role-research`: `type: user` (DM-driven,
+  single operator)
+- `role-code-dev`, `role-writing`: `type: team` (channel-driven,
+  collaborative)
+
+**Implementation note — primary model for Opus roles**: spec.md
+mentioned `model.provider: anthropic` for the Opus-primary roles
+(code-dev, writing). However, the overlay's `ModelOverlay.Provider`
+enum is `{ollama, openai}` — anthropic isn't expressible as a primary
+in v2. The right approach is to **omit the `model:` block entirely**,
+which lets the runtime default (`anthropic/claude-opus-4-6` from
+`openclaw-defaults.json`) apply. The two Opus role agent.yaml files
+document this for operators. Small spec-vs-implementation correction;
+no separate spec amendment needed — each Opus role's README explains
+the rationale.
+
+**Hermes mirror approach**: authored all 5 roles for OpenClaw first,
+then `cp -r`'d to the Hermes tree, then applied two surgical edits
+per role to match the existing pattern in
+`agents/_defaults/hermes/{user,team}/`:
+- SOUL.md: deployment paragraph now names Hermes Agent + Python +
+  skill-based tooling
+- AGENTS.md: Tools section now references the `skills/` directory
+  rather than the OpenClaw `SKILL.md` / `TOOLS.md` filenames
+
+Everything else is byte-identical between the OpenClaw and Hermes
+versions — same personality, same workflows, same boundaries.
+
+**New tests in `pkg/common/role_defaults_test.go`**:
+- `TestRoleDefaults_AgentYAMLParses` walks the role tree and confirms
+  every shipped `agent.yaml` passes the v2 loader (10 subtests
+  pass). Also asserts the Qwen-vs-Opus split: Qwen roles declare a
+  primary `model:`; Opus roles leave it unset to inherit the
+  runtime default.
+- `TestRoleDefaults_RoleMetaPresent` confirms every role-* directory
+  ships a valid `role.meta` with `type: user` or `type: team`.
+
+**Verification**:
+- `go test ./pkg/common/ -run RoleDefaults`: all 10+1 subtests pass.
+- `go test ./...`: full non-integration suite green.
+- `go vet ./...`: clean.
+- `gofmt -l pkg/`: clean.
+
+**Next**: Phase 6 (CLI `--role` flag + JSON + MCP parity).

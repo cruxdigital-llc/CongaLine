@@ -222,32 +222,59 @@ itself unaffected. ✅
 **Goal**: Ten directories under `agents/_defaults/<runtime>/role-*/`,
 each with SOUL.md, AGENTS.md, USER.md.tmpl, agent.yaml, role.meta.
 
-- [ ] **5.1** Create `agents/_defaults/openclaw/role-ops/`:
+- [x] **5.1** Created `agents/_defaults/openclaw/role-ops/`:
   - `role.meta` (`type: user`)
-  - `SOUL.md` — Qwen-personality ops focus
-  - `AGENTS.md` — monitoring/infra-checks emphasis
-  - `USER.md.tmpl` — standard template
-  - `agent.yaml` — v2, `model.provider: openai`, model name placeholder,
-    base_url placeholder, NO subagents block
-- [ ] **5.2** Create `agents/_defaults/openclaw/role-data/` (Qwen, no
-  subagent)
-- [ ] **5.3** Create `agents/_defaults/openclaw/role-research/` (Qwen,
-  no subagent)
-- [ ] **5.4** Create `agents/_defaults/openclaw/role-code-dev/`:
-  - `agent.yaml` v2, `model.provider: anthropic`, model claude-opus-4-7,
-    `subagents.model.provider: openai`, qwen-2.5-72b-instruct,
-    `subagents.delegation_mode: prefer`, `subagents.max_concurrent: 4`
-- [ ] **5.5** Create `agents/_defaults/openclaw/role-writing/` (Opus +
-  Qwen subagent)
-- [ ] **5.6** Mirror 5.1–5.5 under `agents/_defaults/hermes/`
-- [ ] **5.7** Each role gets a tiny `README.md` (one paragraph: purpose,
-  default model, suggested channels)
-- [ ] **5.8** Verify each `agent.yaml` parses through the v2 loader
-  (`go run ./cmd/conga agent show` against a synthetic test, or a unit
-  test that walks the defaults tree and parses each one)
+  - `SOUL.md` — calm, data-driven ops persona; sub-agent-aware framing
+  - `AGENTS.md` — triaging alerts, status report workflow, red lines
+  - `USER.md.tmpl` — single-user ops specialist on Qwen
+  - `agent.yaml` — v2, `model.provider: openai`, base_url placeholder
+    `https://litellm.internal/v1`, NO subagents block
+  - `README.md` — post-provision customization steps + egress note
+- [x] **5.2** Created `agents/_defaults/openclaw/role-data/` (Qwen, no
+  subagent). Personality: methodical, format-aware, "lab notebook not
+  blog post." Workflow: dataset shape check, reproducible reports.
+- [x] **5.3** Created `agents/_defaults/openclaw/role-research/` (Qwen,
+  no subagent). Personality: curious + citation-disciplined.
+  Workflow: cite or skip, primary vs secondary source distinction.
+- [x] **5.4** Created `agents/_defaults/openclaw/role-code-dev/`:
+  - `role.meta` (`type: team`)
+  - `agent.yaml` v2, NO `model:` block (uses runtime default Opus),
+    `subagents.model.provider: openai`, name `qwen-2.5-72b-instruct`,
+    `delegation_mode: prefer`, `max_concurrent: 4`
+  - **Implementation note**: spec.md mentioned `model.provider:
+    anthropic` for Opus primary, but the overlay enum is `{ollama,
+    openai}` only — anthropic primaries are expressed by omitting
+    the `model:` block (runtime default applies). README.md
+    documents this for operators.
+  - SOUL.md heavy on subagent delegation guidance ("Reasoning is your
+    job; lookups are not")
+  - AGENTS.md: code review / debugging workflows showing exactly
+    when to spawn a subagent and what to pass it
+- [x] **5.5** Created `agents/_defaults/openclaw/role-writing/` (Opus +
+  Qwen subagent, type: team). Personality: voice-aware editor,
+  delegates mechanical text work to Qwen.
+- [x] **5.6** Mirrored all 5 roles under `agents/_defaults/hermes/`
+  via `cp -r`, then applied the runtime-specific tweaks (Hermes-
+  flavored deployment paragraph in SOUL.md + Hermes-flavored Tools
+  section in AGENTS.md — both matching the existing pattern in
+  `agents/_defaults/hermes/{user,team}/`).
+- [x] **5.7** Each role has a `README.md` documenting:
+  - purpose / when to use it
+  - post-provision customization (especially `base_url`)
+  - egress requirements (which hosts to allow)
+  - channel suggestions where applicable
+- [x] **5.8** Added `pkg/common/role_defaults_test.go` —
+  `TestRoleDefaults_AgentYAMLParses` walks
+  `agents/_defaults/<runtime>/role-*/` and confirms every shipped
+  `agent.yaml` passes the v2 loader (parse + Validate). Also asserts
+  the Qwen-vs-Opus role split: Qwen roles declare `model:`, Opus
+  roles leave it unset (inherit runtime default). 10 subtests pass
+  (5 roles × 2 runtimes). `TestRoleDefaults_RoleMetaPresent` checks
+  every role-* directory has a valid `role.meta`.
 
 **Phase 5 acceptance**: directory tree complete; each agent.yaml
-parses; loader doesn't warn or error.
+parses cleanly through the v2 loader; loader emits no warnings or
+errors. ✅
 
 ---
 
