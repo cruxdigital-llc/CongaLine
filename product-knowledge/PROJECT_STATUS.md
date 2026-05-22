@@ -211,6 +211,33 @@ Minimal precursor to the planned Bifrost / Model Routing work (#22). Per-agent m
 - [ ] Phase 6 — AWS bootstrap shell: ✂️ SCOPED OUT (overlay consumed at config-gen time on the operator's machine; the `regenerateAgentConfigOnInstance` upload path carries the result).
 - [ ] Phase 8 — Provider release (per CLAUDE.md `pkg/` change protocol): operator step, post-merge.
 
+### 28. OpenClaw Upgrade Latest — Spec'd, Ready for Implementation
+*Lead: Architect + QA*
+*See `specs/2026-05-21_feature_openclaw-upgrade-latest/` for full trace*
+
+Bump the OpenClaw image pin `v2026.3.11` → `v2026.5.18`. Upstream Slack
+socket-mode regression (`openclaw/openclaw#45311`) that gated the pin
+is CLOSED — fix shipped in `v2026.3.22` via PR #45953. Scope-locked to
+the pin change; bisectable single commit.
+- [x] Requirements defined
+- [x] Plan defined
+- [x] Spec defined — 5 phases (changelog audit → 14-file edit → parity
+  audit → 5-scenario verification → opt-in rollout)
+- [x] Persona review passed (Architect + QA approve; QA folded three
+  asks: extend S5 to remote, define soak window, require AWS rollback
+  rehearsal)
+- [x] Pre-implementation standards gate PASSES — caught 9 additional
+  hardcoded version-string locations missed by the initial enumeration
+  (README/TECH_STACK/security.md/manifest test/integration test
+  const/CI cache key); all folded into spec Phase 1
+- [ ] Phase 0: upstream changelog audit (`v2026.3.12` … `v2026.5.18`),
+  produces `changelog-review.md`; blocks on any schema-breaking entry
+- [ ] Phase 1: single-commit edit across 14 files (~20 line changes)
+- [ ] Phase 3: 5-scenario verification per provider (local → remote →
+  AWS, with AWS rollback rehearsal first)
+- [ ] Phase 4: opt-in per-environment rollout
+- [ ] Phase 5: docs/memory hygiene + 7-day soak window before fast-follow
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
