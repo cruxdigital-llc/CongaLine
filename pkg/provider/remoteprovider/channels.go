@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	posixpath "path"
-	"path/filepath"
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
@@ -333,15 +332,9 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 		return err
 	}
 
-	var overlay *runtime.AgentOverlay
-	if repoPath := p.getConfigValue("repo_path"); repoPath != "" {
-		behaviorDir := filepath.Join(repoPath, "agents")
-		if _, statErr := os.Stat(behaviorDir); statErr == nil {
-			overlay, err = common.LoadAgentOverlay(behaviorDir, cfg)
-			if err != nil {
-				return fmt.Errorf("failed to load agent overlay: %w", err)
-			}
-		}
+	overlay, err := p.loadOverlay(cfg)
+	if err != nil {
+		return err
 	}
 
 	dataDir := p.remoteDataSubDir(cfg.Name)
@@ -379,6 +372,10 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 	if _, err := p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir))); err != nil {
 		return fmt.Errorf("failed to set ownership on %s: %w", dataDir, err)
 	}
+
+	// Refresh the integrity baseline so the next periodic check doesn't see
+	// a CONFIG_INTEGRITY_VIOLATION caused by our own regeneration.
+	p.saveConfigBaseline(cfg.Name)
 	return nil
 }
 

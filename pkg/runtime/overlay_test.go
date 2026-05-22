@@ -198,6 +198,10 @@ func TestModelOverlay_Validate_CapabilityCaps(t *testing.T) {
 		{"negative context_window", -1, 0, "context_window must be positive"},
 		{"negative max_tokens", 0, -1, "max_tokens must be positive"},
 		{"max_tokens exceeds context_window", 1024, 2048, "max_tokens (2048) cannot exceed context_window (1024)"},
+		{"context_window above sane cap", 100_000_000, 0, "exceeds sane cap"},
+		{"max_tokens above sane cap", 0, 100_000_000, "exceeds sane cap"},
+		{"context_window at sane cap accepted", 10_000_000, 0, ""},
+		{"max_tokens at sane cap accepted", 0, 10_000_000, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,8 @@
 package openclaw
 
 import (
+	"strings"
+
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
@@ -38,10 +40,14 @@ func (r *Runtime) SupportsNodeProxy() bool { return true }
 // shipped as an external plugin (@openclaw/slack) rather than bundled in
 // the image, so any agent with a slack channel binding needs it installed
 // into the data dir before the gateway starts.
+//
+// Platform matching is case- and whitespace-insensitive so a hand-edited
+// agent JSON with "Slack" or " slack " still triggers the install. The
+// canonical platform name registered in pkg/channels/slack is "slack".
 func (r *Runtime) PluginsToInstall(agent provider.AgentConfig) []string {
 	var plugins []string
 	for _, ch := range agent.Channels {
-		if ch.Platform == "slack" {
+		if strings.ToLower(strings.TrimSpace(ch.Platform)) == "slack" {
 			plugins = append(plugins, "@openclaw/slack")
 			break
 		}

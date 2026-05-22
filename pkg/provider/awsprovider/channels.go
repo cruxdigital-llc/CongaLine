@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -518,6 +519,18 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 	// Fix ownership for container user (SFTP uploads create root-owned files)
 	if _, err := p.runOnInstance(ctx, instanceID, fmt.Sprintf("chown -R 1000:1000 '%s'", dataDir), 30*time.Second); err != nil {
 		return fmt.Errorf("failed to fix ownership on %s: %w", dataDir, err)
+	}
+
+	// Refresh the integrity baseline so check-config-integrity.sh doesn't
+	// flag our own regeneration as tampering. Bootstrap writes the .sha256
+	// from the bash-emitted config; Go regen writes differently-formatted
+	// JSON, so without this rewrite every refresh produces a baseline
+	// mismatch.
+	hash := sha256.Sum256(openClawJSON)
+	baseline := hex.EncodeToString(hash[:]) + "\n"
+	baselinePath := fmt.Sprintf("/opt/conga/config/%s-config.json.sha256", cfg.Name)
+	if err := p.uploadFile(ctx, instanceID, baselinePath, []byte(baseline), "0444"); err != nil {
+		return fmt.Errorf("failed to upload integrity baseline: %w", err)
 	}
 
 	return nil

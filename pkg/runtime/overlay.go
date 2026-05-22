@@ -12,6 +12,13 @@ import (
 // config authored for a newer binary cannot be silently mis-parsed.
 const CurrentOverlaySchemaVersion = 1
 
+// maxSaneTokenCount bounds context_window and max_tokens in the overlay
+// schema. The point is to catch typos (an extra zero on what was meant to
+// be 131072 → 1310720, etc.) at load time rather than at runtime. Real
+// models top out well below this today; if a future model exceeds 10M
+// tokens, lift this and add a test.
+const maxSaneTokenCount = 10_000_000
+
 // Supported overlay providers.
 const (
 	ProviderOllama = "ollama"
@@ -155,6 +162,12 @@ func (m *ModelOverlay) validate() error {
 	}
 	if m.MaxTokens < 0 {
 		return fmt.Errorf("max_tokens must be positive when set, got %d", m.MaxTokens)
+	}
+	if m.ContextWindow > maxSaneTokenCount {
+		return fmt.Errorf("context_window %d exceeds sane cap (%d) — did you add an extra zero?", m.ContextWindow, maxSaneTokenCount)
+	}
+	if m.MaxTokens > maxSaneTokenCount {
+		return fmt.Errorf("max_tokens %d exceeds sane cap (%d) — did you add an extra zero?", m.MaxTokens, maxSaneTokenCount)
 	}
 	if m.ContextWindow > 0 && m.MaxTokens > 0 && m.MaxTokens > m.ContextWindow {
 		return fmt.Errorf("max_tokens (%d) cannot exceed context_window (%d)", m.MaxTokens, m.ContextWindow)
