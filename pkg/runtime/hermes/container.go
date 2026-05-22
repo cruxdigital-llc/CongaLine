@@ -37,3 +37,11 @@ func (r *Runtime) WorkspacePath() string {
 }
 
 func (r *Runtime) SupportsNodeProxy() bool { return false }
+
+// PluginsToInstall — Hermes ships its channel adapters bundled in the image,
+// so no external runtime plugins are needed at provision time.
+func (r *Runtime) PluginsToInstall(provider.AgentConfig) []string { return nil }
+
+// PluginInstallCommand — Hermes has no plugin install command; the runtime
+// loader picks up adapters from the image at startup.
+func (r *Runtime) PluginInstallCommand(string) []string { return nil }

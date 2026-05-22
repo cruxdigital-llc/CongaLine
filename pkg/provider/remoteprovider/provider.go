@@ -15,6 +15,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 )
 
@@ -304,6 +305,23 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	bootstrapPath, err := p.uploadProxyBootstrap(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to upload proxy bootstrap: %w", err)
+	}
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container starts. OpenClaw v2026.5.x+ extracted Slack into an external
+	// @openclaw/slack plugin that the gateway expects in /home/node/.openclaw/npm.
+	// Best-effort: a failure leaves the channel WARNing at startup but does not
+	// block the rest of the agent from coming up.
+	if rt, rtErr := runtime.Get(runtime.RuntimeOpenClaw); rtErr == nil {
+		for _, spec := range rt.PluginsToInstall(cfg) {
+			installCmd := rt.PluginInstallCommand(spec)
+			if installCmd == nil {
+				continue
+			}
+			if err := p.runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), "1000:1000", installCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, cfg.Name, err)
+			}
+		}
 	}
 
 	provEgressProxyName := policy.EgressProxyName(cfg.Name)
@@ -686,6 +704,20 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	// Ensure all files are owned by the container user before starting.
 	if _, err := p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir))); err != nil {
 		return fmt.Errorf("failed to chown data directory: %w", err)
+	}
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container restarts (see ProvisionAgent for the rationale).
+	if rt, rtErr := runtime.Get(runtime.RuntimeOpenClaw); rtErr == nil {
+		for _, spec := range rt.PluginsToInstall(*cfg) {
+			installCmd := rt.PluginInstallCommand(spec)
+			if installCmd == nil {
+				continue
+			}
+			if err := p.runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), "1000:1000", installCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, agentName, err)
+			}
+		}
 	}
 
 	refreshProxyName := policy.EgressProxyName(agentName)

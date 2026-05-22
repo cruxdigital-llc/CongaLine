@@ -316,11 +316,24 @@ func (p *LocalProvider) regenerateAgentConfig(ctx context.Context, cfg provider.
 	}
 
 	rtName := runtime.ResolveRuntime(cfg.Runtime, p.getConfigValue("runtime"))
-	configBytes, envContent, err := common.RuntimeGenerateAgentFiles(rtName, cfg, shared, perAgent)
+
+	// Preserve the gateway token if it already exists on disk; otherwise
+	// generate a fresh one. OpenClaw v2026.3.22+ refuses to bind a
+	// non-loopback gateway without auth, so writing a token-less config
+	// would break the next container restart.
+	dataDir := p.dataSubDir(cfg.Name)
+	gatewayToken := readExistingGatewayToken(filepath.Join(dataDir, rt.ConfigFileName()))
+	if gatewayToken == "" {
+		gatewayToken, err = generateToken()
+		if err != nil {
+			return fmt.Errorf("failed to generate gateway token: %w", err)
+		}
+	}
+
+	configBytes, envContent, err := common.RuntimeGenerateAgentFiles(rtName, cfg, shared, perAgent, gatewayToken)
 	if err != nil {
 		return err
 	}
-	dataDir := p.dataSubDir(cfg.Name)
 	if err := os.WriteFile(filepath.Join(dataDir, rt.ConfigFileName()), configBytes, 0644); err != nil {
 		return err
 	}

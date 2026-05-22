@@ -344,14 +344,27 @@ func (p *RemoteProvider) regenerateAgentConfig(ctx context.Context, cfg provider
 		}
 	}
 
+	dataDir := p.remoteDataSubDir(cfg.Name)
+
+	// Preserve the gateway token if it already exists on the remote host;
+	// otherwise generate a fresh one. OpenClaw v2026.3.22+ refuses to bind a
+	// non-loopback gateway without auth, so writing a token-less config would
+	// break the next container restart.
+	gatewayToken := p.readExistingGatewayToken(posixpath.Join(dataDir, "openclaw.json"))
+	if gatewayToken == "" {
+		gatewayToken, err = generateToken()
+		if err != nil {
+			return fmt.Errorf("failed to generate gateway token: %w", err)
+		}
+	}
+
 	openClawJSON, envContent, err := common.RuntimeGenerateAgentFilesWithOverlay(
-		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, overlay,
+		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, gatewayToken, overlay,
 	)
 	if err != nil {
 		return err
 	}
 
-	dataDir := p.remoteDataSubDir(cfg.Name)
 	if err := p.ssh.Upload(posixpath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
 		return err
 	}

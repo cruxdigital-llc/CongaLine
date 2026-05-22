@@ -348,6 +348,21 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	// Ensure no stale container exists before starting.
 	removeContainer(ctx, cName) //nolint:errcheck
 
+	// Seed external runtime plugins into the data dir before the persistent
+	// container starts. OpenClaw v2026.5.x+ extracted Slack into an external
+	// @openclaw/slack plugin that the gateway expects in /home/node/.openclaw/npm.
+	// Best-effort: a failure leaves the channel WARNing at startup but does not
+	// block the rest of the agent from coming up.
+	for _, spec := range rt.PluginsToInstall(cfg) {
+		installCmd := rt.PluginInstallCommand(spec)
+		if installCmd == nil {
+			continue
+		}
+		if err := runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), rt.ContainerSpec(cfg).User, installCmd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, cfg.Name, err)
+		}
+	}
+
 	egressProxyName := policy.EgressProxyName(cfg.Name)
 	fmt.Printf("Starting container %s...\n", cName)
 	if err := runAgentContainer(ctx, agentContainerOpts{
@@ -852,6 +867,18 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 
 	// Ensure no stale container exists before starting.
 	removeContainer(ctx, cName) //nolint:errcheck
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container restarts (see ProvisionAgent for the rationale).
+	for _, spec := range rt.PluginsToInstall(*cfg) {
+		installCmd := rt.PluginInstallCommand(spec)
+		if installCmd == nil {
+			continue
+		}
+		if err := runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), rt.ContainerSpec(*cfg).User, installCmd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, agentName, err)
+		}
+	}
 
 	refreshEgressProxyName := policy.EgressProxyName(agentName)
 	if err := runAgentContainer(ctx, agentContainerOpts{

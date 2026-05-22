@@ -3,7 +3,9 @@ package awsprovider
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -479,15 +481,30 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return err
 	}
 
+	// Preserve the gateway token if it already exists on the instance;
+	// otherwise generate a fresh one. OpenClaw v2026.3.22+ refuses to bind a
+	// non-loopback gateway without auth, so writing a token-less config would
+	// break the next container restart for any existing agent.
+	dataDir := fmt.Sprintf("/opt/conga/data/%s", cfg.Name)
+	gatewayToken, err := p.readExistingGatewayTokenOnInstance(ctx, instanceID, dataDir+"/openclaw.json")
+	if err != nil {
+		return fmt.Errorf("failed to read existing gateway token: %w", err)
+	}
+	if gatewayToken == "" {
+		gatewayToken, err = generateAWSToken()
+		if err != nil {
+			return fmt.Errorf("failed to generate gateway token: %w", err)
+		}
+	}
+
 	openClawJSON, envContent, err := common.RuntimeGenerateAgentFilesWithOverlay(
-		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, overlay,
+		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, gatewayToken, overlay,
 	)
 	if err != nil {
 		return err
 	}
 
 	// Upload openclaw.json
-	dataDir := fmt.Sprintf("/opt/conga/data/%s", cfg.Name)
 	if err := p.uploadFile(ctx, instanceID, dataDir+"/openclaw.json", openClawJSON, "0644"); err != nil {
 		return fmt.Errorf("failed to upload openclaw.json: %w", err)
 	}
@@ -612,6 +629,38 @@ mv "$tmp" "$target"`, path, encoded, mode)
 // runOnInstance runs a command on the EC2 instance via SSM.
 func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script string, timeout time.Duration) (*awsutil.RunCommandResult, error) {
 	return awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, timeout)
+}
+
+// readExistingGatewayTokenOnInstance reads the gateway auth token out of an
+// agent's openclaw.json on the EC2 instance via SSM. Returns "" when the
+// file is missing or the token is unset (the agent is fresh and a new token
+// must be minted).
+func (p *AWSProvider) readExistingGatewayTokenOnInstance(ctx context.Context, instanceID, configPath string) (string, error) {
+	// Quote the path for shell safety. jq -e returns 1 when the field is null
+	// or missing; we swallow that into "" so callers don't see it as an error.
+	script := fmt.Sprintf(`if [ -r %s ]; then jq -er '.gateway.auth.token // ""' %s 2>/dev/null || true; fi`,
+		shellSingleQuote(configPath), shellSingleQuote(configPath))
+	result, err := p.runOnInstance(ctx, instanceID, script, 30*time.Second)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+// generateAWSToken returns a cryptographically-random 32-byte token rendered
+// as 64 lowercase hex characters. Matches the local/remote provider format.
+func generateAWSToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// shellSingleQuote wraps s in single quotes for safe inclusion in a shell
+// command. Escapes embedded single quotes via the standard '\” idiom.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // resolveAWSBehaviorDir locates the live agent-overlays directory for the

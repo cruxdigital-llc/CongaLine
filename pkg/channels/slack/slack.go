@@ -58,8 +58,14 @@ func (s *Slack) OpenClawChannelConfig(agentType string, binding channels.Channel
 		"signingSecret":     sv["slack-signing-secret"],
 		"webhookPath":       "/slack/events",
 		"userTokenReadOnly": true,
-		"streaming":         "partial",
-		"nativeStreaming":   true,
+		// OpenClaw v2026.5.x dropped the legacy string form of streaming;
+		// canonical shape is an object with mode + nativeTransport. The
+		// boolean form still works as a runtime alias but the bare string
+		// "partial" is rejected at startup. Emit canonical form directly.
+		"streaming": map[string]any{
+			"mode":            "partial",
+			"nativeTransport": true,
+		},
 	}
 
 	switch agentType {
