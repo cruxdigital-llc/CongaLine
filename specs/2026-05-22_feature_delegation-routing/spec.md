@@ -289,17 +289,28 @@ Behavior:
 3. **Continue with normal provisioning**: the rest of `add-user` is
    unchanged.
 
-**The `--role` flag is mutually exclusive with `--type`** at the CLI
-level. A role implies an agent type — `role-ops`/`role-data`/`role-research`
-default to `--type user` (DM-driven), `role-code-dev`/`role-writing`
-default to `--type team` (channel-driven). If the operator passes both
-`--role` and `--type`, error: *"--role implies --type; pass one or the
-other."*
+**The `--role` flag's type semantics, post-implementation reconciliation**:
+the CLI has no `--type` flag — it has **separate sub-commands**
+`add-user` and `add-team`. The mutex described above was adapted in
+implementation to be **between `--role` and the implicit command-level
+type**:
 
-**Inferring type from role**: encoded in `agents/_defaults/<runtime>/role-<slug>/role.meta`
-(a tiny single-line file with one key: `type: user|team`). Generator
-reads this file at `--role` resolution time. No `AgentConfig.Role` field
-needed — type stays the user-visible concept.
+- `role.meta` in each role package declares `type: user` or `type: team`.
+- `conga admin add-user --role <slug>` requires the role's `role.meta`
+  to declare `type: user`. Otherwise the CLI errors with a message
+  pointing at the correct sub-command: *"role <slug> declares type
+  'team' in role.meta, but you ran `conga admin add-user`. Use
+  `conga admin add-team --role <slug>` instead."*
+- Same applies symmetrically for `add-team` + role-meta `type: user`.
+
+Role-to-type defaults remain:
+`role-ops`/`role-data`/`role-research` → `type: user` (DM-driven);
+`role-code-dev`/`role-writing` → `type: team` (channel-driven).
+
+**`role.meta` schema**: a tiny single-line file with one key:
+`type: user|team`. Loader reads it at `--role` resolution time. No
+`AgentConfig.Role` field needed — `type` stays the user-visible
+concept.
 
 ### Interface parity
 
@@ -371,15 +382,22 @@ subagents, same rule applies if `subagents.model.provider` is anthropic
 
 ### `subagents.model.provider == anthropic`?
 
-**Validation rejects** anthropic as a subagent provider in v2. Reason:
-the entire point of the subagent block is to point at a *cheaper* model.
-If the operator wants Anthropic-on-Anthropic, that's already
-expressible by `/model`-switching mid-conversation between two
-Anthropic models — no subagent block needed. The validation message:
-*"subagents.model.provider must be 'ollama' or 'openai'; for
-Anthropic-only fleets, use the runtime's native /model switching"*.
+**Validation rejects** anthropic as a subagent provider in v2.
+**Implementation reconciliation**: this rejection is enforced by the
+**existing `ModelOverlay.Provider` enum** (`{ollama, openai}`), which
+already errors with `"unknown model provider %q: supported: ollama,
+openai"` when given anthropic. No custom error message needed in
+v2 — the existing enum is sufficient.
 
-This is a deliberate scope-narrowing for v2. A future v3 may relax it.
+Rationale for the rejection: the entire point of the subagent block
+is to point at a *cheaper* model. If the operator wants
+Anthropic-on-Anthropic, that's already expressible by
+`/model`-switching mid-conversation between two Anthropic models —
+no subagent block needed.
+
+This is a deliberate scope-narrowing for v2. A future v3 may relax
+it (and would need an explicit anthropic enum addition + a new
+secret-name mapping).
 
 ### Egress check helper
 

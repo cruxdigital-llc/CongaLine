@@ -59,7 +59,11 @@ The organizing principle: local → remote → enterprise is a promotion pipelin
 
 **Goal:** Model routing via Bifrost proxy, promotion command, cost tracking.
 
-**Precursor (landed):** Per-agent model override via `agents/<name>/agent.yaml`. Supports `ollama` (native) and `openai` (compatible) providers today. Fallback chains, cost limits, and cross-provider routing live in this phase. See `specs/2026-05-19_feature_local-model-routing/`.
+**Precursors (landed):**
+- Per-agent model override via `agents/<name>/agent.yaml` (schema v1). Supports `ollama` (native) and `openai` (compatible) providers. See `specs/2026-05-19_feature_local-model-routing/`.
+- **In-runtime delegation routing (schema v2)**: top-level `subagents:` block declares a cheaper secondary model; OpenClaw / Hermes runtimes spawn subagents via `sessions_spawn` / `delegate_task` at the runtime's discretion (nudged by `delegation_mode: prefer|suggest`). Five canonical role packages (Ops/Data/Research Qwen-backed; Code-Dev/Writing Opus-backed with Qwen subagent) provisioned via `conga admin add-user|add-team --role <slug>`. See `specs/2026-05-22_feature_delegation-routing/`.
+
+Fallback chains, cost limits, and cross-provider request-time routing (Bifrost) live in this phase and build on those precursors.
 
 | Area | Deliverable | Status |
 |---|---|---|

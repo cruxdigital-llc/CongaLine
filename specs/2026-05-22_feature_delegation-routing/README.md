@@ -1,6 +1,6 @@
 # Delegation Routing — Trace Log
 
-**Status**: Planning
+**Status**: ✅ Verified Complete (live-tested on AWS; chat smoke pending)
 **Started**: 2026-05-22
 **Branch**: `worktree-explore-agent-routing` (worktree off `main`)
 **Lead**: TBD (pending persona selection)
@@ -631,3 +631,145 @@ section).
 
 **Next**: Phase 8 (verification — live smoke + verify-feature +
 PROJECT_STATUS roll-forward).
+
+### 2026-05-22 — Phase 8 live smoke + Opus 4-6→4-7 bump
+
+**Static verification (8.1-8.3)**: full suite green, vet clean, gofmt
+clean (21 packages).
+
+**Fleet migration**: all 5 production overlay files migrated from
+v1 (Qwen primary) to v2 (no `model:` block, `subagents:` block with
+Qwen via Spark LiteLLM, `delegation_mode: prefer`, `max_concurrent: 4`).
+Backups at `/tmp/conga-agents-backup-20260522-152510/`.
+
+**Binary deployment**: built worktree code into both `~/go/bin/conga`
+and the MCP-server-targeted `/Users/aaronstone/Development/crux/congaline/bin/conga`.
+
+**AWS deploy of `aaron` — three iterations**:
+
+1. **First refresh: failed** with `field subagents not found in type
+   runtime.AgentOverlay` — MCP server still on the OLD binary. Aaron
+   `/mcp` reconnected to pick up the new build.
+2. **Second refresh: succeeded but deployed empty config**. Root cause:
+   the MCP server's CWD is this worktree, and `resolveAWSBehaviorDir()`
+   prefers `./agents` (the worktree's `agents/`, which has only
+   `_defaults/` and `_example/`, no per-agent overlays) over walking
+   up to the parent checkout. The loader treated aaron's overlay as
+   missing and emitted defaults-only config.
+3. **Workaround**: `ln -s /Users/aaronstone/Development/crux/congaline/agents/aaron
+   agents/aaron` inside the worktree. Third refresh deployed the
+   correct openclaw.json: `agents.defaults.subagents` block populated,
+   models allowlist contains both `anthropic/claude-opus-4-*` +
+   `openai/qwen36`, `models.providers.openai` correctly configured.
+
+**Architecture debt logged** (task #24): the worktree-vs-parent CWD
+behavior in `resolveAWSBehaviorDir()` and `common.ResolveOperatorBehaviorDir()`
+silently picks up the wrong `agents/` dir when running from a worktree.
+Worth a follow-up to detect git worktrees or honor a `CONGA_AGENTS_DIR`
+env var.
+
+**Opus 4-6 → 4-7 bump** (Aaron asked mid-session): commit `3505f20`.
+Updated 3 categories of files (code defaults, tests, first-boot JSON
+templates) + operator docs. Refresh aaron; logs confirm `agent model:
+anthropic/claude-opus-4-7 (thinking=medium, fast=off)`. The bump
+required 8 file edits, a build cache invalidation, and a MCP restart —
+exactly the friction follow-up #24 (move runtime defaults out of
+`//go:embed`) would eliminate.
+
+**Pending live-smoke step**: Aaron's chat interaction with aaron via
+Slack to exercise the subagent-spawn flow. Tracked for after verify.
+
+### 2026-05-22 — Session Resume (Verify Phase)
+
+User invoked `/glados:verify-feature`. Worktree at HEAD `3505f20`
+(10 commits since main `b0be0f0`). Pre-step done: committed the
+opus bump so verify operates on a clean diff.
+
+### 2026-05-22 — Verify §2 automated: PASS
+
+`go test ./...` (21 packages incl. 51s pkg/aws): all green.
+`go vet ./...`: clean. `gofmt -l pkg/ internal/ scripts/ cmd/`:
+clean. Diff vs main: 96 files changed, +7200 / -54.
+
+### 2026-05-22 — Verify §3 persona: APPROVE (with 3 follow-ups)
+
+- **Architect**: APPROVE. New concerns: worktree-CWD silent-wrong
+  (task #24) + embedded-defaults bump friction (task #24, same).
+- **PM**: APPROVE conditional on live chat smoke (tracked in #22).
+- **QA**: APPROVE. AWS regen path not directly tested at the
+  integration layer — gap noted (covered by helper unit tests
+  + would be caught by live smoke).
+
+### 2026-05-22 — Verify §4 post-impl standards gate: PASS
+
+0 ❌ VIOLATIONS, 2 ⚠️ NOTES (informational only, both tracked in
+task #24): worktree-CWD behavior + embedded-defaults bump friction.
+Full table in the session transcript.
+
+### 2026-05-22 — Verify §5 spec retrospection
+
+Two divergences reconciled in `spec.md`:
+
+1. **`--role` mutex semantics**: spec.md described mutex with a
+   `--type` flag; CLI has no `--type` (separate `add-user`/`add-team`
+   commands). Reconciled by documenting that the mutex is against
+   the command-level type, with role.meta's declared type required
+   to match. spec.md § "CLI changes" updated.
+2. **Anthropic-as-subagent rejection**: spec.md described a custom
+   error message; implementation relies on the existing
+   `ModelOverlay.Provider` enum's generic `"unknown model provider"`
+   error (already friendly). spec.md § "Egress integration /
+   subagents.model.provider == anthropic?" updated to acknowledge
+   the existing enum is sufficient.
+
+**Standards-docs audit**: `config-taxonomy.md` already current
+(Phase 7 updates include v2 schema + role packages). `architecture.md`
+uses "delegate" only in the general programming sense (no Tier-1
+collision). `security.md` and `egress-controls.md` unchanged — no
+stale references.
+
+No further spec edits needed.
+
+### 2026-05-22 — Verify §6 test synchronization: PASS
+
+- **Stale-reference scan**: 0 stale "delegate" Tier-1 references in
+  new test files; only `delegation_mode` / `DelegationMode` /
+  `delegate_task` (legitimate config field accesses and Hermes
+  upstream tool name).
+- **Fake/double alignment**: N/A. All new tests use real `t.TempDir()`
+  + real file I/O + the real loader/generator. No mocks.
+- **New public method coverage**: every new exported symbol
+  (`SubagentsOverlay`, `CurrentOverlaySchemaVersion = 2`,
+  `DelegationModeSuggest/Prefer`, `CheckOverlayEgress`,
+  `FormatEgressGapWarning`, `WarnOverlayEgressGaps`,
+  `ApplyRolePackage`, `ResolveOperatorBehaviorDir`) has at least
+  one corresponding test. Most have several.
+- **Sibling comparison**: subagents generator tests (7) vs existing
+  model-overlay generator tests (5) — coverage parity, no obvious
+  gaps. v2 loader tests parallel the v1 loader tests for the
+  v2-specific surface.
+- **Full suite**: re-run, all 21 packages green (incl. 51s pkg/aws).
+- **Linting**: vet clean, gofmt clean.
+
+### 2026-05-22 — Verify §7 completion: trace closed
+
+- **PROJECT_STATUS.md**: feature entry #29 moved to ✅ Verified
+  Complete with completion checklist; added entry to "Recent
+  Changes" section dated 2026-05-22 documenting the full feature
+  including the mid-session 4-6 → 4-7 bump and the two follow-ups
+  logged.
+- **ROADMAP.md**: extended the "Precursor (landed)" note under
+  "Phase 2: Multi-Provider Routing + Promotion" to mention this
+  feature alongside Feature #27 (Local Model Routing). The two
+  features together set the stage for Bifrost/fallback-chain work.
+- **Outstanding** (not blocking verify-feature):
+  - Task #22 (Phase 8 live verification): aaron's container is
+    deployed and serving but the **chat smoke** (Aaron DMs aaron,
+    Opus invokes `sessions_spawn`, Qwen runs, result lands back)
+    hasn't been observed yet. Tracked.
+  - Task #24 (follow-up): extract runtime defaults from
+    `//go:embed` + fix worktree-vs-parent CWD silent-wrong.
+    Tracked, separate feature.
+
+**Status: Verified Complete.** Spec retrospection covered; standards
+gate PASS; persona verification APPROVE; test synchronization PASS.
