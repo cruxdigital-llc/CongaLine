@@ -185,6 +185,79 @@ func TestGenerateConfig_OpenAIOverlay(t *testing.T) {
 	}
 }
 
+func TestGenerateConfig_OverlayCapabilityCaps(t *testing.T) {
+	// Overlay sets context_window + max_tokens — both must flow into
+	// models.providers.<id>.models[0] as the OpenClaw-shaped keys.
+	// Without these, OpenClaw's default for max_completion_tokens can
+	// exceed what a self-hosted endpoint (LiteLLM/vLLM) enforces.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 1,
+		Model: &runtime.ModelOverlay{
+			Provider:      runtime.ProviderOpenAI,
+			Name:          "qwen36",
+			BaseURL:       "http://192.168.181.97:4000/v1",
+			ContextWindow: 131072,
+			MaxTokens:     8192,
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
+	// JSON decode promotes numbers to float64 in map[string]any.
+	wantModels := []any{
+		map[string]any{
+			"id":            "qwen36",
+			"name":          "qwen36",
+			"contextWindow": float64(131072),
+			"maxTokens":     float64(8192),
+		},
+	}
+	if !reflect.DeepEqual(openai["models"], wantModels) {
+		t.Fatalf("openai.models with caps: want %+v, got %+v", wantModels, openai["models"])
+	}
+}
+
+func TestGenerateConfig_OverlayCapabilityCaps_Omitted(t *testing.T) {
+	// Caps unset — the model entry must NOT contain the cap keys (no zero
+	// values, no nulls). Lets OpenClaw fall back to its own discovery.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 1,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOpenAI,
+			Name:     "qwen36",
+			BaseURL:  "http://10.0.0.5:8000/v1",
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
+	models, ok := openai["models"].([]any)
+	if !ok || len(models) != 1 {
+		t.Fatalf("openai.models: want one entry, got %+v", openai["models"])
+	}
+	entry := models[0].(map[string]any)
+	if _, ok := entry["contextWindow"]; ok {
+		t.Fatalf("contextWindow should be omitted when overlay doesn't set it, got %+v", entry)
+	}
+	if _, ok := entry["maxTokens"]; ok {
+		t.Fatalf("maxTokens should be omitted when overlay doesn't set it, got %+v", entry)
+	}
+}
+
 func TestGenerateConfig_OpenAIOverlay_HostedDefault(t *testing.T) {
 	// openai provider with no base_url = hosted OpenAI; no baseUrl emitted.
 	params := baseParams()

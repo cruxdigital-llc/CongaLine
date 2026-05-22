@@ -54,6 +54,21 @@ type ModelOverlay struct {
 	// OpenAI-compatible: typically ends in "/v1". Empty falls back to the
 	// hosted OpenAI API.
 	BaseURL string `yaml:"base_url,omitempty"`
+
+	// ContextWindow is the model's maximum prompt+completion token limit.
+	// Optional. When set, emitted as models.providers.<id>.models[0].contextWindow
+	// in openclaw.json. Use this when the runtime's auto-detected value is
+	// wrong or when the endpoint advertises one number but the underlying
+	// model enforces a lower cap (e.g. LiteLLM in front of vLLM where
+	// max_model_len < the advertised metadata).
+	ContextWindow int `yaml:"context_window,omitempty"`
+
+	// MaxTokens is the per-response max output tokens. Optional. When set,
+	// emitted as models.providers.<id>.models[0].maxTokens. Defaults from the
+	// runtime are not always safe for self-hosted endpoints — set this
+	// explicitly when the provider rejects requests with max_completion_tokens
+	// greater than its hard limit.
+	MaxTokens int `yaml:"max_tokens,omitempty"`
 }
 
 // Validate enforces the schema rules described in
@@ -133,6 +148,16 @@ func (m *ModelOverlay) validate() error {
 		if u.Host == "" {
 			return fmt.Errorf("base_url %q has no host", m.BaseURL)
 		}
+	}
+
+	if m.ContextWindow < 0 {
+		return fmt.Errorf("context_window must be positive when set, got %d", m.ContextWindow)
+	}
+	if m.MaxTokens < 0 {
+		return fmt.Errorf("max_tokens must be positive when set, got %d", m.MaxTokens)
+	}
+	if m.ContextWindow > 0 && m.MaxTokens > 0 && m.MaxTokens > m.ContextWindow {
+		return fmt.Errorf("max_tokens (%d) cannot exceed context_window (%d)", m.MaxTokens, m.ContextWindow)
 	}
 
 	return nil

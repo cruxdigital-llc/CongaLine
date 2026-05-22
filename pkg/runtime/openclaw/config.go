@@ -92,12 +92,21 @@ func applyModelOverlay(config map[string]any, m *runtime.ModelOverlay) error {
 	// OpenClaw's schema validator requires `models` to be a non-empty array
 	// when models.providers.<id> is set explicitly; auto-discovery is bypassed
 	// (see docs/providers/ollama.md "explicit config" section).
-	providerModels := []any{
-		map[string]any{
-			"id":   m.Name,
-			"name": m.Name,
-		},
+	modelEntry := map[string]any{
+		"id":   m.Name,
+		"name": m.Name,
 	}
+	// Capability hints — only emitted when the operator sets them in
+	// agent.yaml. Without these, OpenClaw's default for max_completion_tokens
+	// can exceed what a self-hosted endpoint enforces (e.g. LiteLLM/vLLM
+	// where max_model_len < the advertised contextWindow), producing 400s.
+	if m.ContextWindow > 0 {
+		modelEntry["contextWindow"] = m.ContextWindow
+	}
+	if m.MaxTokens > 0 {
+		modelEntry["maxTokens"] = m.MaxTokens
+	}
+	providerModels := []any{modelEntry}
 	providerCfg := map[string]any{"models": providerModels}
 	switch m.Provider {
 	case runtime.ProviderOllama:

@@ -65,6 +65,16 @@ model:
   #              http://10.0.0.5:8000/v1
   base_url: http://192.168.1.10:11434
 
+  # Optional capability caps. Set these when the runtime's auto-detected or
+  # default values are wrong for your endpoint — typically the case when a
+  # proxy (LiteLLM, OpenRouter) advertises one number but the underlying
+  # model enforces a lower one. Without them, OpenClaw may send
+  # max_completion_tokens larger than the model accepts and the request
+  # 400s with "max_completion_tokens cannot be greater than max_model_len".
+  # Both are optional; max_tokens cannot exceed context_window when both set.
+  # context_window: 131072
+  # max_tokens: 8192
+
 # ------------------------------------------------------------------------------
 # RESERVED KEYS — do NOT use today.
 #
