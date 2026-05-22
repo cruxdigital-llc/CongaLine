@@ -80,8 +80,16 @@ func (s *Slack) OpenClawChannelConfig(agentType string, binding channels.Channel
 		cfg["groupPolicy"] = "allowlist"
 		cfg["dmPolicy"] = "disabled"
 		if binding.ID != "" {
+			// OpenClaw v2026.5.x renamed `allow` to `enabled` in the
+			// channels.slack.channels.<id> object. The new schema is
+			// strict-additional-properties, so the legacy `allow: true`
+			// is rejected at startup with:
+			//   channels.slack.channels.<id>: invalid config:
+			//   must NOT have additional properties
+			// `openclaw doctor --fix` migrates persisted configs, but the
+			// generator must emit the canonical shape on every refresh.
 			cfg["channels"] = map[string]any{
-				binding.ID: map[string]any{"allow": true, "requireMention": false},
+				binding.ID: map[string]any{"enabled": true, "requireMention": false},
 			}
 		}
 	}

@@ -205,6 +205,42 @@ func TestGenerateConfig_OpenAIOverlay(t *testing.T) {
 	}
 }
 
+func TestPluginInstallCommand_RejectsLegacyYesFlag(t *testing.T) {
+	// Regression: OpenClaw v2026.5.18+ rejects "--yes" as an unrecognized
+	// option and exits non-zero before doing any work, which made the
+	// systemd ExecStartPre and the docker-run-based plugin install
+	// silently fail across all 3 providers. Keep this guard tight; if a
+	// future flag needs to be added, ensure it actually exists in the
+	// `openclaw plugins install --help` output for the pinned image.
+	r := &Runtime{}
+	got := r.PluginInstallCommand("@openclaw/slack")
+	for _, arg := range got {
+		if arg == "--yes" || arg == "-y" {
+			t.Fatalf("install command must not include --yes (or -y); v2026.5.x rejects it. got=%v", got)
+		}
+	}
+	want := []string{"openclaw", "plugins", "install", "@openclaw/slack"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("install command shape changed unexpectedly\nwant: %v\ngot:  %v", want, got)
+	}
+}
+
+func TestPluginsToInstall_SlackCanonical(t *testing.T) {
+	// Slack channel binding should produce exactly one plugin to install,
+	// matching the canonical name. Hand-edited JSON with whitespace or
+	// case variants should still trigger the install (defensive normalization).
+	r := &Runtime{}
+	for _, platform := range []string{"slack", "Slack", " slack ", "SLACK"} {
+		got := r.PluginsToInstall(provider.AgentConfig{
+			Channels: []channels.ChannelBinding{{Platform: platform, ID: "C123"}},
+		})
+		want := []string{"@openclaw/slack"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("PluginsToInstall(%q): want %v, got %v", platform, want, got)
+		}
+	}
+}
+
 func TestGenerateConfig_OverlayCapabilityCaps(t *testing.T) {
 	// Overlay sets context_window + max_tokens — both must flow into
 	// models.providers.<id>.models[0] as the OpenClaw-shaped keys.

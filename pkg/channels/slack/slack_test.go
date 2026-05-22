@@ -135,8 +135,17 @@ func TestOpenClawChannelConfig_Team(t *testing.T) {
 	if !ok {
 		t.Fatalf("channel entry not a map: %v", chans["C9876543210"])
 	}
-	if entry["allow"] != true {
-		t.Errorf("allow = %v, want true", entry["allow"])
+	// v2026.5.x dropped the legacy "allow" key in favour of "enabled"; the
+	// new schema rejects "allow" as an additional property. Make sure the
+	// generator emits only the canonical shape.
+	if got, present := entry["allow"]; present {
+		t.Errorf(`legacy "allow" key still emitted; v2026.5.x rejects it. value=%v`, got)
+	}
+	if entry["enabled"] != true {
+		t.Errorf(`enabled = %v, want true`, entry["enabled"])
+	}
+	if entry["requireMention"] != false {
+		t.Errorf(`requireMention = %v, want false`, entry["requireMention"])
 	}
 }
 

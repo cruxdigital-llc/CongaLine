@@ -56,8 +56,15 @@ func (r *Runtime) PluginsToInstall(agent provider.AgentConfig) []string {
 }
 
 // PluginInstallCommand returns the in-container command that installs an
-// OpenClaw plugin into ~/.openclaw/npm. Idempotent — re-running with an
-// already-installed plugin is a fast no-op.
+// OpenClaw plugin into ~/.openclaw/npm. The install errors out with exit 1
+// if the plugin is already on disk ("plugin already exists; delete it
+// first"), which providers tolerate via best-effort wrapping — the
+// already-installed plugin is the desired end state. Use `--force` when
+// an explicit reinstall is needed (out of scope for the auto-bootstrap).
+//
+// NB: `--yes` is NOT a valid flag on OpenClaw v2026.5.18+ — passing it
+// makes the command exit non-zero before any work happens. Keep the
+// command minimal.
 func (r *Runtime) PluginInstallCommand(spec string) []string {
-	return []string{"openclaw", "plugins", "install", spec, "--yes"}
+	return []string{"openclaw", "plugins", "install", spec}
 }
