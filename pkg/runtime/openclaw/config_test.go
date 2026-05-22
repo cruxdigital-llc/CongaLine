@@ -75,6 +75,26 @@ func TestGenerateConfig_NoOverlay_PreservesDefaults(t *testing.T) {
 	if _, ok := cfg["models"]; ok {
 		t.Fatalf("models top-level key should not be set without overlay; got %+v", cfg["models"])
 	}
+
+	// update.checkOnStart must be false so the agent doesn't reach out to
+	// registry.npmjs.org on every restart. Even in egress validate mode
+	// the fetch ties up Envoy workers and pollutes the proxy log; in
+	// enforce mode it would 403 the request and time out. We pin a
+	// specific image tag so the update hints are noise anyway.
+	update, ok := cfg["update"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing top-level update block — every agent will hit npm on restart")
+	}
+	if got := update["checkOnStart"]; got != false {
+		t.Fatalf("update.checkOnStart: want false, got %v", got)
+	}
+	auto, ok := update["auto"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing update.auto block")
+	}
+	if got := auto["enabled"]; got != false {
+		t.Fatalf("update.auto.enabled: want false (no background auto-update from inside agents), got %v", got)
+	}
 }
 
 func TestGenerateConfig_OllamaOverlay(t *testing.T) {
