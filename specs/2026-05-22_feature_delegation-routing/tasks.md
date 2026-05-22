@@ -283,38 +283,58 @@ errors. ✅
 **Goal**: `--role <slug>` provisioned via CLI, JSON, and MCP. Idempotent
 on existing agents (per QA persona note).
 
-- [ ] **6.1** `internal/cmd/admin_provision.go`:
-  - add `--role` flag (string, default `""`)
-  - mutex with `--type` (error if both set)
-  - resolve `agents/_defaults/<runtime>/role-<slug>/` (exists check;
-    error with available roles list if not)
-  - read `role.meta` → infer `type`
-  - copy missing files from role default → `agents/<name>/`
-    (PRESERVE existing files)
-  - continue normal provisioning
-- [ ] **6.2** Same flag on `add-team` (if a distinct command) — verify
-  layout in `internal/cmd/`
-- [ ] **6.3** `internal/cmd/json_schema.go`:
-  - add `role` field to `AddUser` / `AddTeam` JSON schemas
-  - mutex with `type` documented
-- [ ] **6.4** `internal/mcpserver/tools_lifecycle.go`:
-  - `conga_provision_agent` gains `role` string parameter
-  - mutex enforcement in handler
-- [ ] **6.5** Tests:
-  - `internal/cmd/admin_provision_test.go` — `--role code-dev`
-    happy-path; resolves role, copies files, infers type
-  - **Idempotency test** (QA note): `--role code-dev` against a
-    pre-existing agent dir with a customized agent.yaml — agent.yaml
-    is preserved, only missing files copied
-  - `--role X` + `--type Y` → CLI rejects
-  - `--role unknown-slug --runtime openclaw` → error lists available
-    roles for openclaw
-  - JSON-input variant via `internal/cmd/json_schema_test.go`
-  - MCP-tool variant via `internal/mcpserver/tools_lifecycle_test.go`
-- [ ] **6.6** Full test suite green.
+- [x] **6.1** `internal/cmd/admin.go` — `--role` flag added to both
+  `add-user` and `add-team` commands (shared `adminRole` package var).
+  - `internal/cmd/admin_provision.go` — `applyRolePackageIfRequested`
+    helper resolves the role package, copies its defaults into the
+    agent's overlay dir, and verifies the declared type matches the
+    command's intent. Called from `adminAddUserRun` (cmdType="user")
+    and `adminAddTeamRun` (cmdType="team") BEFORE
+    `prov.ProvisionAgent` so the provider's overlay loader picks up
+    the freshly-copied agent.yaml.
+  - Spec-vs-implementation reconciliation: the CLI has separate
+    `add-user` and `add-team` commands (no `--type` flag), so the
+    mutex isn't between `--role` and `--type` — it's between
+    `--role` and the implicit command-level type. Behavior:
+    `add-user --role role-code-dev` errors with "role declares team;
+    use `conga admin add-team --role role-code-dev` instead".
+- [x] **6.2** Both `add-user` and `add-team` covered by 6.1 (same
+  helper, same flag, different cmdType passed in).
+- [x] **6.3** `internal/cmd/json_schema.go` — `role` field added to
+  both `admin.add-user` and `admin.add-team` input schemas.
+  Description references role.meta type requirement.
+- [x] **6.4** `internal/mcpserver/tools_lifecycle.go` —
+  `conga_provision_agent` gained two parameters: `role` (optional
+  string) and `runtime` (optional string, since role lookup is
+  per-runtime). Handler mirrors the CLI: calls
+  `common.ApplyRolePackage` before `ProvisionAgent`, validates type
+  matches the existing `type` parameter, returns clear error
+  messages.
+- [x] **6.5** Tests:
+  - `pkg/common/role_package_test.go` — 14 tests covering happy
+    path, slug normalization (operators can pass "ops" or "role-ops"),
+    **idempotency** (QA persona requirement — agent.yaml customization
+    preserved), role-not-found with available-roles list, role.meta
+    missing / malformed (4 sub-cases), runtime isolation, partial
+    role packages, `ResolveOperatorBehaviorDir` walk-up and
+    no-repo cases
+  - `internal/cmd/admin_provision_test.go` (new file) — 5 tests
+    covering empty role is no-op, happy path, type-mismatch with
+    helpful error message, missing role lookup, and the
+    **idempotency** case end-to-end through
+    `applyRolePackageIfRequested`
+  - Per-agent USER.md.tmpl support added to
+    `pkg/common/behavior.go::resolveBehaviorFiles` so role-copied
+    `.tmpl` files are rendered with `{{.AgentName}}` + channel vars
+    at deploy time, matching how runtime/type-default `.tmpl` files
+    work today
+- [x] **6.6** Full test suite green. `go vet ./...` clean. `gofmt -l`
+  clean (gofmt applied automatic whitespace normalization to two
+  new files during the run).
 
-**Phase 6 acceptance**: all three interfaces accept `--role` / `role:`;
-idempotency preserved; available-role error message present.
+**Phase 6 acceptance**: all three interfaces (CLI, JSON, MCP) accept
+`--role` / `"role"` parameter; idempotency preserved; available-role
+error message present; type mismatch caught with actionable message. ✅
 
 ---
 

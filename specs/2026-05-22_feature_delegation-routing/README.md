@@ -513,3 +513,83 @@ versions — same personality, same workflows, same boundaries.
 - `gofmt -l pkg/`: clean.
 
 **Next**: Phase 6 (CLI `--role` flag + JSON + MCP parity).
+
+### 2026-05-22 — Phase 6 implementation complete
+
+**New files**:
+- [pkg/common/role_package.go](../../pkg/common/role_package.go) —
+  `ApplyRolePackage(behaviorDir, agentName, roleSlug, runtimeName)`
+  copies role defaults into the agent's overlay dir (preserving
+  existing files); `ResolveOperatorBehaviorDir()` walks up from
+  CWD looking for the conga-line repo; `readRoleMeta` + `availableRoles`
+  helpers.
+- [pkg/common/role_package_test.go](../../pkg/common/role_package_test.go)
+  — 14 unit tests covering happy path, slug normalization,
+  idempotency (the QA persona requirement), role-not-found with
+  available-roles list, role.meta validation (4 malformed cases),
+  runtime isolation, partial packages, and `ResolveOperatorBehaviorDir`
+  walk-up.
+- [internal/cmd/admin_provision_test.go](../../internal/cmd/admin_provision_test.go)
+  — 5 CLI-side tests for `applyRolePackageIfRequested`: empty role
+  is no-op, happy path (user role), type mismatch with actionable
+  error, missing role, end-to-end idempotency.
+
+**Files modified**:
+- [pkg/common/behavior.go](../../pkg/common/behavior.go) —
+  `resolveBehaviorFiles` now checks `<agentDir>/USER.md.tmpl` as a
+  per-agent template override before falling back to the
+  runtime/type default. Lets role-copied `.tmpl` files participate
+  in the existing template rendering (with `{{.AgentName}}` and
+  channel vars) at deploy time.
+- [internal/cmd/admin.go](../../internal/cmd/admin.go) — `--role`
+  flag added to both `add-user` and `add-team` commands.
+- [internal/cmd/admin_provision.go](../../internal/cmd/admin_provision.go)
+  — `applyRolePackageIfRequested` helper resolves role, validates
+  declared type matches command intent, copies files, reports to
+  stderr via swappable `cmdErrWriter`. Wired into both `adminAddUserRun`
+  and `adminAddTeamRun` BEFORE `prov.ProvisionAgent`.
+- [internal/cmd/json_schema.go](../../internal/cmd/json_schema.go)
+  — `role` field added to `admin.add-user` and `admin.add-team`
+  input schemas.
+- [internal/mcpserver/tools_lifecycle.go](../../internal/mcpserver/tools_lifecycle.go)
+  — `conga_provision_agent` MCP tool gained `role` and `runtime`
+  string parameters. Handler mirrors CLI: calls `ApplyRolePackage`,
+  validates declared type matches the `type` parameter, returns
+  clear error messages on mismatch.
+
+**Key implementation decisions**:
+- **Mutex with command-level type, not a `--type` flag**: spec.md
+  imagined a `--type` flag exists or will exist, but the CLI has
+  separate `add-user`/`add-team` commands. Adapted: the mutex is
+  between `--role` and the implicit command type. Errors guide the
+  operator to the correct sub-command (e.g. `add-user --role
+  role-code-dev` errors with "use `add-team --role role-code-dev`
+  instead").
+- **Slug normalization**: operators can pass `--role ops` or
+  `--role role-ops` — both resolve to the same role package. Tested.
+- **Role files copied (not symlinked)**: idempotent and survives
+  removal of the source role package (operators can fork the
+  defaults without breaking provisioned agents).
+- **`ResolveOperatorBehaviorDir` is a free function in `pkg/common`**
+  rather than a Provider interface method. Adding a Provider method
+  would trigger a terraform-provider release per the CLAUDE.md
+  release protocol; the free function is simpler and matches the
+  pattern already used by `pkg/provider/awsprovider/channels.go`'s
+  private `resolveAWSBehaviorDir`. Future refactor: have AWS provider
+  call into the common version.
+- **MCP tool parity**: the MCP handler implements the same flow as
+  the CLI helper rather than calling the helper directly (the
+  helper is in `internal/cmd/` and unimportable from
+  `internal/mcpserver/`). Small duplication; both code paths share
+  `common.ApplyRolePackage` for the actual work.
+
+**Verification**:
+- `go test ./pkg/common/`: 14 new role-package tests pass.
+- `go test ./internal/cmd/`: 5 new CLI tests pass.
+- `go test ./...` full suite: green.
+- `go vet ./...`: clean.
+- `gofmt -l pkg/ internal/`: clean (one auto-fix during the run).
+
+**Next**: Phase 7 (docs — `agent.yaml.example` bump to v2,
+`config-taxonomy.md` worked example, `CLAUDE.md` Delegation Model
+section).

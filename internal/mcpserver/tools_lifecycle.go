@@ -7,6 +7,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -15,7 +16,7 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 	return server.ServerTool{
 		Tool: mcp.Tool{
 			Name:        "conga_provision_agent",
-			Description: "Create a new agent. Type must be 'user' (DM-only) or 'team' (channel-based). Channel binding is optional — agents can run in gateway-only mode.",
+			Description: "Create a new agent. Type must be 'user' (DM-only) or 'team' (channel-based). Channel binding is optional — agents can run in gateway-only mode. Pass `role` to copy a role-package overlay (e.g. role-ops, role-code-dev) before provisioning; when role is set, the role.meta's declared type must match the `type` parameter.",
 			InputSchema: mcp.ToolInputSchema{
 				Type: "object",
 				Properties: map[string]any{
@@ -35,6 +36,15 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 					"gateway_port": map[string]any{
 						"type":        "integer",
 						"description": "Gateway port (auto-assigned if omitted)",
+					},
+					"runtime": map[string]any{
+						"type":        "string",
+						"enum":        []string{"openclaw", "hermes"},
+						"description": "Agent runtime (default: openclaw or whatever was selected at setup time). Determines which agents/_defaults/<runtime>/role-<slug>/ tree is consulted when role is set.",
+					},
+					"role": map[string]any{
+						"type":        "string",
+						"description": "Optional role-package slug (e.g. role-ops, role-research, role-code-dev). Copies overlay defaults from agents/_defaults/<runtime>/role-<slug>/ before provisioning. Existing per-agent files are preserved (idempotent). role.meta's declared type must match the `type` parameter.",
 					},
 				},
 				Required: []string{"agent_name", "type"},
@@ -83,9 +93,29 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 				bindings = append(bindings, binding)
 			}
 
+			agentRuntime := req.GetString("runtime", "")
+
+			// Apply role package before provisioning. Mirror of the CLI logic
+			// in internal/cmd/admin_provision.go applyRolePackageIfRequested.
+			if role := req.GetString("role", ""); role != "" {
+				behaviorDir := common.ResolveOperatorBehaviorDir()
+				if behaviorDir == "" {
+					return mcp.NewToolResultError(fmt.Sprintf("role %s: cannot locate the congaline agents/ directory from the MCP server's working directory. Either invoke `conga` from a CLI inside the repo, or set up the agent's overlay manually.", role)), nil
+				}
+				resolvedRuntime := string(runtime.ResolveRuntime(agentRuntime, ""))
+				declaredType, _, err := common.ApplyRolePackage(behaviorDir, agentName, role, resolvedRuntime)
+				if err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("role %s: %v", role, err)), nil
+				}
+				if declaredType != agentType {
+					return mcp.NewToolResultError(fmt.Sprintf("role %s declares type %q but `type` parameter is %q. Pick one or the other.", role, declaredType, agentType)), nil
+				}
+			}
+
 			cfg := provider.AgentConfig{
 				Name:        agentName,
 				Type:        provider.AgentType(agentType),
+				Runtime:     agentRuntime,
 				Channels:    bindings,
 				GatewayPort: gatewayPort,
 			}

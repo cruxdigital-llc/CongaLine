@@ -231,6 +231,7 @@ var commandSchemas = map[string]CommandSchema{
 			"channel":      {Type: "string", Description: "Channel binding (platform:id, e.g., slack:U0123456789)"},
 			"gateway_port": {Type: "integer", Description: "Gateway port (auto-assigned if omitted)"},
 			"iam_identity": {Type: "string", Description: "IAM identity / SSO username (AWS provider only)"},
+			"role":         {Type: "string", Description: "Role package slug (e.g. role-ops, role-research). Copies overlay defaults from agents/_defaults/<runtime>/role-<slug>/. role.meta must declare type: user."},
 		}},
 		Output: &SchemaSection{Fields: map[string]FieldSchema{
 			"agent":        {Type: "string", Description: "Agent name"},
@@ -245,6 +246,7 @@ var commandSchemas = map[string]CommandSchema{
 		Input: &SchemaSection{Fields: map[string]FieldSchema{
 			"channel":      {Type: "string", Description: "Channel binding (platform:id, e.g., slack:C0123456789)"},
 			"gateway_port": {Type: "integer", Description: "Gateway port (auto-assigned if omitted)"},
+			"role":         {Type: "string", Description: "Role package slug (e.g. role-code-dev, role-writing). Copies overlay defaults from agents/_defaults/<runtime>/role-<slug>/. role.meta must declare type: team."},
 		}},
 		Output: &SchemaSection{Fields: map[string]FieldSchema{
 			"agent":        {Type: "string", Description: "Agent name"},
