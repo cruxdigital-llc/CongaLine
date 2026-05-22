@@ -135,7 +135,7 @@ model:
 	}
 }
 
-func TestLoadAgentOverlay_Version2Rejected(t *testing.T) {
+func TestLoadAgentOverlay_Version2Accepted(t *testing.T) {
 	resetOverlayWarnings()
 	dir := t.TempDir()
 	writeOverlay(t, dir, "x", `version: 2
@@ -144,12 +144,155 @@ model:
   name: x
   base_url: http://h:1
 `)
+	got, err := LoadAgentOverlay(dir, newAgent("x"))
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if got == nil || got.Version != 2 || got.Model == nil {
+		t.Fatalf("want v2 overlay with model populated, got %+v", got)
+	}
+}
+
+func TestLoadAgentOverlay_Version3Rejected(t *testing.T) {
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "x", `version: 3
+model:
+  provider: ollama
+  name: x
+  base_url: http://h:1
+`)
 	_, err := LoadAgentOverlay(dir, newAgent("x"))
-	if err == nil || !strings.Contains(err.Error(), "version 2 requires a newer conga binary") {
+	if err == nil || !strings.Contains(err.Error(), "version 3 requires a newer conga binary") {
 		t.Fatalf("want version-rejection error, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "agent.yaml") {
 		t.Fatalf("want file path in error, got %v", err)
+	}
+}
+
+func TestLoadAgentOverlay_V2WithSubagents(t *testing.T) {
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "aaron", `version: 2
+subagents:
+  model:
+    provider: openai
+    name: qwen-2.5-72b-instruct
+    base_url: https://litellm.lan/v1
+  delegation_mode: prefer
+  max_concurrent: 4
+`)
+	got, err := LoadAgentOverlay(dir, newAgent("aaron"))
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if got == nil || got.Subagents == nil || got.Subagents.Model == nil {
+		t.Fatalf("want v2 overlay with subagents populated, got %+v", got)
+	}
+	if got.Subagents.Model.Provider != "openai" || got.Subagents.Model.Name != "qwen-2.5-72b-instruct" {
+		t.Fatalf("subagent model: %+v", got.Subagents.Model)
+	}
+	if got.Subagents.DelegationMode != "prefer" {
+		t.Fatalf("delegation_mode: want \"prefer\", got %q", got.Subagents.DelegationMode)
+	}
+	if got.Subagents.MaxConcurrent != 4 {
+		t.Fatalf("max_concurrent: want 4, got %d", got.Subagents.MaxConcurrent)
+	}
+}
+
+func TestLoadAgentOverlay_V1WithSubagentsKeyRejected(t *testing.T) {
+	// A v1 document explicitly opting in to v1 must not silently accept the
+	// v2 subagents key. The strict-key parser accepts it (subagents is a known
+	// field), so the rejection happens at Validate time with a friendly
+	// "bump to version 2" message.
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "x", `version: 1
+subagents:
+  model:
+    provider: openai
+    name: gpt
+    base_url: https://api.openai.com/v1
+`)
+	_, err := LoadAgentOverlay(dir, newAgent("x"))
+	if err == nil {
+		t.Fatal("want error on v1 doc with subagents key, got nil")
+	}
+	if !strings.Contains(err.Error(), "subagents: requires schema version 2") {
+		t.Fatalf("want subagents-needs-v2 error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "bump") {
+		t.Fatalf("want guidance to bump version in error, got %v", err)
+	}
+}
+
+func TestLoadAgentOverlay_V2UnknownInnerKeyRejected(t *testing.T) {
+	// Strict-key parsing still applies inside the subagents block.
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "x", `version: 2
+subagents:
+  model:
+    provider: openai
+    name: gpt
+    base_url: https://api.openai.com/v1
+  delegtion_mode: prefer
+`)
+	_, err := LoadAgentOverlay(dir, newAgent("x"))
+	if err == nil {
+		t.Fatal("want strict-key error on typo, got nil")
+	}
+	if !strings.Contains(err.Error(), "delegtion_mode") {
+		t.Fatalf("want error naming the typo, got %v", err)
+	}
+}
+
+func TestLoadAgentOverlay_V2PrimaryAndSubagent(t *testing.T) {
+	// Primary Opus + Qwen subagent — the role-code-dev shape.
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "code-dev", `version: 2
+model:
+  provider: ollama
+  name: qwen3:6b
+  base_url: http://192.168.1.5:11434
+subagents:
+  model:
+    provider: openai
+    name: qwen-2.5-72b-instruct
+    base_url: https://litellm.lan/v1
+  delegation_mode: prefer
+`)
+	got, err := LoadAgentOverlay(dir, newAgent("code-dev"))
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if got == nil || got.Model == nil || got.Subagents == nil {
+		t.Fatalf("want both model and subagents populated, got %+v", got)
+	}
+}
+
+func TestLoadAgentOverlay_V2SameProviderConflict(t *testing.T) {
+	resetOverlayWarnings()
+	dir := t.TempDir()
+	writeOverlay(t, dir, "x", `version: 2
+model:
+  provider: openai
+  name: gpt-5.5
+  base_url: https://api.openai.com/v1
+subagents:
+  model:
+    provider: openai
+    name: qwen-2.5-72b-instruct
+    base_url: https://litellm.lan/v1
+`)
+	_, err := LoadAgentOverlay(dir, newAgent("x"))
+	if err == nil {
+		t.Fatal("want conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), `provider "openai" is used by both primary and subagent`) {
+		t.Fatalf("want same-provider-conflict error, got %v", err)
 	}
 }
 

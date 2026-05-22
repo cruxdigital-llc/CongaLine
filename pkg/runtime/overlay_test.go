@@ -19,8 +19,9 @@ func TestAgentOverlay_Validate_Version(t *testing.T) {
 		wantErr string // substring expected in error, "" = no error
 	}{
 		{"version absent (0) accepted", 0, ""},
-		{"version 1 accepted", 1, ""},
-		{"version 2 rejected", 2, "version 2 requires a newer conga binary"},
+		{"version 1 accepted (legacy)", 1, ""},
+		{"version 2 accepted (current)", 2, ""},
+		{"version 3 rejected", 3, "version 3 requires a newer conga binary"},
 		{"version 99 rejected", 99, "version 99 requires a newer conga binary"},
 	}
 	for _, tc := range tests {
@@ -307,6 +308,289 @@ func TestModelOverlay_Validate_HappyPath(t *testing.T) {
 				t.Fatalf("want nil error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestSubagentsOverlay_RequiresVersion2(t *testing.T) {
+	o := &AgentOverlay{
+		Version: 1,
+		Subagents: &SubagentsOverlay{
+			Model: &ModelOverlay{
+				Provider: "openai",
+				Name:     "qwen-2.5-72b-instruct",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+		},
+	}
+	err := o.Validate()
+	if err == nil || !strings.Contains(err.Error(), "subagents: requires schema version 2") {
+		t.Fatalf("want subagents-needs-v2 error, got %v", err)
+	}
+}
+
+func TestSubagentsOverlay_ModelRequired(t *testing.T) {
+	o := &AgentOverlay{
+		Version:   2,
+		Subagents: &SubagentsOverlay{}, // empty: no Model
+	}
+	err := o.Validate()
+	if err == nil || !strings.Contains(err.Error(), "model is required when subagents block is present") {
+		t.Fatalf("want missing-model error, got %v", err)
+	}
+}
+
+func TestSubagentsOverlay_ModelGoesThroughExistingValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   ModelOverlay
+		wantErr string
+	}{
+		{
+			name:    "anthropic rejected via existing enum",
+			model:   ModelOverlay{Provider: "anthropic", Name: "claude-opus-4-7", BaseURL: ""},
+			wantErr: "unknown model provider",
+		},
+		{
+			name:    "ollama subagent without base_url",
+			model:   ModelOverlay{Provider: "ollama", Name: "qwen3:6b"},
+			wantErr: "ollama provider requires base_url",
+		},
+		{
+			name:    "ollama subagent with /v1 footgun",
+			model:   ModelOverlay{Provider: "ollama", Name: "qwen", BaseURL: "http://h:11434/v1"},
+			wantErr: "without /v1 suffix",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &AgentOverlay{
+				Version:   2,
+				Subagents: &SubagentsOverlay{Model: &tc.model},
+			}
+			err := o.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSubagentsOverlay_DelegationMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		wantErr string
+	}{
+		{"empty accepted", "", ""},
+		{"suggest accepted", "suggest", ""},
+		{"prefer accepted", "prefer", ""},
+		{"unknown rejected", "encourage", `delegation_mode "encourage"`},
+		{"casing rejected", "Prefer", `delegation_mode "Prefer"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &AgentOverlay{
+				Version: 2,
+				Subagents: &SubagentsOverlay{
+					Model: &ModelOverlay{
+						Provider: "openai",
+						Name:     "x",
+						BaseURL:  "http://h:8000/v1",
+					},
+					DelegationMode: tc.mode,
+				},
+			}
+			err := o.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want nil error, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSubagentsOverlay_MaxConcurrent(t *testing.T) {
+	tests := []struct {
+		name    string
+		max     int
+		wantErr string
+	}{
+		{"zero (use default) accepted", 0, ""},
+		{"reasonable value accepted", 4, ""},
+		{"at sane cap accepted", 128, ""},
+		{"negative rejected", -1, "max_concurrent must be non-negative"},
+		{"above sane cap rejected", 1000, "exceeds sane cap"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &AgentOverlay{
+				Version: 2,
+				Subagents: &SubagentsOverlay{
+					Model: &ModelOverlay{
+						Provider: "openai",
+						Name:     "x",
+						BaseURL:  "http://h:8000/v1",
+					},
+					MaxConcurrent: tc.max,
+				},
+			}
+			err := o.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want nil error, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSubagentsOverlay_MaxSpawnDepth(t *testing.T) {
+	tests := []struct {
+		name    string
+		depth   int
+		wantErr string
+	}{
+		{"zero accepted", 0, ""},
+		{"one accepted", 1, ""},
+		{"three accepted", 3, ""},
+		{"negative rejected", -1, "max_spawn_depth must be in range 0..3"},
+		{"four rejected", 4, "max_spawn_depth must be in range 0..3"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &AgentOverlay{
+				Version: 2,
+				Subagents: &SubagentsOverlay{
+					Model: &ModelOverlay{
+						Provider: "openai",
+						Name:     "x",
+						BaseURL:  "http://h:8000/v1",
+					},
+					MaxSpawnDepth: tc.depth,
+				},
+			}
+			err := o.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want nil error, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSubagentsOverlay_SameProviderConflict(t *testing.T) {
+	tests := []struct {
+		name     string
+		primary  *ModelOverlay
+		subagent *ModelOverlay
+		wantErr  string // "" = accept
+	}{
+		{
+			name: "same provider, same base_url — no conflict",
+			primary: &ModelOverlay{
+				Provider: "openai",
+				Name:     "primary-model",
+				BaseURL:  "http://litellm.lan/v1",
+			},
+			subagent: &ModelOverlay{
+				Provider: "openai",
+				Name:     "subagent-model",
+				BaseURL:  "http://litellm.lan/v1",
+			},
+		},
+		{
+			name: "same provider, trailing-slash difference — no conflict",
+			primary: &ModelOverlay{
+				Provider: "openai",
+				Name:     "primary-model",
+				BaseURL:  "http://litellm.lan/v1/",
+			},
+			subagent: &ModelOverlay{
+				Provider: "openai",
+				Name:     "subagent-model",
+				BaseURL:  "http://litellm.lan/v1",
+			},
+		},
+		{
+			name: "different providers — no conflict",
+			primary: &ModelOverlay{
+				Provider: "ollama",
+				Name:     "primary",
+				BaseURL:  "http://h:11434",
+			},
+			subagent: &ModelOverlay{
+				Provider: "openai",
+				Name:     "subagent",
+				BaseURL:  "http://litellm.lan/v1",
+			},
+		},
+		{
+			name: "same provider, different base_urls — REJECTED",
+			primary: &ModelOverlay{
+				Provider: "openai",
+				Name:     "primary",
+				BaseURL:  "https://api.openai.com/v1",
+			},
+			subagent: &ModelOverlay{
+				Provider: "openai",
+				Name:     "subagent",
+				BaseURL:  "http://litellm.lan/v1",
+			},
+			wantErr: `provider "openai" is used by both primary and subagent with different base_urls`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &AgentOverlay{
+				Version:   2,
+				Model:     tc.primary,
+				Subagents: &SubagentsOverlay{Model: tc.subagent},
+			}
+			err := o.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want nil error, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestSubagentsOverlay_HappyPath(t *testing.T) {
+	o := &AgentOverlay{
+		Version: 2,
+		// No primary model = inherit runtime default (anthropic). Subagent is
+		// Qwen via LiteLLM. Mirrors the role-code-dev default.
+		Subagents: &SubagentsOverlay{
+			Model: &ModelOverlay{
+				Provider: "openai",
+				Name:     "qwen-2.5-72b-instruct",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+			DelegationMode: "prefer",
+			MaxConcurrent:  4,
+		},
+	}
+	if err := o.Validate(); err != nil {
+		t.Fatalf("want nil error, got %v", err)
 	}
 }
 
