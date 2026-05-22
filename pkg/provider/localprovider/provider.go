@@ -222,11 +222,20 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	if err != nil {
 		return fmt.Errorf("failed to load agent overlay: %w", err)
 	}
+	// Generate the gateway auth token at provision time. OpenClaw v2026.3.22+
+	// refuses to bind a non-loopback gateway without auth, so the token must be
+	// in the config before the container starts. RefreshAgent preserves this
+	// token on subsequent restarts via ReadGatewayToken.
+	gatewayToken, err := generateToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate gateway token: %w", err)
+	}
 	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
-		Agent:   cfg,
-		Secrets: shared,
-		Model:   p.getConfigValue("model"),
-		Overlay: overlay,
+		Agent:        cfg,
+		Secrets:      shared,
+		GatewayToken: gatewayToken,
+		Model:        p.getConfigValue("model"),
+		Overlay:      overlay,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
@@ -338,6 +347,21 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 
 	// Ensure no stale container exists before starting.
 	removeContainer(ctx, cName) //nolint:errcheck
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container starts. OpenClaw v2026.5.x+ extracted Slack into an external
+	// @openclaw/slack plugin that the gateway expects in /home/node/.openclaw/npm.
+	// Best-effort: a failure leaves the channel WARNing at startup but does not
+	// block the rest of the agent from coming up.
+	for _, spec := range rt.PluginsToInstall(cfg) {
+		installCmd := rt.PluginInstallCommand(spec)
+		if installCmd == nil {
+			continue
+		}
+		if err := runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), rt.ContainerSpec(cfg).User, installCmd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, cfg.Name, err)
+		}
+	}
 
 	egressProxyName := policy.EgressProxyName(cfg.Name)
 	fmt.Printf("Starting container %s...\n", cName)
@@ -843,6 +867,18 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 
 	// Ensure no stale container exists before starting.
 	removeContainer(ctx, cName) //nolint:errcheck
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container restarts (see ProvisionAgent for the rationale).
+	for _, spec := range rt.PluginsToInstall(*cfg) {
+		installCmd := rt.PluginInstallCommand(spec)
+		if installCmd == nil {
+			continue
+		}
+		if err := runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), rt.ContainerSpec(*cfg).User, installCmd); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, agentName, err)
+		}
+	}
 
 	refreshEgressProxyName := policy.EgressProxyName(agentName)
 	if err := runAgentContainer(ctx, agentContainerOpts{

@@ -42,6 +42,10 @@ if [ -n "$AGENT_SECRET_NAMES" ]; then
 fi
 chmod 0400 /opt/conga/config/$AGENT_NAME.env
 
+# Generate gateway auth token (OpenClaw v2026.3.22+ refuses to bind a
+# non-loopback gateway without auth). 32 random bytes → 64 hex chars.
+GATEWAY_TOKEN=$(openssl rand -hex 32)
+
 cat > /opt/conga/config/$AGENT_NAME-config.json << OCCONFIG
 {
   "agents": {
@@ -87,13 +91,13 @@ cat > /opt/conga/config/$AGENT_NAME-config.json << OCCONFIG
       "dmPolicy": "allowlist",
       "allowFrom": ["$SLACK_MEMBER_ID"],
       "dm": { "enabled": true },
-      "streaming": "partial",
-      "nativeStreaming": true
+      "streaming": { "mode": "partial", "nativeTransport": true }
     }
   },
-  "gateway": { "port": 18789, "mode": "local", "bind": "lan", "controlUi": { "allowedOrigins": ["http://localhost:${GATEWAY_PORT}"] } },
+  "gateway": { "port": 18789, "mode": "local", "bind": "lan", "auth": { "mode": "token", "token": "$GATEWAY_TOKEN" }, "controlUi": { "allowedOrigins": ["http://localhost:18789", "http://localhost:${GATEWAY_PORT}"] } },
   "skills": { "install": { "nodeManager": "pnpm" } },
-  "plugins": { "entries": { "slack": { "enabled": true } } }
+  "plugins": { "entries": { "slack": { "enabled": true } } },
+  "update": { "checkOnStart": false, "auto": { "enabled": false } }
 }
 OCCONFIG
 
@@ -188,6 +192,11 @@ Requires=docker.service
 Type=simple
 EnvironmentFile=/opt/conga/config/$AGENT_NAME.env
 ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
+# Seed @openclaw/slack plugin into the agent's data dir before the persistent
+# container starts (v2026.5.x extracted Slack into an external plugin).
+# Idempotent: errors with "plugin already exists" on subsequent starts; the
+# leading "-" tolerates that (already-installed is the desired end state).
+ExecStartPre=-/usr/bin/docker run --rm --user 1000:1000 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $CONGA_IMAGE openclaw plugins install @openclaw/slack
 ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:${GATEWAY_PORT}:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g -e NODE_OPTIONS="--max-old-space-size=1536 --require /opt/proxy-bootstrap.js" -e HTTPS_PROXY=http://$EGRESS_PROXY:3128 -e HTTP_PROXY=http://$EGRESS_PROXY:3128 -e NO_PROXY=localhost,127.0.0.1 --pids-limit 256 --user 1000:1000 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw -v $BOOTSTRAP_PATH:/opt/proxy-bootstrap.js:ro $ENV_FLAGS $CONGA_IMAGE
 ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME

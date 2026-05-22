@@ -92,12 +92,21 @@ func applyModelOverlay(config map[string]any, m *runtime.ModelOverlay) error {
 	// OpenClaw's schema validator requires `models` to be a non-empty array
 	// when models.providers.<id> is set explicitly; auto-discovery is bypassed
 	// (see docs/providers/ollama.md "explicit config" section).
-	providerModels := []any{
-		map[string]any{
-			"id":   m.Name,
-			"name": m.Name,
-		},
+	modelEntry := map[string]any{
+		"id":   m.Name,
+		"name": m.Name,
 	}
+	// Capability hints — only emitted when the operator sets them in
+	// agent.yaml. Without these, OpenClaw's default for max_completion_tokens
+	// can exceed what a self-hosted endpoint enforces (e.g. LiteLLM/vLLM
+	// where max_model_len < the advertised contextWindow), producing 400s.
+	if m.ContextWindow > 0 {
+		modelEntry["contextWindow"] = m.ContextWindow
+	}
+	if m.MaxTokens > 0 {
+		modelEntry["maxTokens"] = m.MaxTokens
+	}
+	providerModels := []any{modelEntry}
 	providerCfg := map[string]any{"models": providerModels}
 	switch m.Provider {
 	case runtime.ProviderOllama:
@@ -147,11 +156,12 @@ func buildGatewayConfig(containerPort, hostPort int, token string) map[string]an
 
 	gw := map[string]any{
 		"port": containerPort,
-		"mode": "remote",
+		// Gateway and agent runtime live in the same container, so mode is "local".
+		// 0.0.0.0 binding (required for Docker -p port forwarding) comes from
+		// bind="lan", not from mode. OpenClaw v2026.3.22+ refuses to start with
+		// mode="remote" unless --allow-unconfigured is passed.
+		"mode": "local",
 		"bind": "lan",
-		"remote": map[string]any{
-			"url": fmt.Sprintf("http://localhost:%d", containerPort),
-		},
 		"controlUi": map[string]any{
 			"allowedOrigins": origins,
 		},

@@ -12,6 +12,13 @@ import (
 // config authored for a newer binary cannot be silently mis-parsed.
 const CurrentOverlaySchemaVersion = 1
 
+// maxSaneTokenCount bounds context_window and max_tokens in the overlay
+// schema. The point is to catch typos (an extra zero on what was meant to
+// be 131072 → 1310720, etc.) at load time rather than at runtime. Real
+// models top out well below this today; if a future model exceeds 10M
+// tokens, lift this and add a test.
+const maxSaneTokenCount = 10_000_000
+
 // Supported overlay providers.
 const (
 	ProviderOllama = "ollama"
@@ -54,6 +61,21 @@ type ModelOverlay struct {
 	// OpenAI-compatible: typically ends in "/v1". Empty falls back to the
 	// hosted OpenAI API.
 	BaseURL string `yaml:"base_url,omitempty"`
+
+	// ContextWindow is the model's maximum prompt+completion token limit.
+	// Optional. When set, emitted as models.providers.<id>.models[0].contextWindow
+	// in openclaw.json. Use this when the runtime's auto-detected value is
+	// wrong or when the endpoint advertises one number but the underlying
+	// model enforces a lower cap (e.g. LiteLLM in front of vLLM where
+	// max_model_len < the advertised metadata).
+	ContextWindow int `yaml:"context_window,omitempty"`
+
+	// MaxTokens is the per-response max output tokens. Optional. When set,
+	// emitted as models.providers.<id>.models[0].maxTokens. Defaults from the
+	// runtime are not always safe for self-hosted endpoints — set this
+	// explicitly when the provider rejects requests with max_completion_tokens
+	// greater than its hard limit.
+	MaxTokens int `yaml:"max_tokens,omitempty"`
 }
 
 // Validate enforces the schema rules described in
@@ -133,6 +155,22 @@ func (m *ModelOverlay) validate() error {
 		if u.Host == "" {
 			return fmt.Errorf("base_url %q has no host", m.BaseURL)
 		}
+	}
+
+	if m.ContextWindow < 0 {
+		return fmt.Errorf("context_window must be positive when set, got %d", m.ContextWindow)
+	}
+	if m.MaxTokens < 0 {
+		return fmt.Errorf("max_tokens must be positive when set, got %d", m.MaxTokens)
+	}
+	if m.ContextWindow > maxSaneTokenCount {
+		return fmt.Errorf("context_window %d exceeds sane cap (%d) — did you add an extra zero?", m.ContextWindow, maxSaneTokenCount)
+	}
+	if m.MaxTokens > maxSaneTokenCount {
+		return fmt.Errorf("max_tokens %d exceeds sane cap (%d) — did you add an extra zero?", m.MaxTokens, maxSaneTokenCount)
+	}
+	if m.ContextWindow > 0 && m.MaxTokens > 0 && m.MaxTokens > m.ContextWindow {
+		return fmt.Errorf("max_tokens (%d) cannot exceed context_window (%d)", m.MaxTokens, m.ContextWindow)
 	}
 
 	return nil

@@ -70,7 +70,7 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - **Agents are keyed by agent name** (e.g. `myagent`, `leadership`), not Slack member ID or username
 - Two agent types: **user agents** (DM-only, `dmPolicy: "allowlist"`) and **team agents** (channel-based, `groupPolicy: "allowlist"`)
 - Gateway listens on port **18789** inside every container (`BaseGatewayPort` in `pkg/common/ports.go`). Each agent gets a unique **host** port (18789, 18791, 18792, etc.) via Docker `-p 127.0.0.1:{hostPort}:18789`. The `agent.GatewayPort` field is the host port, NOT the container port.
-- **Gateway mode is always `"remote"`** (binds `0.0.0.0` inside the container) with `remote.url: "http://localhost:18789"`. This is an OpenClaw setting unrelated to the congaline "remote" provider — it means the gateway accepts connections from outside its network namespace (required for Docker port mapping and inter-container routing).
+- **Gateway runs in `mode: "local"`** (gateway + agent runtime in the same container — this is the default OpenClaw topology, unrelated to the congaline "remote" provider). The 0.0.0.0 binding inside the container that Docker `-p 127.0.0.1:<host>:18789` port forwarding requires comes from `gateway.bind: "lan"`, not from `mode`. OpenClaw v2026.3.22+ explicitly rejects `mode: "remote"` (split remote-transport topology) without `--allow-unconfigured`; we are not that topology.
 - **`allowedOrigins`** must include both `localhost:18789` (for CLI tools inside the container) and `localhost:{hostPort}` (for browser access via SSM/SSH tunnels). Without both, `conga connect` gets "origin not allowed".
 
 ## Planning
@@ -89,7 +89,7 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - `SLACK_APP_TOKEN` is held only by the router (in `router.env`) — containers do not need it
 - Router must be connected to each agent's Docker network (`docker network connect conga-<agent_name> conga-router`) so it can reach the container's webhook endpoint
 - Routing config at routing.json maps channels and member IDs to container webhook URLs (`http://conga-{name}:18789/slack/events`)
-- The deployed image is pinned to `ghcr.io/openclaw/openclaw:2026.3.11` (`29dc654`), the last stable release before a Slack socket mode regression in v2026.3.12 ([#45311](https://github.com/openclaw/openclaw/issues/45311))
+- The deployed image is pinned to `ghcr.io/openclaw/openclaw:2026.5.18`. Pinning to a specific minor (rather than tracking `:latest`) keeps deploys bisectable across upstream releases. Historical note: an earlier Slack socket-mode regression ([openclaw/openclaw#45311](https://github.com/openclaw/openclaw/issues/45311)) held the pin at `v2026.3.11` until it was resolved upstream in `v2026.3.22` (PR [#45953](https://github.com/openclaw/openclaw/pull/45953), Slack Bolt import-interop hardening).
 
 ## OpenClaw Behavioral Issues
 

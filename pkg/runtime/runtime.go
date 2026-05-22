@@ -103,6 +103,26 @@ type Runtime interface {
 	// SupportsNodeProxy returns true if this runtime needs the
 	// proxy-bootstrap.js --require injection for Node.js.
 	SupportsNodeProxy() bool
+
+	// --- Plugin Bootstrap ---
+
+	// PluginsToInstall returns external plugin specs (e.g. "@openclaw/slack")
+	// that must be installed inside the container's data directory before the
+	// runtime can serve the agent's configured channels. Providers run these
+	// as transient docker containers with the data dir bind-mounted, so the
+	// install persists across container restarts.
+	//
+	// Idempotent: providers run this on every provision/refresh; the runtime's
+	// own install command must handle "already installed" without error.
+	// Returns nil if no external plugins are needed (e.g. no Slack channel
+	// configured, or runtime ships everything bundled).
+	PluginsToInstall(agent provider.AgentConfig) []string
+
+	// PluginInstallCommand returns the in-container command that installs the
+	// given plugin spec. The provider runs this with the data directory bind-
+	// mounted at ContainerDataPath() so install state persists.
+	// Returns nil if this runtime doesn't support runtime plugin installs.
+	PluginInstallCommand(spec string) []string
 }
 
 // ConfigParams holds all inputs needed to generate a runtime config file.

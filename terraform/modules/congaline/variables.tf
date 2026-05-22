@@ -1,7 +1,7 @@
 variable "image" {
   description = "Docker image for OpenClaw containers"
   type        = string
-  default     = "ghcr.io/openclaw/openclaw:2026.3.11"
+  default     = "ghcr.io/openclaw/openclaw:2026.5.18"
 }
 
 variable "agents" {

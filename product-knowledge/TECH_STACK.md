@@ -35,7 +35,7 @@ To modify: Edit directly.
 ## Application
 | Component | Technology |
 |---|---|
-| OpenClaw | `ghcr.io/openclaw/openclaw:2026.3.11` Docker image |
+| OpenClaw | `ghcr.io/openclaw/openclaw:2026.5.18` Docker image |
 | Runtime | Node.js ≥22 (inside container) |
 | Container engine | Docker (host-level, containers run as uid 1000) |
 | Messaging | Slack via HTTP webhook (optional — gateway-only mode supported) |

@@ -38,7 +38,7 @@ These controls apply identically regardless of provider. They happen automatical
 | Config integrity monitoring | SHA256 hash baseline, periodic check, alert on mismatch | Detects tampering that bypasses other controls |
 | Router event signing | HMAC-SHA256 on forwarded Slack events | Prevents event forgery between router and containers |
 | Gateway token auth | Random token + device pairing | Prevents unauthorized web UI access |
-| Pinned image | Known-good OpenClaw version (currently v2026.3.11) | Avoids regressions (e.g., Slack socket mode bug in v2026.3.12) |
+| Pinned image | Known-good OpenClaw version (currently v2026.5.18) | Avoids regressions; pinning a specific minor (not `:latest`) keeps deploys bisectable across upstream releases |
 
 ## Enforcement Escalation by Provider
 
@@ -132,6 +132,7 @@ Each level is additive — higher levels include all controls from lower levels.
 | Container escape on shared host | Medium | cap-drop + seccomp + no-new-privileges make this difficult; upgrade path documented |
 | Shared Slack tokens across containers | Low | Channel allowlist + immutable config prevents cross-agent access |
 | Cooperative proxy enforcement | Low | Egress proxy is set via `HTTPS_PROXY` env var and enforced by iptables DROP rules in the DOCKER-USER chain that block direct outbound traffic from agent containers. Only traffic to the bridge subnet (proxy + Docker DNS) is allowed. A compromised agent would need to exploit the proxy itself or escalate privileges to modify iptables rules. |
+| Plugin-install transient container bypasses per-agent egress proxy | Low | The `runPluginInstall` step (local/remote) and `ExecStartPre` plugin install (AWS) run a one-shot container on the default Docker network with no `HTTPS_PROXY` env and no iptables DROP rules, so the npm install can reach `registry.npmjs.org` and ClawHub. This is deliberate: enforce-mode allowlists don't include the npm registry, and threading the install through the per-agent proxy would force operators to allowlist `*.npmjs.org` + the ClawHub CDN host-wide. The install container runs as uid 1000 with only the agent's data dir bind-mounted — a compromised OpenClaw image could persist files into the data dir that subsequently run inside the persistent container, but that's the same trust we already extend to the pinned image. Mitigated by image pinning. |
 | Secrets on disk (local/remote) | Low | Mode 0400 files; disk encryption is operator responsibility. AWS uses Secrets Manager. |
 | IP correlation by external APIs | Low | All traffic exits through same NAT; reveals shared infrastructure but not content |
 | Shared kernel vulnerabilities | Medium | Host kernel CVE affects all containers; mitigated by auto-upgrades; gVisor eliminates |

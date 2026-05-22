@@ -75,6 +75,26 @@ func TestGenerateConfig_NoOverlay_PreservesDefaults(t *testing.T) {
 	if _, ok := cfg["models"]; ok {
 		t.Fatalf("models top-level key should not be set without overlay; got %+v", cfg["models"])
 	}
+
+	// update.checkOnStart must be false so the agent doesn't reach out to
+	// registry.npmjs.org on every restart. Even in egress validate mode
+	// the fetch ties up Envoy workers and pollutes the proxy log; in
+	// enforce mode it would 403 the request and time out. We pin a
+	// specific image tag so the update hints are noise anyway.
+	update, ok := cfg["update"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing top-level update block — every agent will hit npm on restart")
+	}
+	if got := update["checkOnStart"]; got != false {
+		t.Fatalf("update.checkOnStart: want false, got %v", got)
+	}
+	auto, ok := update["auto"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing update.auto block")
+	}
+	if got := auto["enabled"]; got != false {
+		t.Fatalf("update.auto.enabled: want false (no background auto-update from inside agents), got %v", got)
+	}
 }
 
 func TestGenerateConfig_OllamaOverlay(t *testing.T) {
@@ -182,6 +202,115 @@ func TestGenerateConfig_OpenAIOverlay(t *testing.T) {
 	}
 	if !reflect.DeepEqual(openai["models"], wantModels) {
 		t.Fatalf("openai.models: want %+v, got %+v", wantModels, openai["models"])
+	}
+}
+
+func TestPluginInstallCommand_RejectsLegacyYesFlag(t *testing.T) {
+	// Regression: OpenClaw v2026.5.18+ rejects "--yes" as an unrecognized
+	// option and exits non-zero before doing any work, which made the
+	// systemd ExecStartPre and the docker-run-based plugin install
+	// silently fail across all 3 providers. Keep this guard tight; if a
+	// future flag needs to be added, ensure it actually exists in the
+	// `openclaw plugins install --help` output for the pinned image.
+	r := &Runtime{}
+	got := r.PluginInstallCommand("@openclaw/slack")
+	for _, arg := range got {
+		if arg == "--yes" || arg == "-y" {
+			t.Fatalf("install command must not include --yes (or -y); v2026.5.x rejects it. got=%v", got)
+		}
+	}
+	want := []string{"openclaw", "plugins", "install", "@openclaw/slack"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("install command shape changed unexpectedly\nwant: %v\ngot:  %v", want, got)
+	}
+}
+
+func TestPluginsToInstall_SlackCanonical(t *testing.T) {
+	// Slack channel binding should produce exactly one plugin to install,
+	// matching the canonical name. Hand-edited JSON with whitespace or
+	// case variants should still trigger the install (defensive normalization).
+	r := &Runtime{}
+	for _, platform := range []string{"slack", "Slack", " slack ", "SLACK"} {
+		got := r.PluginsToInstall(provider.AgentConfig{
+			Channels: []channels.ChannelBinding{{Platform: platform, ID: "C123"}},
+		})
+		want := []string{"@openclaw/slack"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("PluginsToInstall(%q): want %v, got %v", platform, want, got)
+		}
+	}
+}
+
+func TestGenerateConfig_OverlayCapabilityCaps(t *testing.T) {
+	// Overlay sets context_window + max_tokens — both must flow into
+	// models.providers.<id>.models[0] as the OpenClaw-shaped keys.
+	// Without these, OpenClaw's default for max_completion_tokens can
+	// exceed what a self-hosted endpoint (LiteLLM/vLLM) enforces.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 1,
+		Model: &runtime.ModelOverlay{
+			Provider:      runtime.ProviderOpenAI,
+			Name:          "qwen36",
+			BaseURL:       "http://192.168.181.97:4000/v1",
+			ContextWindow: 131072,
+			MaxTokens:     8192,
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
+	// JSON decode promotes numbers to float64 in map[string]any.
+	wantModels := []any{
+		map[string]any{
+			"id":            "qwen36",
+			"name":          "qwen36",
+			"contextWindow": float64(131072),
+			"maxTokens":     float64(8192),
+		},
+	}
+	if !reflect.DeepEqual(openai["models"], wantModels) {
+		t.Fatalf("openai.models with caps: want %+v, got %+v", wantModels, openai["models"])
+	}
+}
+
+func TestGenerateConfig_OverlayCapabilityCaps_Omitted(t *testing.T) {
+	// Caps unset — the model entry must NOT contain the cap keys (no zero
+	// values, no nulls). Lets OpenClaw fall back to its own discovery.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 1,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOpenAI,
+			Name:     "qwen36",
+			BaseURL:  "http://10.0.0.5:8000/v1",
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
+	models, ok := openai["models"].([]any)
+	if !ok || len(models) != 1 {
+		t.Fatalf("openai.models: want one entry, got %+v", openai["models"])
+	}
+	entry := models[0].(map[string]any)
+	if _, ok := entry["contextWindow"]; ok {
+		t.Fatalf("contextWindow should be omitted when overlay doesn't set it, got %+v", entry)
+	}
+	if _, ok := entry["maxTokens"]; ok {
+		t.Fatalf("maxTokens should be omitted when overlay doesn't set it, got %+v", entry)
 	}
 }
 

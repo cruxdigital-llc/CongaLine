@@ -15,6 +15,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 )
 
@@ -219,7 +220,21 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		return fmt.Errorf("failed to read agent secrets: %w", err)
 	}
 
-	openClawJSON, err := common.GenerateOpenClawConfig(cfg, shared, "")
+	// Generate the gateway auth token at provision time. OpenClaw v2026.3.22+
+	// refuses to bind a non-loopback gateway without auth, so the token must be
+	// in the config before the container starts. RefreshAgent preserves this
+	// token on subsequent restarts via readExistingGatewayToken.
+	gatewayToken, err := generateToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate gateway token: %w", err)
+	}
+	overlay, err := p.loadOverlay(cfg)
+	if err != nil {
+		return err
+	}
+	openClawJSON, _, err := common.RuntimeGenerateAgentFilesWithOverlay(
+		runtime.ResolveRuntime(cfg.Runtime, ""), cfg, shared, perAgent, gatewayToken, overlay,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
 	}
@@ -296,6 +311,23 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	bootstrapPath, err := p.uploadProxyBootstrap(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to upload proxy bootstrap: %w", err)
+	}
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container starts. OpenClaw v2026.5.x+ extracted Slack into an external
+	// @openclaw/slack plugin that the gateway expects in /home/node/.openclaw/npm.
+	// Best-effort: a failure leaves the channel WARNing at startup but does not
+	// block the rest of the agent from coming up.
+	if rt, rtErr := runtime.Get(runtime.RuntimeOpenClaw); rtErr == nil {
+		for _, spec := range rt.PluginsToInstall(cfg) {
+			installCmd := rt.PluginInstallCommand(spec)
+			if installCmd == nil {
+				continue
+			}
+			if err := p.runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), "1000:1000", installCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, cfg.Name, err)
+			}
+		}
 	}
 
 	provEgressProxyName := policy.EgressProxyName(cfg.Name)
@@ -563,6 +595,28 @@ func (p *RemoteProvider) saveAgentConfig(cfg *provider.AgentConfig) error {
 	return p.ssh.Upload(posixpath.Join(p.remoteAgentsDir(), cfg.Name+".json"), agentJSON, 0600)
 }
 
+// loadOverlay reads agents/<name>/agent.yaml from the local repo (driven by
+// the configured repo_path). Returns nil overlay when repo_path isn't set or
+// the agents/ dir doesn't exist — both are valid states for an operator who
+// hasn't set up overlays yet. Returns an error only when the overlay exists
+// but fails to parse, so a typo can't silently drop the per-agent runtime
+// override.
+func (p *RemoteProvider) loadOverlay(cfg provider.AgentConfig) (*runtime.AgentOverlay, error) {
+	repoPath := p.getConfigValue("repo_path")
+	if repoPath == "" {
+		return nil, nil
+	}
+	behaviorDir := filepath.Join(repoPath, "agents")
+	if _, err := os.Stat(behaviorDir); err != nil {
+		return nil, nil
+	}
+	overlay, err := common.LoadAgentOverlay(behaviorDir, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load agent overlay: %w", err)
+	}
+	return overlay, nil
+}
+
 func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) error {
 	cfg, err := p.GetAgent(ctx, agentName)
 	if err != nil {
@@ -587,7 +641,13 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		existingToken = p.readExistingGatewayToken(posixpath.Join(dataDir, "openclaw.json"))
 	}
 
-	openClawJSON, err := common.GenerateOpenClawConfig(*cfg, shared, existingToken)
+	overlay, err := p.loadOverlay(*cfg)
+	if err != nil {
+		return err
+	}
+	openClawJSON, _, err := common.RuntimeGenerateAgentFilesWithOverlay(
+		runtime.ResolveRuntime(cfg.Runtime, ""), *cfg, shared, perAgent, existingToken, overlay,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
 	}
@@ -678,6 +738,20 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	// Ensure all files are owned by the container user before starting.
 	if _, err := p.ssh.Run(ctx, fmt.Sprintf("chown -R 1000:1000 %s", shellQuote(dataDir))); err != nil {
 		return fmt.Errorf("failed to chown data directory: %w", err)
+	}
+
+	// Seed external runtime plugins into the data dir before the persistent
+	// container restarts (see ProvisionAgent for the rationale).
+	if rt, rtErr := runtime.Get(runtime.RuntimeOpenClaw); rtErr == nil {
+		for _, spec := range rt.PluginsToInstall(*cfg) {
+			installCmd := rt.PluginInstallCommand(spec)
+			if installCmd == nil {
+				continue
+			}
+			if err := p.runPluginInstall(ctx, image, dataDir, rt.ContainerDataPath(), "1000:1000", installCmd); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to install plugin %s for %s: %v (agent will start but channel may WARN)\n", spec, agentName, err)
+			}
+		}
 	}
 
 	refreshProxyName := policy.EgressProxyName(agentName)

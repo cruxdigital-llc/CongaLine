@@ -82,6 +82,24 @@ func disconnectNetwork(ctx context.Context, network, container string) {
 	dockerRun(ctx, "network", "disconnect", network, container)
 }
 
+// runPluginInstall runs a one-shot container that mounts the agent's data
+// dir and executes a runtime-native plugin install command. Used to seed
+// external runtime plugins (e.g. @openclaw/slack on OpenClaw v2026.5.x+)
+// into the data dir BEFORE the persistent agent container starts.
+// Idempotent: the install command must succeed when the plugin is already
+// present on disk.
+func runPluginInstall(ctx context.Context, image, dataDir, containerDataPath, user string, installCmd []string) error {
+	args := []string{
+		"run", "--rm",
+		"--user", user,
+		"-v", fmt.Sprintf("%s:%s:rw", dataDir, containerDataPath),
+		image,
+	}
+	args = append(args, installCmd...)
+	_, err := dockerRun(ctx, args...)
+	return err
+}
+
 // runAgentContainer starts an agent container with full isolation.
 // Container parameters come from the runtime's ContainerSpec.
 func runAgentContainer(ctx context.Context, opts agentContainerOpts) error {

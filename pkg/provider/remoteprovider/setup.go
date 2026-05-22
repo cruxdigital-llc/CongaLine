@@ -187,10 +187,10 @@ chmod 700 %s/secrets %s/secrets/shared %s/secrets/agents %s/config
 	if cfg != nil {
 		// Non-interactive: use config value or existing value
 		if image == "" {
-			image = "ghcr.io/openclaw/openclaw:2026.3.11"
+			image = "ghcr.io/openclaw/openclaw:2026.5.18"
 		}
 	} else if image == "" || ui.Confirm("  Update this value?") {
-		defaultImage := "ghcr.io/openclaw/openclaw:2026.3.11"
+		defaultImage := "ghcr.io/openclaw/openclaw:2026.5.18"
 		if image != "" {
 			defaultImage = image
 		}

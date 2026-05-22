@@ -65,25 +65,32 @@ func BuildRouterEnvContent(shared SharedSecrets) string {
 // GenerateAgentFiles produces the config and .env file content for an agent
 // using the OpenClaw runtime. For runtime-aware callers, use
 // RuntimeGenerateAgentFiles instead.
-func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string) (configJSON []byte, envContent []byte, err error) {
-	return RuntimeGenerateAgentFiles(runtime.RuntimeOpenClaw, cfg, shared, perAgent)
+func GenerateAgentFiles(cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string, gatewayToken string) (configJSON []byte, envContent []byte, err error) {
+	return RuntimeGenerateAgentFiles(runtime.RuntimeOpenClaw, cfg, shared, perAgent, gatewayToken)
 }
 
 // RuntimeGenerateAgentFiles produces the config and .env file content for an
 // agent using the specified runtime. Equivalent to
-// RuntimeGenerateAgentFilesWithOverlay(rtName, cfg, shared, perAgent, nil).
-func RuntimeGenerateAgentFiles(rtName runtime.RuntimeName, cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string) (configBytes []byte, envContent []byte, err error) {
-	return RuntimeGenerateAgentFilesWithOverlay(rtName, cfg, shared, perAgent, nil)
+// RuntimeGenerateAgentFilesWithOverlay(rtName, cfg, shared, perAgent, gatewayToken, nil).
+func RuntimeGenerateAgentFiles(rtName runtime.RuntimeName, cfg provider.AgentConfig, shared SharedSecrets, perAgent map[string]string, gatewayToken string) (configBytes []byte, envContent []byte, err error) {
+	return RuntimeGenerateAgentFilesWithOverlay(rtName, cfg, shared, perAgent, gatewayToken, nil)
 }
 
 // RuntimeGenerateAgentFilesWithOverlay is the same as RuntimeGenerateAgentFiles
 // but additionally threads an optional per-agent overlay (from
 // agents/<name>/agent.yaml) into config generation.
+//
+// gatewayToken is required by OpenClaw v2026.3.22+ when the gateway binds to
+// a non-loopback interface. Callers should preserve an existing token from
+// disk on subsequent refreshes; pass "" only on intentional fresh provisions.
+// The OpenClaw generator emits a config with no auth.token in that case,
+// which the new image will refuse to start until a token is supplied.
 func RuntimeGenerateAgentFilesWithOverlay(
 	rtName runtime.RuntimeName,
 	cfg provider.AgentConfig,
 	shared SharedSecrets,
 	perAgent map[string]string,
+	gatewayToken string,
 	overlay *runtime.AgentOverlay,
 ) (configBytes []byte, envContent []byte, err error) {
 	rt, err := runtime.Get(rtName)
@@ -91,9 +98,10 @@ func RuntimeGenerateAgentFilesWithOverlay(
 		return nil, nil, err
 	}
 	configBytes, err = rt.GenerateConfig(runtime.ConfigParams{
-		Agent:   cfg,
-		Secrets: shared,
-		Overlay: overlay,
+		Agent:        cfg,
+		Secrets:      shared,
+		GatewayToken: gatewayToken,
+		Overlay:      overlay,
 	})
 	if err != nil {
 		return nil, nil, err

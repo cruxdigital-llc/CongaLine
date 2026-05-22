@@ -183,6 +183,52 @@ func TestModelOverlay_Validate_OpenAIBaseURL(t *testing.T) {
 	}
 }
 
+func TestModelOverlay_Validate_CapabilityCaps(t *testing.T) {
+	tests := []struct {
+		name          string
+		contextWindow int
+		maxTokens     int
+		wantErr       string
+	}{
+		{"both unset (default)", 0, 0, ""},
+		{"context_window only", 131072, 0, ""},
+		{"max_tokens only", 0, 8192, ""},
+		{"both set, valid", 131072, 8192, ""},
+		{"max_tokens equals context_window", 131072, 131072, ""},
+		{"negative context_window", -1, 0, "context_window must be positive"},
+		{"negative max_tokens", 0, -1, "max_tokens must be positive"},
+		{"max_tokens exceeds context_window", 1024, 2048, "max_tokens (2048) cannot exceed context_window (1024)"},
+		{"context_window above sane cap", 100_000_000, 0, "exceeds sane cap"},
+		{"max_tokens above sane cap", 0, 100_000_000, "exceeds sane cap"},
+		{"context_window at sane cap accepted", 10_000_000, 0, ""},
+		{"max_tokens at sane cap accepted", 0, 10_000_000, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &AgentOverlay{Version: 1, Model: &ModelOverlay{
+				Provider:      "openai",
+				Name:          "qwen36",
+				BaseURL:       "http://192.168.1.5:4000/v1",
+				ContextWindow: tc.contextWindow,
+				MaxTokens:     tc.maxTokens,
+			}}
+			err := o.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want nil error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %q", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
 func TestModelOverlay_Validate_URLShape(t *testing.T) {
 	tests := []struct {
 		name    string
