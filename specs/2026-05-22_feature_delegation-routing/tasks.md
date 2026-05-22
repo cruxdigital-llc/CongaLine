@@ -114,28 +114,45 @@ section under `agents.defaults.subagents` + extended models allowlist
 **Goal**: A v2 overlay against Hermes produces a `delegation:` block,
 with degraded-mode behavior for unsupported providers.
 
-- [ ] **3.1** `pkg/runtime/hermes/config.go`:
-  - new helper `applySubagentsOverlay` emitting `delegation:` YAML
+- [x] **3.1** `pkg/runtime/hermes/config.go`:
+  - new helper `applySubagentsOverlay(cfg, s, agentName)` emitting the
+    `delegation:` YAML block
   - `delegation.model: "<provider>/<name>"`
   - `delegation.max_concurrent_children` only when set
-  - `delegation.max_spawn_depth` only when set
-  - `delegation_mode` from overlay → not emitted (Hermes ignores)
-  - degraded-mode path: openai provider + base_url not in Hermes'
-    known adapter set → emit `delegation.model` only (omit
-    `delegation.provider`) + one-time stderr warning via
-    `overlayWarningOnce` pattern
-- [ ] **3.2** Tests `pkg/runtime/hermes/config_test.go`:
-  - `TestSubagentsOverlay_Hermes_OllamaInherit` — ollama → only model
-    emitted, no provider
-  - `TestSubagentsOverlay_Hermes_DegradedNoProvider` — openai + custom
-    base_url → only model emitted, warning logged
-  - `TestSubagentsOverlay_Hermes_NoBlock` — output identical to v1
-  - `TestSubagentsOverlay_Hermes_MaxConcurrent` — value emitted as
-    `max_concurrent_children`
-- [ ] **3.3** Full test suite green.
+  - `delegation.max_spawn_depth` only when set (Hermes-specific knob)
+  - `delegation_mode` filtered out (OpenClaw-only — Hermes generator
+    must not emit it; covered by a regression test)
+  - degraded-mode path: `openai` provider + base_url not matching any
+    `hermesKnownProviderHosts` entry → emit `delegation.model` only
+    (omit `delegation.provider`) + one-time stderr warning using a
+    `sync.Map`-based dedup mirror of the `overlayWarningOnce` pattern
+  - `stderrWriter` indirection (var `func() *os.File`) so tests can
+    pipe stderr without touching `os.Stderr` directly
+- [x] **3.2** Tests `pkg/runtime/hermes/config_test.go` (new file —
+  Hermes previously had no test files) — 9 new test functions:
+  - `TestGenerateConfig_HermesNoOverlay` — baseline: no delegation block
+  - `TestGenerateConfig_HermesV2NoSubagents_IdenticalToBaseline` —
+    v2 doc without subagents block is byte-identical to baseline
+  - `TestGenerateConfig_HermesSubagents_OllamaInherit` — ollama →
+    model emitted, no provider, no warning (transparent inheritance)
+  - `TestGenerateConfig_HermesSubagents_DegradedNoProvider` — openai +
+    custom base_url → model only, warning logged
+  - `TestGenerateConfig_HermesSubagents_KnownAdapterHostNoWarning` —
+    openai + openrouter base_url → no warning
+  - `TestGenerateConfig_HermesSubagents_MaxConcurrentEmittedAsHermesKey`
+    — overlay `max_concurrent` emits as Hermes' `max_concurrent_children`
+    (NOT the OpenClaw `maxConcurrent`)
+  - `TestGenerateConfig_HermesSubagents_MaxSpawnDepthEmitted` —
+    Hermes-specific knob actually appears in output
+  - `TestGenerateConfig_HermesSubagents_DelegationModeFiltered` —
+    OpenClaw-only `delegation_mode` filtered out
+  - `TestGenerateConfig_HermesSubagents_WarningEmittedOnce` — dedup
+    across two GenerateConfig calls
+- [x] **3.3** Full test suite green. `go vet ./...` clean. `gofmt -l
+  pkg/runtime/ pkg/common/` clean.
 
 **Phase 3 acceptance**: Hermes generator produces the documented shape;
-degraded path is logged, not silent.
+degraded path is logged, not silent. ✅
 
 ---
 

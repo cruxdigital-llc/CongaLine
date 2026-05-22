@@ -346,3 +346,49 @@ User said "continue" — implemented Phase 2 (OpenClaw generator).
   tests still pass unchanged.
 
 **Next**: Phase 3 (Hermes generator). Commit Phase 2 first.
+
+### 2026-05-22 — Phase 3 implementation complete
+
+**Files modified/created**:
+- [pkg/runtime/hermes/config.go](../../pkg/runtime/hermes/config.go)
+  — added `applySubagentsOverlay` helper + `hermesKnownProviderHosts`
+  list + `emitHermesDegradedWarning` (`sync.Map`-based dedup) +
+  `stderrWriter` indirection for testability. Wired into the existing
+  `GenerateConfig`. Imports `os` and `sync`.
+- [pkg/runtime/hermes/config_test.go](../../pkg/runtime/hermes/config_test.go)
+  — **new file** (Hermes had no test files before this phase). 9 test
+  functions covering the no-overlay baseline, v2-without-subagents
+  byte-equality, ollama transparent inheritance, openai degraded-mode
+  warning, openrouter-host no-warning, Hermes-specific config key
+  naming (`max_concurrent_children`, `max_spawn_depth`),
+  `delegation_mode` filtering, and warning dedup.
+
+**Key implementation decisions**:
+- **`stderrWriter` indirection** instead of `os.Stderr` directly:
+  lets tests redirect output to a pipe without touching the global,
+  which would race with other tests if the package ever grows
+  parallel tests.
+- **`hermesKnownProviderHosts` is a simple substring list**, not a
+  full URL parser. Easier to maintain; Hermes' enum is small (5 hosts)
+  and a substring check is precise enough — `openrouter.ai` doesn't
+  collide with any other entry.
+- **No mapping attempted** from our overlay's `{ollama, openai}` enum
+  to Hermes' `{openrouter, nous, zai, kimi-coding, minimax}` enum.
+  Doing so would require new overlay metadata operators can't
+  currently supply, and it bakes in assumptions about Hermes' adapter
+  resolution that may change upstream. The degraded-mode warning is
+  the honest answer.
+- **`delegation_mode` actively filtered out** of Hermes output even
+  if the operator set it in the overlay. The Hermes runtime doesn't
+  recognize it and emitting it would just pollute the config. A
+  dedicated regression test catches accidental emission.
+
+**Verification**:
+- `go test ./pkg/runtime/hermes/`: all 9 new tests pass.
+- `go test ./...` full suite: green.
+- `go vet ./...`: clean.
+- `gofmt -l pkg/runtime/ pkg/common/`: clean.
+
+**Generator parity achieved**: a v2 overlay with a `subagents:` block
+now produces correctly-shaped config on both runtimes. Phases 4–8
+(egress check, role packages, CLI flag, docs, verification) remain.
