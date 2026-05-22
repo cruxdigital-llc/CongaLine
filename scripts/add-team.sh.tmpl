@@ -93,7 +93,7 @@ cat > /opt/conga/config/$AGENT_NAME-config.json << OCCONFIG
       "channels": { "$SLACK_CHANNEL": { "enabled": true, "requireMention": false } }
     }
   },
-  "gateway": { "port": 18789, "mode": "local", "bind": "lan", "auth": { "mode": "token", "token": "$GATEWAY_TOKEN" }, "controlUi": { "allowedOrigins": ["http://localhost:${GATEWAY_PORT}"] } },
+  "gateway": { "port": 18789, "mode": "local", "bind": "lan", "auth": { "mode": "token", "token": "$GATEWAY_TOKEN" }, "controlUi": { "allowedOrigins": ["http://localhost:18789", "http://localhost:${GATEWAY_PORT}"] } },
   "skills": { "install": { "nodeManager": "pnpm" } },
   "plugins": { "entries": { "slack": { "enabled": true } } },
   "update": { "checkOnStart": false, "auto": { "enabled": false } }

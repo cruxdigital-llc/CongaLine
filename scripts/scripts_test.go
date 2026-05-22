@@ -166,6 +166,22 @@ func assertOpenClawV5Shape(t *testing.T, rendered string) {
 		"streaming object form":       `"streaming": { "mode": "partial", "nativeTransport": true }`,
 		"update.checkOnStart false":   `"update": { "checkOnStart": false, "auto": { "enabled": false } }`,
 		"plugin install ExecStartPre": "openclaw plugins install @openclaw/slack",
+		// gateway.bind=lan is what gives us 0.0.0.0 binding for Docker port
+		// forwarding (the round-2 commit doc was wrong about mode controlling
+		// this); without it the gateway falls back to loopback and Docker
+		// `-p 127.0.0.1:<host>:18789` can't proxy traffic in.
+		"gateway.bind=lan": `"bind": "lan"`,
+		// gateway.mode=local — the round-2 migration. mode=remote is the
+		// split-transport topology which we are not; the new image rejects
+		// it without --allow-unconfigured.
+		"gateway.mode=local": `"mode": "local"`,
+		// allowedOrigins must include BOTH the container port (18789, for
+		// in-container CLI tools that call the gateway via localhost) AND
+		// the published host port (for browser/tunnel access). CLAUDE.md
+		// line 88 is explicit about this. Missing the container-port entry
+		// produces "origin not allowed" from any in-container HTTP caller.
+		"allowedOrigins includes container port": `"http://localhost:18789"`,
+		"allowedOrigins includes host port":      `"http://localhost:${GATEWAY_PORT}"`,
 	}
 	for desc, want := range positives {
 		if !strings.Contains(rendered, want) {
