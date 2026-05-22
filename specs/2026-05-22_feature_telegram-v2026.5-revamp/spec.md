@@ -60,29 +60,35 @@ After this spec lands:
 
 ```go
 // SupportsRuntime reports whether this channel can be used with the
-// named agent runtime. Provisioning and binding paths consult this
-// before generating config or accepting a binding, so the unsupported
-// combination fails early with an operator-actionable message rather
-// than surfacing as a runtime config-generation error.
+// named agent runtime ("openclaw", "hermes"). Provisioning and
+// binding paths consult this before generating config or accepting
+// a binding, so an unsupported combination fails early with an
+// operator-actionable message rather than surfacing as a runtime
+// config-generation error.
 //
-// Returns true for any runtime by default; channels with a runtime
-// constraint return false for the unsupported runtimes.
-SupportsRuntime(runtimeName runtime.RuntimeName) (bool, string)
+// Returns (true, "") when supported. Returns (false, reason) when
+// not, with reason being a single sentence the operator can act on.
+SupportsRuntime(runtimeName string) (supported bool, reason string)
 ```
-
-The second return value is the explanation string when the bool is
-`false` ("telegram is not supported for the openclaw runtime; use the
-hermes runtime — see specs/2026-05-22_feature_telegram-v2026.5-revamp/
-for context"). Empty when bool is `true`.
 
 **Why a method, not a field**: future channels may have version-gated
 support (e.g., a hypothetical Discord channel that only works with
 specific OpenClaw versions). A method lets each channel encode its
 own constraint logic.
 
-**Why a `runtime.RuntimeName` argument, not `string`**: enforces type
-safety at the call site so a typo in `"openclawd"` becomes a compile
-error rather than a silent always-supported.
+**Why a `string` argument, not `runtime.RuntimeName` (post-impl
+revision)**: pre-impl this spec proposed the typed form. During
+implementation an import-cycle check revealed `pkg/runtime` already
+imports `pkg/channels` — taking `runtime.RuntimeName` here would
+create a cycle. The `string` form is correct given the package
+layout. Call sites use `string(runtime.ResolveRuntime(...))` so the
+type-safety boundary still lives at the resolution step.
+
+**Why a single combined `(bool, string)` return, not `error`**: the
+two return values map naturally to the two distinct concerns
+("can I use this?" vs "what to tell the operator"). Callers wrap the
+reason with their own `"channel X is not supported for Y runtime:"`
+prefix; the channel-provided reason focuses on the actionable fix.
 
 ### Per-channel implementations
 
@@ -101,9 +107,16 @@ with a hard error:
 
 ```go
 func (t *Telegram) OpenClawChannelConfig(...) (map[string]any, error) {
-    return nil, errors.New("telegram is not supported for the openclaw runtime; use the hermes runtime — see specs/2026-05-22_feature_telegram-v2026.5-revamp/")
+    return nil, errors.New(unsupportedOpenClawMsg)
 }
 ```
+
+Where `unsupportedOpenClawMsg` (per-package constant) reads `"use the
+hermes runtime instead — see specs/2026-05-22_feature_telegram-v2026.5-revamp/
+for context"`. Callers at the CLI / MCP / provider gate sites wrap
+this with a `"channel X is not supported for Y runtime:"` prefix; the
+channel-side message focuses on the actionable fix, not on restating
+the problem.
 
 Defense in depth: even if a caller bypasses `SupportsRuntime`, the
 config generator fails closed.
@@ -144,7 +157,7 @@ Returns a tool error with the friendly message.
 
 | # | File | Change |
 |---|---|---|
-| 1 | `pkg/channels/channels.go` | Add `SupportsRuntime(runtime.RuntimeName) (bool, string)` to the `Channel` interface. |
+| 1 | `pkg/channels/channels.go` | Add `SupportsRuntime(string) (bool, string)` to the `Channel` interface. **Post-impl note**: spec originally said `runtime.RuntimeName`; impl uses `string` because pkg/runtime → pkg/channels already exists (would cycle). |
 | 2 | `pkg/channels/slack/slack.go` | Implement `SupportsRuntime` — always `(true, "")`. |
 | 3 | `pkg/channels/telegram/telegram.go` | Implement `SupportsRuntime` — `(true, "")` for `RuntimeHermes`, `(false, …)` for others. Replace `OpenClawChannelConfig` body with an `errors.New(...)` return. Drop the warning block; the spec is now binding behavior. |
 | 4 | `internal/cmd/admin_provision.go` | Call `ch.SupportsRuntime(agent.Runtime)` after `channels.Get` and before `ValidateBinding`. Refuse with the explanation string. |
@@ -170,7 +183,7 @@ Returns a tool error with the friendly message.
 |---|---|---|
 | D1 | `CLAUDE.md` Slack Architecture / Channels section | Add a "Supported channel × runtime matrix" note: slack works for both; telegram is hermes-only. |
 | D2 | `product-knowledge/standards/architecture.md` Channel Abstraction section | Update "Adding a New Channel" to mention `SupportsRuntime` as part of the implementation contract. |
-| D3 | `agents/_example/agent.yaml.example` | Document the runtime-compat constraint in the overlay schema header comment (no field change). |
+| ~~D3~~ | ~~`agents/_example/agent.yaml.example`~~ | **Dropped during implementation**: this file documents the per-agent runtime *overlay* (model, memory, tools). Channel × runtime constraints are a provisioning concern that lives outside the overlay schema. The constraint is documented in CLAUDE.md and architecture.md instead. |
 | D4 | `pkg/channels/telegram/telegram.go` package doc comment | Replace the existing "Uses the same proxy pattern as Slack" lead-in with an accurate statement: "Hermes-only. OpenClaw + Telegram is unsupported (see spec)." |
 
 ## Verification

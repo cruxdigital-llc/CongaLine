@@ -152,6 +152,19 @@ func TestRoutingEntries_EmptyID(t *testing.T) {
 	}
 }
 
+// TestBehaviorTemplateVars — parity with slack's same-named test. Confirms
+// behavior file templates receive the canonical TELEGRAM_ID substitution
+// variable. Without this, agent.yaml templates that reference {{TELEGRAM_ID}}
+// would silently render the empty string.
+func TestBehaviorTemplateVars(t *testing.T) {
+	tg := &Telegram{}
+	binding := channels.ChannelBinding{Platform: "telegram", ID: "123456789"}
+	vars := tg.BehaviorTemplateVars("user", binding)
+	if vars["TELEGRAM_ID"] != "123456789" {
+		t.Errorf("TELEGRAM_ID = %q, want 123456789", vars["TELEGRAM_ID"])
+	}
+}
+
 // TestSupportsRuntime is the central guard for the Hermes-only policy.
 // Reasoning is in pkg/channels/telegram/telegram.go (package doc) and
 // specs/2026-05-22_feature_telegram-v2026.5-revamp/spec.md.

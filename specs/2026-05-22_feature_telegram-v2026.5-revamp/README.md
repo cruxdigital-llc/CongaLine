@@ -187,3 +187,148 @@ abstractions. Proceed to implementation.
     Agent dir confirmed unchanged. The error string was tightened mid-implementation to avoid restating "telegram is not supported for the openclaw runtime" both in the wrapper prefix and the channel-provided reason — the per-channel message now leads with the actionable fix.
 
 - **Verification gates** all clean: `go build ./...`, `go vet ./...`, `gofmt -l .` empty, `go test ./... -count=1` passes across 19 packages including the integration tag build.
+
+## Verification (`/glados:verify-feature`)
+
+- **2026-05-22 (verify phase, automated)**: full suite + lint re-run on
+  branch HEAD `ce3014c`:
+  - `go test ./... -count=1` — 19/19 packages pass
+  - `go vet ./...` — clean
+  - `gofmt -l .` — empty
+  - `go build -tags integration ./internal/cmd/` — clean
+  - `go mod tidy -diff` — minor diff (`spf13/pflag` could move from
+    indirect to direct), **but pre-existing on `origin/main`** — not
+    introduced by this feature. Filing as a follow-up rather than
+    fixing in scope.
+
+- **2026-05-22 (verify phase, persona review of implementation)**:
+
+  ### Architect — ✅ APPROVE
+  - **Diff size honest**: 1505 insertions / 44 deletions across 21
+    files. Implementation code is small (~120 lines of new logic);
+    bulk is spec docs (~900 lines) and tests (~225 lines).
+    Diff:code ratio is healthy for an interface-evolution change.
+  - **Interface evolution discipline held**: `Channel.SupportsRuntime`
+    landed with both implementations updated in the same commit. The
+    interface-guard test (`registry_test.go::TestChannelInterface_Compile`)
+    locks the contract for future channels.
+  - **Import-cycle resolution**: the `string` parameter form was the
+    forced choice (pkg/runtime already imports pkg/channels). Documented
+    in the interface comment so future maintainers don't try to
+    "improve" it to a typed parameter without re-checking.
+  - **Provider parity**: gate landed in all 3 providers' `BindChannel`
+    (local, remote, AWS) plus CLI + MCP. The single non-redundant gate
+    is at `resolveChannelBinding` in admin_provision.go; the providers'
+    gates are defense-in-depth against direct `BindChannel` callers.
+    No interface-parity violations.
+  - **Channel-abstraction boundary preserved**: no telegram-specific
+    code outside `pkg/channels/telegram/`. The reason string is
+    constant-encapsulated (`unsupportedOpenClawMsg`) so future Slack
+    extensions to the same pattern can mirror without copy-paste.
+
+  ### QA — ✅ APPROVE
+  - **Test coverage matches spec inventory exactly**: T1–T6 from
+    `spec.md` all landed with the planned promotion of T5 to the
+    integration build tag.
+  - **Manual verification (V1) confirmed end-to-end**: exit 1, no
+    state mutation, error message points at spec dir.
+  - **Edge cases asserted in tests**: empty runtime (defaults to
+    openclaw), unknown runtime name, hermes-supported, openclaw-rejected
+    — all in `TestSupportsRuntime` table.
+  - **Defense-in-depth path tested**: `TestOpenClawChannelConfig_Errors`
+    catches any code that reaches the dormant emission directly.
+  - **Provider-layer regression guard**: the local-provider test
+    seeds a real openclaw agent + telegram secret and asserts no
+    `Channels[]` mutation on rejection — catches a class of "gate fires
+    but state still updates" bugs that pure-unit tests would miss.
+
+- **2026-05-22 (verify phase, post-impl standards gate)**:
+
+  | Standard | Status | Notes |
+  |---|---|---|
+  | architecture.md — Provider contract | ✅ | All 3 providers symmetric |
+  | architecture.md — Shared logic in pkg/channels | ✅ | `SupportsRuntime` is part of the interface, not provider code |
+  | architecture.md — Channel abstraction | ✅ | No telegram-specific code outside pkg/channels/telegram/ |
+  | architecture.md — Interface parity (CLI/JSON/MCP) | ✅ | Gate fires identically in CLI + MCP |
+  | architecture.md — Module Structure (pkg/internal) | ✅ | Interface public; provider gating public; CLI/MCP gates private |
+  | architecture.md — Agent Data Safety | ✅ | Gate fires before any data path; verified by provider-layer test |
+  | security.md — Universal Baseline / pinned image / secrets via env | ✅ | No security-surface change |
+  | config-taxonomy.md — Per-agent decision rule | ✅ | No new per-agent fields |
+  | egress-controls.md — iptables baseline | ✅ | No egress-control change |
+
+  **Post-impl gate result**: identical to pre-impl gate — no must
+  violations, no should warnings. The implementation faithfully
+  reflects what the spec promised.
+
+- **2026-05-22 (verify phase, spec retrospection)**:
+
+  Three divergences from `spec.md` reconciled by updating the spec:
+
+  1. **Parameter type**: spec said `SupportsRuntime(runtime.RuntimeName)`;
+     impl uses `SupportsRuntime(string)` because pkg/runtime already
+     imports pkg/channels — the typed form would have created a cycle.
+     spec.md interface block + file-level change row both updated to
+     reflect the `string` form, with the cycle-check reasoning carried
+     in the spec doc for future re-evaluation.
+  2. **Error-message form**: spec showed the full
+     `"telegram is not supported for the openclaw runtime; use the
+     hermes runtime — see specs/..."` string. Impl tightened to
+     `"use the hermes runtime instead — see specs/..."` after V1
+     manual verification showed the wrapper prefix at the gate call
+     site was duplicating the unsupported-runtime phrase. spec.md
+     defense-in-depth code block updated.
+  3. **D3 dropped**: `agents/_example/agent.yaml.example` (runtime
+     overlay schema) was untouched in impl. Channel × runtime
+     constraints are a provisioning concern that doesn't fit the
+     overlay schema; documenting it there would muddy the file's
+     purpose. spec.md D3 row marked as dropped with reasoning.
+
+  Standards files (`product-knowledge/standards/*.md`) audited for stale
+  code examples referencing the dormant telegram emission pattern —
+  none found. `product-knowledge/standards/architecture.md` Channel
+  Abstraction section was updated during implementation and correctly
+  shows the `string` parameter form (matches impl).
+
+- **2026-05-22 (verify phase, test synchronization)**:
+
+  - **Stale references**: searched new test files for `TODO`/`XXX`/
+    `deleted`/`removed`/`FIXME` markers — none.
+  - **Fake/double alignment**: only `testChannel` in
+    `registry_test.go` exists; updated to include `SupportsRuntime` so
+    it stays in sync with the `Channel` interface. `TestChannelInterface_Compile`
+    locks this guard.
+  - **New method coverage**: `Channel.SupportsRuntime` is the only new
+    public method; covered by `TestSupportsRuntime` in BOTH slack and
+    telegram test files.
+  - **Sibling comparison (slack_test.go vs telegram_test.go)**:
+    slack has `TestBehaviorTemplateVars`; telegram had the method but
+    not the test. **Closed the gap** — added
+    `TestBehaviorTemplateVars` to telegram_test.go asserting
+    `TELEGRAM_ID` is set from `binding.ID`. Without this, future
+    template-rendering changes could silently break agent
+    behavior-file substitutions.
+  - Slack's `TestOpenClawChannelConfig_{User,Team,NoID}` have no
+    telegram equivalent because telegram's `OpenClawChannelConfig`
+    returns a hard error for all inputs (Option C); the
+    `TestOpenClawChannelConfig_Errors` test we added covers both
+    "user" and "team" agent types against that error path.
+  - **Final regression**: `go test ./... -count=1` clean across 19
+    packages with the new test added. `go vet`, `gofmt` clean.
+
+## Final State
+
+Implementation is verified, tests are in sync, standards gate passed
+both pre- and post-implementation, no divergences left undocumented.
+
+**Branch**: `spec/telegram-v2026.5-revamp` at HEAD `ce3014c` (plus the
+verify-phase doc updates being committed now).
+**PR**: [#52](https://github.com/cruxdigital-llc/CongaLine/pull/52).
+**Status**: ready to merge.
+
+**Carried-forward follow-ups (out of scope; tracked here, not
+implemented)**:
+- Option B (per-agent direct telegram for OpenClaw) — `plan.md` Phase
+  2+ remains the starting point. No timeline; pick up when an operator
+  needs telegram + OpenClaw.
+- `go mod tidy -diff` discrepancy (pflag indirect→direct). Pre-existing
+  on `origin/main`; safe to fix in a follow-up PR.
