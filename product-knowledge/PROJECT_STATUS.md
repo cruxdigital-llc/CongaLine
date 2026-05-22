@@ -255,6 +255,47 @@ token at provision time in both local and remote ProvisionAgent paths
 - [ ] **Phase 5**: docs/memory hygiene + 7-day soak window before any
   fast-follow or dependent feature work
 
+### 29. Delegation Routing — Spec'd, Ready for Implementation
+*Lead: Architect + PM + QA*
+*See `specs/2026-05-22_feature_delegation-routing/` for full trace*
+
+Two-tier delegation model. **Tier 1 — Subagents** (ephemeral,
+in-runtime; renamed from "delegate" after upstream check found
+OpenClaw already uses that name for org-identity agents): every Conga
+agent declares an optional single subagent model in `agent.yaml` v2
+under a new top-level `subagents:` block; the runtime delegates
+mechanical work to it autonomously via its native subagent mechanism
+(OpenClaw `sessions_spawn` + `agents.defaults.subagents` / Hermes
+`delegate_task` + `delegation:`). **Tier 2 — Role agents** (persistent):
+a canonical five-role catalog (Ops, Data, Research → Qwen-backed;
+Code/Dev, Writing → Opus-backed with Qwen subagent) ships as overlay
+packages under `agents/_defaults/<runtime>/role-*/`, with
+`conga admin add-user --role X` as sugar over the existing flow. No
+new Conga data-model concept; slots into existing config taxonomy.
+
+- [x] Requirements (`requirements.md`)
+- [x] Plan (`plan.md`) — 4 design decisions resolved
+- [x] Phase 1 upstream capability check (`upstream-capability.md`) —
+  both OpenClaw v2026.5.18 and Hermes have mature native support
+- [x] Spec (`spec.md`) — 8-phase implementation contract, ~30 new
+  tests, all 7 plan.md open questions closed
+- [x] Persona review passed (Architect + PM + QA all APPROVE; QA
+  note on `--role` idempotency test absorbed into Phase 6)
+- [x] Pre-implementation standards gate passed (0 ❌ / 1 ⚠️ resolved
+  inline by adding § "Secrets handling for subagent providers"
+  to spec.md / 0 ℹ️)
+- [ ] Phase 1 — Schema bump + types (`pkg/runtime/overlay.go`,
+  `pkg/common/overlay_agent.go`)
+- [ ] Phase 2 — OpenClaw generator (`pkg/runtime/openclaw/config.go`)
+- [ ] Phase 3 — Hermes generator (`pkg/runtime/hermes/config.go`)
+- [ ] Phase 4 — Egress check helper + provisioning integration
+- [ ] Phase 5 — Role packages (10 directories: 5 roles × 2 runtimes)
+- [ ] Phase 6 — CLI `--role` flag + JSON + MCP (interface parity)
+- [ ] Phase 7 — Docs (`agent.yaml.example`, `config-taxonomy.md`,
+  `CLAUDE.md`)
+- [ ] Phase 8 — Verification (test suite + live smoke + verify-feature)
+- [ ] No regression on Feature #27 (Local Model Routing — live on AWS)
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
