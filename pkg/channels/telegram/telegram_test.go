@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
@@ -148,5 +149,79 @@ func TestRoutingEntries_EmptyID(t *testing.T) {
 	entries := tg.RoutingEntries("user", binding, "myagent", 18789)
 	if len(entries) != 0 {
 		t.Errorf("RoutingEntries with empty ID should return nil, got %d entries", len(entries))
+	}
+}
+
+// TestSupportsRuntime is the central guard for the Hermes-only policy.
+// Reasoning is in pkg/channels/telegram/telegram.go (package doc) and
+// specs/2026-05-22_feature_telegram-v2026.5-revamp/spec.md.
+func TestSupportsRuntime(t *testing.T) {
+	tg := &Telegram{}
+	cases := []struct {
+		name        string
+		runtime     string
+		wantOK      bool
+		msgContains string // substring of reason; only checked when !wantOK
+	}{
+		{"hermes supported", "hermes", true, ""},
+		// The reason string focuses on the actionable fix ("use hermes")
+		// rather than restating which runtime is unsupported. Callers
+		// (CLI / MCP / provider BindChannel) add a "channel X is not
+		// supported for Y runtime:" prefix, so the unsupported-runtime
+		// name surfaces in the operator-visible error even though it's
+		// not in the per-channel reason itself.
+		{"openclaw rejected", "openclaw", false, "hermes"},
+		{"empty rejected (defaults to openclaw upstream)", "", false, "hermes"},
+		{"unknown runtime rejected", "future-runtime-name", false, "hermes"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, reason := tg.SupportsRuntime(tc.runtime)
+			if ok != tc.wantOK {
+				t.Errorf("SupportsRuntime(%q) ok = %v, want %v", tc.runtime, ok, tc.wantOK)
+			}
+			if !tc.wantOK {
+				if reason == "" {
+					t.Errorf("SupportsRuntime(%q) returned ok=false with empty reason; operator gets no actionable message", tc.runtime)
+				}
+				if tc.msgContains != "" && !strings.Contains(reason, tc.msgContains) {
+					t.Errorf("SupportsRuntime(%q) reason %q does not mention %q", tc.runtime, reason, tc.msgContains)
+				}
+				if !strings.Contains(reason, "specs/2026-05-22_feature_telegram-v2026.5-revamp/") {
+					t.Errorf("SupportsRuntime(%q) reason should point operators at the spec dir; got %q", tc.runtime, reason)
+				}
+			}
+		})
+	}
+}
+
+// TestOpenClawChannelConfig_Errors confirms the defense-in-depth path:
+// if any caller bypasses the SupportsRuntime gate and asks for the
+// channel config, the channel implementation refuses rather than emit
+// the pre-v2026.5.18 shape that the new image would reject anyway.
+func TestOpenClawChannelConfig_Errors(t *testing.T) {
+	tg := &Telegram{}
+	for _, agentType := range []string{"user", "team"} {
+		t.Run(agentType, func(t *testing.T) {
+			cfg, err := tg.OpenClawChannelConfig(agentType, channels.ChannelBinding{ID: "123"}, nil)
+			if err == nil {
+				t.Fatalf("expected error, got cfg=%v", cfg)
+			}
+			if cfg != nil {
+				t.Errorf("expected nil cfg on error, got %v", cfg)
+			}
+			// The error string is the shared unsupportedOpenClawMsg constant —
+			// it focuses on the actionable fix ("use the hermes runtime")
+			// rather than restating the failure. The wrapper at every gate
+			// call site adds the "channel X is not supported for Y runtime"
+			// prefix; here (defense-in-depth path) the wrapper isn't applied,
+			// so we assert only on the actionable-fix substring.
+			if !strings.Contains(err.Error(), "hermes runtime") {
+				t.Errorf("error message should suggest the hermes runtime fix, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "specs/2026-05-22_feature_telegram-v2026.5-revamp/") {
+				t.Errorf("error message should point at the spec dir, got: %v", err)
+			}
+		})
 	}
 }

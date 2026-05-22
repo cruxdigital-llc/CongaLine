@@ -162,3 +162,28 @@ abstractions. Proceed to implementation.
 - **Gate placement**: CLI provisioning + MCP provisioning + all three providers' `BindChannel` + defense-in-depth `OpenClawChannelConfig` returning error.
 - **Backward compat policy**: if a hypothetical existing OpenClaw + Telegram agent is discovered, the gate triggers immediately and refuses refresh. Loud failure with operator-actionable message preferred over silent breakage.
 - **Out of scope, deferred**: Option B (per-agent direct telegram). `plan.md` remains the starting point if/when needed.
+
+
+## Implementation (Phase Complete)
+
+- **2026-05-22 (implementation)**: `/glados:implement-feature` invoked.
+  All 6 phases from `tasks.md` ran in order:
+  - **Phase 1** — `Channel` interface gained `SupportsRuntime(string) (bool, string)`. Import-cycle check forced the `string` parameter form (the `runtime.RuntimeName` form would have created `pkg/channels` → `pkg/runtime` → `pkg/channels`).
+  - **Phase 2** — Slack returns `(true, "")` for any runtime. Telegram returns `(true, "")` for `"hermes"`, `(false, unsupportedOpenClawMsg)` otherwise. `OpenClawChannelConfig` rewritten as a hard-error defense-in-depth path. Package doc rewritten.
+  - **Phase 3** — Gates added at five `ValidateBinding` call sites: CLI `resolveChannelBinding`, MCP `provision_agent` tool, local/remote/aws `BindChannel`. `runtime.ResolveRuntime(a.Runtime, "")` resolves the effective runtime before consulting `SupportsRuntime` so legacy empty-string agents are correctly treated as openclaw.
+  - **Phase 4** — Tests added: `slack_test.go::TestSupportsRuntime` (runtime-neutral assertion); `telegram_test.go::TestSupportsRuntime` (table-driven: hermes ok, openclaw/empty/unknown rejected, reason mentions hermes fix + spec path); `telegram_test.go::TestOpenClawChannelConfig_Errors` (defense-in-depth); `registry_test.go::TestChannelInterface_Compile` (interface evolution guard); `localprovider/channels_test.go::TestBindChannel_RuntimeGate_RejectsTelegramOnOpenClaw` (provider-layer test, seeds shared telegram secret + openclaw agent, asserts rejection + no state mutation); `integration_telegram_test.go::TestAddUser_TelegramOnOpenClawRejected` (integration, build tag `integration`).
+  - **Phase 5** — `CLAUDE.md` channel × runtime compatibility table added above the Slack Architecture section. `product-knowledge/standards/architecture.md` "Adding a New Channel" expanded with `SupportsRuntime` contract. `agents/_example/agent.yaml.example` left as-is (channel concerns don't fit the runtime-overlay schema).
+  - **Phase 6** — V1 manual verification:
+    ```
+    $ conga --provider local --data-dir /tmp/conga-verify-tg \
+        admin add-user testuser --runtime openclaw \
+        --channel telegram:123456789
+    Error: channel telegram is not supported for the openclaw runtime: \
+      use the hermes runtime instead — see \
+      specs/2026-05-22_feature_telegram-v2026.5-revamp/ for context
+    $ echo $?
+    1
+    ```
+    Agent dir confirmed unchanged. The error string was tightened mid-implementation to avoid restating "telegram is not supported for the openclaw runtime" both in the wrapper prefix and the channel-provided reason — the per-channel message now leads with the actionable fix.
+
+- **Verification gates** all clean: `go build ./...`, `go vet ./...`, `gofmt -l .` empty, `go test ./... -count=1` passes across 19 packages including the integration tag build.

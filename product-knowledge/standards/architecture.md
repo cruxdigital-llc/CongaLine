@@ -239,6 +239,8 @@ To add a second messaging platform (e.g., Telegram):
 
 The `Channel` interface covers: validation, secrets, OpenClaw config generation, plugin config, routing entries, agent/router env vars, webhook paths, and behavior template vars. All delegated per-platform.
 
+**Runtime compatibility** — `Channel.SupportsRuntime(runtimeName string) (bool, string)` lets a channel declare which agent runtimes it works with. Slack returns `(true, "")` for any runtime. Telegram returns `(true, "")` only for `"hermes"`; OpenClaw + Telegram is unsupported because v2026.5.x's OpenClaw telegram plugin has no receiver mode that maps onto the router-fanout pattern (see `specs/2026-05-22_feature_telegram-v2026.5-revamp/`). The CLI provisioning path, the MCP `provision_agent` tool, and each provider's `BindChannel` call `SupportsRuntime` before `ValidateBinding` so an unsupported combination fails early with an operator-actionable message rather than as a runtime config-generation error. New channels should return `(true, "")` unless they have a documented upstream constraint.
+
 ## Testing Conventions
 
 | Convention | Rationale |

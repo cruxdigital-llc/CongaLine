@@ -60,6 +60,23 @@ func TestValidateBinding_Team(t *testing.T) {
 	}
 }
 
+// TestSupportsRuntime — Slack is runtime-neutral. Any runtime name
+// (including unknowns and empty strings) returns supported. The Channel
+// abstraction lives above runtime concerns for Slack because its router
+// (HTTP webhook fan-out) doesn't care who's receiving on the other end.
+func TestSupportsRuntime(t *testing.T) {
+	s := &Slack{}
+	for _, runtimeName := range []string{"openclaw", "hermes", "", "future-runtime"} {
+		ok, reason := s.SupportsRuntime(runtimeName)
+		if !ok {
+			t.Errorf("Slack.SupportsRuntime(%q) = (false, %q); want (true, \"\")", runtimeName, reason)
+		}
+		if reason != "" {
+			t.Errorf("Slack.SupportsRuntime(%q) reason = %q; want empty", runtimeName, reason)
+		}
+	}
+}
+
 func TestHasCredentials(t *testing.T) {
 	s := &Slack{}
 	tests := []struct {
