@@ -3,6 +3,7 @@ package openclaw
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
@@ -387,5 +388,307 @@ func TestGenerateConfig_OverlayAndChannelsCoexist(t *testing.T) {
 	}
 	if _, ok := cfg["models"].(map[string]any)["providers"].(map[string]any)["ollama"]; !ok {
 		t.Fatalf("ollama provider block missing")
+	}
+}
+
+// --- Phase 2 (delegation-routing): subagents overlay generator tests ---
+
+func TestGenerateConfig_SubagentsOverlay_Basic(t *testing.T) {
+	// Subagent-only overlay (no primary model block) — primary stays at the
+	// runtime default (anthropic/claude-opus-4-6) and the subagent is Qwen
+	// via LiteLLM. Mirrors the role-code-dev shape.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Subagents: &runtime.SubagentsOverlay{
+			Model: &runtime.ModelOverlay{
+				Provider: runtime.ProviderOpenAI,
+				Name:     "qwen-2.5-72b-instruct",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	defaults := cfg["agents"].(map[string]any)["defaults"].(map[string]any)
+
+	// 1. agents.defaults.subagents.model emitted as provider/name pair.
+	sub, ok := defaults["subagents"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing agents.defaults.subagents block: %+v", defaults)
+	}
+	if got := sub["model"]; got != "openai/qwen-2.5-72b-instruct" {
+		t.Fatalf("subagents.model: want openai/qwen-2.5-72b-instruct, got %v", got)
+	}
+	// delegationMode / maxConcurrent must NOT appear when unset (no zero/null values).
+	if _, ok := sub["delegationMode"]; ok {
+		t.Fatalf("delegationMode should not be set when omitted: %+v", sub)
+	}
+	if _, ok := sub["maxConcurrent"]; ok {
+		t.Fatalf("maxConcurrent should not be set when omitted: %+v", sub)
+	}
+
+	// 2. Subagent merged into the models allowlist.
+	allow := defaults["models"].(map[string]any)
+	if _, ok := allow["openai/qwen-2.5-72b-instruct"]; !ok {
+		t.Fatalf("allowlist missing subagent model: %+v", allow)
+	}
+	// Runtime default preserved (no overlay primary → defaults stay).
+	if _, ok := allow["anthropic/claude-opus-4-6"]; !ok {
+		t.Fatalf("allowlist should preserve runtime default: %+v", allow)
+	}
+
+	// 3. models.providers.openai created from scratch with the subagent endpoint.
+	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
+	if got := openai["baseUrl"]; got != "https://litellm.lan/v1" {
+		t.Fatalf("openai.baseUrl: want https://litellm.lan/v1, got %v", got)
+	}
+	wantModels := []any{
+		map[string]any{"id": "qwen-2.5-72b-instruct", "name": "qwen-2.5-72b-instruct"},
+	}
+	if !reflect.DeepEqual(openai["models"], wantModels) {
+		t.Fatalf("openai.models: want %+v, got %+v", wantModels, openai["models"])
+	}
+	// apiKey must NOT be in config for openai (env-var injection).
+	if v, ok := openai["apiKey"]; ok {
+		t.Fatalf("apiKey should not be written for openai, got %v", v)
+	}
+}
+
+func TestGenerateConfig_SubagentsOverlay_DelegationModeAndConcurrent(t *testing.T) {
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Subagents: &runtime.SubagentsOverlay{
+			Model: &runtime.ModelOverlay{
+				Provider: runtime.ProviderOpenAI,
+				Name:     "qwen-2.5-72b-instruct",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+			DelegationMode: runtime.DelegationModePrefer,
+			MaxConcurrent:  4,
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	sub := cfg["agents"].(map[string]any)["defaults"].(map[string]any)["subagents"].(map[string]any)
+	if got := sub["delegationMode"]; got != "prefer" {
+		t.Fatalf("delegationMode: want prefer, got %v", got)
+	}
+	if got := sub["maxConcurrent"]; got != float64(4) {
+		t.Fatalf("maxConcurrent: want 4, got %v", got)
+	}
+}
+
+func TestGenerateConfig_SubagentsOverlay_MaxSpawnDepthNotEmitted(t *testing.T) {
+	// max_spawn_depth is a Hermes-only knob — it must NOT appear in
+	// OpenClaw config even when the operator set it in the overlay.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Subagents: &runtime.SubagentsOverlay{
+			Model: &runtime.ModelOverlay{
+				Provider: runtime.ProviderOpenAI,
+				Name:     "qwen",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+			MaxSpawnDepth: 2, // set but should be ignored by the OpenClaw generator
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	sub := cfg["agents"].(map[string]any)["defaults"].(map[string]any)["subagents"].(map[string]any)
+	if _, ok := sub["maxSpawnDepth"]; ok {
+		t.Fatalf("maxSpawnDepth must not be emitted by OpenClaw generator (Hermes-only); got %+v", sub)
+	}
+	if _, ok := sub["max_spawn_depth"]; ok {
+		t.Fatalf("max_spawn_depth must not be emitted by OpenClaw generator (Hermes-only); got %+v", sub)
+	}
+}
+
+func TestGenerateConfig_V2NoSubagentsBlock_IdenticalToV1(t *testing.T) {
+	// A v2 overlay without a subagents block must produce byte-identical
+	// output to the same overlay declared as v1. This is the no-regression
+	// guarantee for Feature #27 documents.
+	v1Params := baseParams()
+	v1Params.Overlay = &runtime.AgentOverlay{
+		Version: 1,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOllama,
+			Name:     "qwen3:6b",
+			BaseURL:  "http://192.168.181.97:11434",
+		},
+	}
+
+	v2Params := baseParams()
+	v2Params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model:   v1Params.Overlay.Model, // same primary, no subagents block
+	}
+
+	r := &Runtime{}
+	v1Out, err := r.GenerateConfig(v1Params)
+	if err != nil {
+		t.Fatalf("v1 generate: %v", err)
+	}
+	v2Out, err := r.GenerateConfig(v2Params)
+	if err != nil {
+		t.Fatalf("v2 generate: %v", err)
+	}
+	if !reflect.DeepEqual(v1Out, v2Out) {
+		t.Fatalf("v2-without-subagents must equal v1\nv1: %s\nv2: %s", v1Out, v2Out)
+	}
+
+	// And neither output should have a subagents block.
+	cfg := decodeJSON(t, v2Out)
+	defaults := cfg["agents"].(map[string]any)["defaults"].(map[string]any)
+	if _, ok := defaults["subagents"]; ok {
+		t.Fatalf("v2 without subagents block should not emit agents.defaults.subagents: %+v", defaults)
+	}
+}
+
+func TestGenerateConfig_SubagentsOverlay_AllowlistMergePreservesPrimary(t *testing.T) {
+	// Both primary (Opus) and subagent (Qwen) must appear in the allowlist,
+	// alongside the runtime default. Verifies the additive-allowlist invariant
+	// from Feature #27 holds when subagents extends it.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOllama,
+			Name:     "qwen3:6b",
+			BaseURL:  "http://h:11434",
+		},
+		Subagents: &runtime.SubagentsOverlay{
+			Model: &runtime.ModelOverlay{
+				Provider: runtime.ProviderOpenAI,
+				Name:     "qwen-2.5-72b-instruct",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	allow := cfg["agents"].(map[string]any)["defaults"].(map[string]any)["models"].(map[string]any)
+	for _, modelRef := range []string{"ollama/qwen3:6b", "openai/qwen-2.5-72b-instruct", "anthropic/claude-opus-4-6"} {
+		if _, ok := allow[modelRef]; !ok {
+			t.Fatalf("allowlist missing %q: %+v", modelRef, allow)
+		}
+	}
+
+	// Primary remains the overlay's choice.
+	if got := cfg["agents"].(map[string]any)["defaults"].(map[string]any)["model"].(map[string]any)["primary"]; got != "ollama/qwen3:6b" {
+		t.Fatalf("primary: want ollama/qwen3:6b, got %v", got)
+	}
+
+	// Both providers configured.
+	providers := cfg["models"].(map[string]any)["providers"].(map[string]any)
+	if _, ok := providers["ollama"]; !ok {
+		t.Fatalf("missing ollama provider: %+v", providers)
+	}
+	if _, ok := providers["openai"]; !ok {
+		t.Fatalf("missing openai provider: %+v", providers)
+	}
+}
+
+func TestGenerateConfig_SubagentsOverlay_SameProviderAppendsToModelsArray(t *testing.T) {
+	// Primary openai + subagent openai with the SAME base_url is the
+	// validation-passing same-provider case. The generator must append the
+	// subagent model to the existing provider's models[] array rather than
+	// clobbering or creating two entries.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOpenAI,
+			Name:     "primary-model",
+			BaseURL:  "https://litellm.lan/v1",
+		},
+		Subagents: &runtime.SubagentsOverlay{
+			Model: &runtime.ModelOverlay{
+				Provider: runtime.ProviderOpenAI,
+				Name:     "subagent-model",
+				BaseURL:  "https://litellm.lan/v1",
+			},
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	openai := cfg["models"].(map[string]any)["providers"].(map[string]any)["openai"].(map[string]any)
+	models, ok := openai["models"].([]any)
+	if !ok {
+		t.Fatalf("openai.models is not an array: %+v", openai["models"])
+	}
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models entries (primary + subagent), got %d: %+v", len(models), models)
+	}
+	// Both ids should be represented, no duplicates.
+	gotIDs := map[string]bool{}
+	for _, m := range models {
+		gotIDs[m.(map[string]any)["id"].(string)] = true
+	}
+	if !gotIDs["primary-model"] || !gotIDs["subagent-model"] {
+		t.Fatalf("expected both primary-model and subagent-model in openai.models, got %v", gotIDs)
+	}
+}
+
+func TestGenerateConfig_SubagentsOverlay_SameProviderConflictDefense(t *testing.T) {
+	// Defense-in-depth: AgentOverlay.Validate normally catches this conflict
+	// at load time, but the generator itself must also reject if a caller
+	// constructs an AgentOverlay programmatically and skips Validate.
+	params := baseParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOpenAI,
+			Name:     "primary",
+			BaseURL:  "https://api.openai.com/v1",
+		},
+		Subagents: &runtime.SubagentsOverlay{
+			Model: &runtime.ModelOverlay{
+				Provider: runtime.ProviderOpenAI,
+				Name:     "subagent",
+				BaseURL:  "https://litellm.lan/v1", // DIFFERENT endpoint
+			},
+		},
+	}
+
+	r := &Runtime{}
+	_, err := r.GenerateConfig(params)
+	if err == nil {
+		t.Fatal("expected generator-level same-provider-conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "conflicts with primary") {
+		t.Fatalf("expected conflict error, got %v", err)
 	}
 }

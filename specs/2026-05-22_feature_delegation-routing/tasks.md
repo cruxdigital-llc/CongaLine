@@ -69,29 +69,43 @@ unchanged; full test suite green. ✅
 section under `agents.defaults.subagents` + extended models allowlist
 + extended `models.providers`. v1 overlay output unchanged.
 
-- [ ] **2.1** `pkg/runtime/openclaw/config.go`:
+- [x] **2.1** `pkg/runtime/openclaw/config.go`:
   - new helper `applySubagentsOverlay(config map[string]any,
     s *runtime.SubagentsOverlay) error`
   - emits `agents.defaults.subagents.model = "<provider>/<name>"`
   - emits `delegationMode` and `maxConcurrent` only when set
+  - **does NOT emit** `max_spawn_depth` (Hermes-only knob — implementation
+    note added during Phase 2)
   - merges `<provider>/<name>` into `agents.defaults.models` (additive)
-  - merges subagent provider config into `models.providers.<id>`,
-    rejecting same-provider-different-endpoint conflicts
+  - merges subagent provider config into `models.providers.<id>`:
+    creates a new entry when the provider isn't there; appends the
+    subagent model to the existing `models[]` array when the provider
+    matches the primary; rejects same-provider + different-base_url
+    as defense-in-depth (validation normally catches this first)
   - called from `GenerateConfig` right after `applyModelOverlay`
-- [ ] **2.2** Tests `pkg/runtime/openclaw/config_test.go`:
-  - `TestSubagentsOverlay_Basic` — v2 overlay + Qwen subagent →
-    expected JSON shape
-  - `TestSubagentsOverlay_DelegationMode` — `prefer` emitted
-  - `TestSubagentsOverlay_NoBlock` — v2 overlay without `subagents:`
-    is byte-identical to v1 overlay output
-  - `TestSubagentsOverlay_AllowlistMerge` — subagent model joined into
-    the models allowlist, primary still present
-  - `TestSubagentsOverlay_SameProviderConflict` — primary openai/X +
-    subagent openai/Y (different base_url) → error from generator
-  - regression: existing config_test cases still pass
-- [ ] **2.3** Full test suite green.
+- [x] **2.2** Tests `pkg/runtime/openclaw/config_test.go` — 7 new
+  test functions:
+  - `TestGenerateConfig_SubagentsOverlay_Basic` — subagent-only overlay
+    (no primary block) emits the expected shape
+  - `TestGenerateConfig_SubagentsOverlay_DelegationModeAndConcurrent`
+    — `prefer` + `4` emitted as `delegationMode` + `maxConcurrent`
+  - `TestGenerateConfig_SubagentsOverlay_MaxSpawnDepthNotEmitted` —
+    Hermes-only knob filtered out (regression guard)
+  - `TestGenerateConfig_V2NoSubagentsBlock_IdenticalToV1` — v2 doc
+    without subagents block is byte-identical to v1 (Feature #27
+    regression guard)
+  - `TestGenerateConfig_SubagentsOverlay_AllowlistMergePreservesPrimary`
+    — primary + subagent + runtime default all in allowlist
+  - `TestGenerateConfig_SubagentsOverlay_SameProviderAppendsToModelsArray`
+    — primary + subagent on same provider + same base_url → single
+    provider entry with both models in `models[]`
+  - `TestGenerateConfig_SubagentsOverlay_SameProviderConflictDefense`
+    — programmatic AgentOverlay bypassing Validate still hits a
+    generator-level conflict error
+- [x] **2.3** Full test suite green. `go vet ./...` clean. `gofmt -l
+  pkg/runtime/ pkg/common/` clean.
 
-**Phase 2 acceptance**: OpenClaw generator emits the documented shape.
+**Phase 2 acceptance**: OpenClaw generator emits the documented shape. ✅
 
 ---
 

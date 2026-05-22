@@ -303,3 +303,46 @@ change); commit per phase.
 
 **Next**: commit Phase 1 on the worktree branch. Phases 2–8 deferred
 to follow-up sessions per Aaron's scope choice.
+
+### 2026-05-22 — Phase 2 implementation complete
+
+User said "continue" — implemented Phase 2 (OpenClaw generator).
+
+**Files modified**:
+- [pkg/runtime/openclaw/config.go](../../pkg/runtime/openclaw/config.go) —
+  added `applySubagentsOverlay` helper; wired into `GenerateConfig`
+  after the existing `applyModelOverlay` call. Imports `strings` for
+  the trailing-slash normalization helper.
+- [pkg/runtime/openclaw/config_test.go](../../pkg/runtime/openclaw/config_test.go)
+  — added 7 new test functions covering the upstream config shape,
+  delegationMode + maxConcurrent emission, max_spawn_depth filtering
+  (Hermes-only), v2-without-subagents byte-equality with v1,
+  allowlist merging, same-provider append, and same-provider conflict
+  defense-in-depth.
+
+**Key implementation decisions**:
+- `max_spawn_depth` is read from the overlay but NOT emitted in the
+  OpenClaw output (it's a Hermes-only knob). This matches spec.md's
+  generator section. A regression test guards against accidental
+  emission.
+- Same-provider handling: when the primary already configured
+  `models.providers.<id>` with the same base_url as the subagent,
+  the generator appends the subagent model to the existing entry's
+  `models[]` array rather than creating a duplicate provider entry
+  or clobbering. Different base_urls trigger a defense-in-depth
+  error (Validate catches this first in normal flow).
+- Field omission: `delegationMode` and `maxConcurrent` are omitted
+  from output when unset, so OpenClaw falls back to its own defaults
+  (no zero values, no nulls — matches the existing pattern from
+  `applyModelOverlay` for capability caps).
+
+**Verification**:
+- `go test ./pkg/runtime/openclaw/ -run 'Subagents|V2NoSubagents'`:
+  all 7 new tests pass.
+- `go test ./...` full suite: green.
+- `go vet ./...`: clean.
+- `gofmt -l pkg/runtime/ pkg/common/`: clean.
+- Feature #27 regression check: existing `TestGenerateConfig_*Overlay`
+  tests still pass unchanged.
+
+**Next**: Phase 3 (Hermes generator). Commit Phase 2 first.
