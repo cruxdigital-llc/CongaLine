@@ -165,7 +165,9 @@ All three layers together guarantee that whatever path an operator takes, the pr
 
 **Scope**: ~30 lines in `terraform/modules/infrastructure/user-data.sh.tftpl` + a couple lines in `internal/cmd/admin_setup.go` + the change from #6.
 
-**Status**: 🔴 unfixed.
+**Status**: 🟢 **closed-by-#6**. Investigation during implementation discovered that the conga binary isn't installed on the EC2 instance (it lives only on the operator's machine) — so the bootstrap can't self-deploy. With #6 landed, every operator-side refresh redeploys the live Envoy configs from the current policy. The "first refresh after bootstrap is required" step is the same as the current operational workflow; #6 just makes it self-healing across all routine operations going forward.
+
+A doc-only comment was added to `user-data.sh.tftpl` after the bootstrap-sentinel line documenting this — the bash bootstrap's deny-all default is intentional fail-safe behavior, and the post-bootstrap `conga policy deploy` (or `conga refresh-all`) is the canonical "make agents reachable" step.
 
 ---
 
@@ -186,7 +188,7 @@ All three layers together guarantee that whatever path an operator takes, the pr
 
 **Scope**: ~40 lines (new CLI subcommand + bootstrap update). Tests: existing `pkg/policy/egress_test.go` covers the Go path; add a smoke test that exercises the CLI subcommand.
 
-**Status**: 🔴 unfixed. Becomes important once #7's layer-1 lands.
+**Status**: 🟡 **deferred (non-blocking)**. With #6 landed, the bash-generated Envoy config gets overwritten by the Go-generated one on every refresh — so the period during which the validate-mode mismatch matters is the window between bootstrap completion and the first operator refresh. In practice that's minutes, not hours. Aligning the bash version remains a cleanup task but no longer blocks correct operation.
 
 ---
 
@@ -272,8 +274,8 @@ Alternatively / additionally: have `refresh` also reconcile `routing.json` from 
 | 4 | tf-provider-conga `conga_environment.this` bug | low-medium | separate repo | ⚠ file issue + fix alongside #3 |
 | 5 | `unpause` self-healing for missing unit | medium | ~30 LoC | ✅ in scope |
 | 6 | `refresh` also deploys policy | medium | ~50 LoC | ✅ in scope |
-| 7 | Bootstrap calls `policy deploy` at end | high | ~30 LoC | ✅ in scope |
-| 8 | Align bash + Go Envoy generators | low | ~40 LoC | ✅ in scope (becomes important post-#7) |
+| 7 | Bootstrap calls `policy deploy` at end | high | doc-only | ✅ **closed-by-#6** (bootstrap has no conga binary; #6's refresh-redeploys-policy means operator's first refresh fixes the bootstrap fail-safe state automatically) |
+| 8 | Align bash + Go Envoy generators | low | ~40 LoC | 🟡 **deferred** (non-blocking after #6 — window of mismatch is now minutes between bootstrap and first refresh) |
 | 9 | Refresh reconciles `routing.json` | low | depends on #5 | ✅ via #5 |
 | 10 | Router gateway-token wiring | latent | ~60 LoC | ⚠ pre-emptive — recommend defer until upstream forces it |
 | 11 | Production `slack.com` tfvars | done | docs only | ✅ docs update |
