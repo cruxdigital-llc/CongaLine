@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -412,6 +413,22 @@ func (p *AWSProvider) PauseAgent(ctx context.Context, name string) error {
 	return nil
 }
 
+// UnpauseAgent brings a paused agent back online by:
+//  1. Clearing the paused flag in SSM so RefreshAgent will run.
+//  2. Calling RefreshAgent, which regenerates openclaw.json + .env,
+//     (re)writes the systemd unit if missing, restarts the container,
+//     reconciles routing.json, and (re)deploys the egress proxy.
+//
+// This replaces the previous bash-based unpause script that simply ran
+// `systemctl start`. The script failed silently when the systemd unit
+// file had been deleted (e.g. by manual cleanup), leaving the agent
+// stuck in "paused but unstartable" state — a catch-22 because Refresh
+// refuses to run on paused agents.
+//
+// On refresh failure, the paused flag is rolled back so the SSM state
+// matches reality.
+//
+// See specs/2026-05-22_feature_delegation-routing/followups.md #5.
 func (p *AWSProvider) UnpauseAgent(ctx context.Context, name string) error {
 	agent, err := discovery.ResolveAgent(ctx, p.clients.SSM, name)
 	if err != nil {
@@ -422,34 +439,43 @@ func (p *AWSProvider) UnpauseAgent(ctx context.Context, name string) error {
 		return nil
 	}
 
-	instanceID, err := p.findInstance(ctx)
-	if err != nil {
-		return err
-	}
-
-	script, err := p.renderAgentScript(scripts.UnpauseAgentScript, "unpause", name, agent)
-	if err != nil {
-		return err
-	}
-
-	spin := ui.NewSpinner(fmt.Sprintf("Unpausing agent %s...", name))
-	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, 60*time.Second)
-	spin.Stop()
-	if err != nil {
-		return err
-	}
-	if result.Status != "Success" {
-		fmt.Fprintf(os.Stderr, "Output:\n%s\n%s\n", result.Stdout, result.Stderr)
-		return fmt.Errorf("unpause failed on instance")
-	}
-
+	// Step 1: clear paused flag. RefreshAgent refuses paused agents.
 	if err := p.setAgentPaused(ctx, name, agent, false); err != nil {
-		return fmt.Errorf("agent started but failed to update SSM: %w", err)
+		return fmt.Errorf("failed to clear paused flag: %w", err)
 	}
 
+	// Step 2: refresh. This handles unit-file (re)creation, container
+	// start, routing.json reconciliation, and egress proxy redeploy.
+	spin := ui.NewSpinner(fmt.Sprintf("Unpausing agent %s (via refresh)...", name))
+	refreshErr := p.RefreshAgent(ctx, name)
+	spin.Stop()
+	if refreshErr != nil {
+		// Roll back the paused flag so SSM state matches reality.
+		if rollbackErr := p.setAgentPaused(ctx, name, agent, true); rollbackErr != nil {
+			return fmt.Errorf("refresh failed (%w) and rollback of paused flag also failed: %v", refreshErr, rollbackErr)
+		}
+		return fmt.Errorf("unpause failed during refresh: %w", refreshErr)
+	}
 	return nil
 }
 
+// RefreshAgent brings an agent's runtime state in sync with SSM:
+//
+//  1. Regenerate openclaw.json + .env via the Go path → upload via SSM
+//  2. Run refresh-user.sh.tmpl on the instance: refetch secrets, write
+//     systemd unit (recreates if missing), restart container.
+//  3. Reconcile routing.json from current SSM agent state + restart
+//     router so changed bindings take effect.
+//     (followups.md #9 — refresh used to skip routing.json, leaving the
+//     router with stale routes after pause/unpause via SSM.)
+//  4. Redeploy egress proxy with the current policy file. This pushes
+//     the latest allowlist (and validate/enforce mode) to the proxy on
+//     disk + restarts it. Closes the bootstrap-time-config-never-updates
+//     gap (followups.md #6/#7).
+//
+// Each step is independent: a failure in routing.json reconciliation
+// shouldn't undo the openclaw.json update. We log + continue with a
+// warning rather than aborting the whole refresh.
 func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error {
 	agent, err := discovery.ResolveAgent(ctx, p.clients.SSM, agentName)
 	if err != nil {
@@ -464,33 +490,90 @@ func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error 
 		return err
 	}
 
-	// Regenerate openclaw.json via the Go code path so gateway mode,
-	// channel bindings, and allowlist entries stay in sync with SSM state.
+	// Step 1: regenerate openclaw.json + .env via Go (uploaded to instance).
 	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, *agent); err != nil {
 		return fmt.Errorf("failed to regenerate config for %s: %w", agentName, err)
 	}
 
+	// Step 2: run refresh-user.sh.tmpl — refetch secrets + write unit + restart.
 	tmpl, err := template.New("refresh").Parse(scripts.RefreshUserScript)
 	if err != nil {
 		return fmt.Errorf("failed to parse refresh template: %w", err)
 	}
-
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, struct{ AgentName, AWSRegion string }{agentName, p.region}); err != nil {
 		return fmt.Errorf("failed to render refresh script: %w", err)
 	}
-
 	spin := ui.NewSpinner(fmt.Sprintf("Refreshing secrets for %s...", agentName))
 	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, buf.String(), 120*time.Second)
 	spin.Stop()
 	if err != nil {
 		return err
 	}
-
 	if result.Status != "Success" {
 		return fmt.Errorf("refresh failed:\n%s\n%s", result.Stdout, result.Stderr)
 	}
+
+	// Step 3: reconcile routing.json from current SSM agent state, then
+	// restart the router so the change takes effect. Non-fatal: log on
+	// failure and continue — the agent itself is still healthy.
+	if err := p.regenerateRoutingOnInstance(ctx, instanceID); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: routing.json regeneration failed for %s: %v\n", agentName, err)
+	} else if err := p.restartRouterOnInstance(ctx, instanceID); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: router restart failed after %s refresh: %v\n", agentName, err)
+	}
+
+	// Step 4: redeploy egress proxy with current policy. Non-fatal: log
+	// + continue. The bootstrap-time Envoy config is empty (deny-all)
+	// until this step succeeds at least once, so it's important — but
+	// we don't want a transient policy-deploy failure to fail an
+	// otherwise-successful refresh.
+	if err := p.redeployEgressDuringRefresh(ctx, agentName); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: egress redeploy failed for %s: %v\n", agentName, err)
+	}
+
 	return nil
+}
+
+// redeployEgressDuringRefresh loads the current policy, generates the
+// Envoy config + manifest, and pushes them to the instance via the
+// existing DeployEgress code path. Used by RefreshAgent to keep the
+// egress proxy in sync with policy changes — see followups.md #6.
+func (p *AWSProvider) redeployEgressDuringRefresh(ctx context.Context, agentName string) error {
+	policyPath := filepath.Join(provider.DefaultDataDir(), "conga-policy.yaml")
+	pf, err := policy.Load(policyPath)
+	if err != nil {
+		// No policy file → use a nil policy (deny-all). Still better
+		// than leaving the bootstrap-time config in place.
+		fmt.Fprintf(os.Stderr, "Note: no conga-policy.yaml found; egress proxy will be deployed with deny-all config.\n")
+		pf = nil
+	}
+
+	policyContent := ""
+	if pf != nil {
+		if data, err := os.ReadFile(policyPath); err == nil {
+			policyContent = string(data)
+		}
+	}
+
+	var egressPolicy *policy.EgressPolicy
+	mode := policy.EgressModeEnforce
+	if pf != nil {
+		merged := pf.MergeForAgent(agentName)
+		egressPolicy = merged.Egress
+		if egressPolicy != nil {
+			mode = egressPolicy.Mode
+		}
+	}
+
+	envoyConfig, err := policy.GenerateProxyConf(egressPolicy)
+	if err != nil {
+		return fmt.Errorf("generate proxy conf: %w", err)
+	}
+	manifest := policy.BuildManifest(egressPolicy)
+	manifestBytes, _ := manifest.MarshalForDeploy()
+
+	return p.DeployEgress(ctx, agentName, policyContent, envoyConfig, string(manifestBytes), mode)
 }
 
 func (p *AWSProvider) RefreshAll(ctx context.Context) error {

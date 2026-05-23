@@ -918,6 +918,15 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 
 	// Reconnect routers
 	connectRoutersToNetwork(ctx, netName)
+
+	// Reconcile routing.json from current agent state. Without this,
+	// refreshes after a pause/unpause cycle (or any binding change that
+	// happened to bypass the bindChannel path) leave the router with
+	// stale routes. See followups.md #9.
+	if err := p.regenerateRouting(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update routing.json after refresh of %s: %v\n", agentName, err)
+	}
+
 	return nil
 }
 

@@ -792,6 +792,14 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 			return fmt.Errorf("failed to reconnect router to network %s: %w", netName, err)
 		}
 	}
+
+	// Reconcile routing.json from current agent state — see followups.md #9.
+	// Without this, refreshes after pause/unpause cycles can leave the
+	// router holding stale routes.
+	if err := p.regenerateRouting(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update routing.json after refresh of %s: %v\n", agentName, err)
+	}
+
 	return nil
 }
 
