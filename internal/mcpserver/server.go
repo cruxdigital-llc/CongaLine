@@ -4,8 +4,10 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
+	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -60,4 +62,32 @@ func jsonResult(v any) (*mcp.CallToolResult, error) {
 // okResult returns a simple success message.
 func okResult(msg string) *mcp.CallToolResult {
 	return mcp.NewToolResultText(msg)
+}
+
+// withSink attaches a fresh WarningSink to ctx and returns both so the
+// caller can drain it after a provider call. Provider lifecycle methods
+// (provision, refresh, unpause) route non-fatal warnings through the
+// sink via common.Warn — stderr is invisible under MCP, so without a
+// sink those warnings would vanish.
+func withSink(ctx context.Context) (context.Context, *common.WarningSink) {
+	sink := &common.WarningSink{}
+	return common.WithWarningSink(ctx, sink), sink
+}
+
+// okWithWarnings returns a success result, appending any warnings
+// drained from sink as a "Warnings:" block. Empty sink → plain message.
+func okWithWarnings(msg string, sink *common.WarningSink) *mcp.CallToolResult {
+	warnings := sink.Drain()
+	if len(warnings) == 0 {
+		return okResult(msg)
+	}
+	var b strings.Builder
+	b.WriteString(msg)
+	b.WriteString("\n\nWarnings:\n")
+	for _, w := range warnings {
+		b.WriteString(" - ")
+		b.WriteString(w)
+		b.WriteString("\n")
+	}
+	return okResult(b.String())
 }

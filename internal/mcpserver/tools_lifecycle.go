@@ -129,10 +129,11 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 				GatewayPort: gatewayPort,
 			}
 
+			ctx, sink := withSink(ctx)
 			if err := s.prov.ProvisionAgent(ctx, cfg); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q provisioned successfully.", agentName)), nil
+			return okWithWarnings(fmt.Sprintf("Agent %q provisioned successfully.", agentName), sink), nil
 		},
 	}
 }
@@ -242,10 +243,11 @@ func (s *Server) toolUnpauseAgent() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
+			ctx, sink := withSink(ctx)
 			if err := s.prov.UnpauseAgent(ctx, agentName); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q unpaused.", agentName)), nil
+			return okWithWarnings(fmt.Sprintf("Agent %q unpaused.", agentName), sink), nil
 		},
 	}
 }

@@ -1,7 +1,7 @@
 package common
 
 import (
-	"bytes"
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -270,10 +270,11 @@ func TestWarnOverlayEgressGaps_NoGaps_NoOutput(t *testing.T) {
 			BaseURL:  "http://spark.lan:11434",
 		},
 	}
-	var buf bytes.Buffer
-	WarnOverlayEgressGaps(&buf, o, []string{"spark.lan"}, "test")
-	if buf.Len() != 0 {
-		t.Fatalf("no gaps → no output expected, got %q", buf.String())
+	sink := &WarningSink{}
+	ctx := WithWarningSink(context.Background(), sink)
+	WarnOverlayEgressGaps(ctx, o, []string{"spark.lan"}, "test")
+	if got := sink.Drain(); len(got) != 0 {
+		t.Fatalf("no gaps → no warnings expected, got %v", got)
 	}
 }
 
@@ -293,13 +294,15 @@ func TestWarnOverlayEgressGaps_OneWarningPerGap(t *testing.T) {
 			},
 		},
 	}
-	var buf bytes.Buffer
-	WarnOverlayEgressGaps(&buf, o, nil, "test")
-	got := buf.String()
-	if strings.Count(got, "warning:") != 2 {
-		t.Fatalf("expected 2 warnings (primary + subagent), got %d: %q", strings.Count(got, "warning:"), got)
+	sink := &WarningSink{}
+	ctx := WithWarningSink(context.Background(), sink)
+	WarnOverlayEgressGaps(ctx, o, nil, "test")
+	got := sink.Drain()
+	if len(got) != 2 {
+		t.Fatalf("expected 2 warnings (primary + subagent), got %d: %v", len(got), got)
 	}
-	if !strings.Contains(got, "primary.lan") || !strings.Contains(got, "subagent.lan") {
-		t.Fatalf("warnings should name both hosts, got %q", got)
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "primary.lan") || !strings.Contains(joined, "subagent.lan") {
+		t.Fatalf("warnings should name both hosts, got %v", got)
 	}
 }

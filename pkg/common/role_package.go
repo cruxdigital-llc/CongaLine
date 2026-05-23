@@ -5,9 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// roleSlugPattern restricts role identifiers to lowercase alphanumerics +
+// hyphens. Defense-in-depth: ApplyRolePackage builds filesystem paths from
+// this slug; rejecting anything outside the alphabet prevents `../`
+// traversal even if a caller skips the upstream validation.
+var roleSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // rolePackageFiles is the canonical set of files copied from a role package
 // into a per-agent overlay dir. Anything else in the role directory (README,
@@ -36,6 +43,14 @@ func ApplyRolePackage(behaviorDir, agentName, roleSlug, runtimeName string) (dec
 	if !strings.HasPrefix(roleSlug, "role-") {
 		// Allow operators to pass either "role-ops" or "ops" — normalize.
 		roleSlug = "role-" + roleSlug
+	}
+	// Validate AFTER prefix normalization so a slug like "../etc" fails
+	// here rather than after a filesystem traversal lookup. Without this
+	// guard, a caller that skipped upstream agentName/role validation
+	// could pass arbitrary path fragments straight into filepath.Join
+	// below and end up reading or writing outside the agents/ tree.
+	if !roleSlugPattern.MatchString(roleSlug) {
+		return "", nil, fmt.Errorf("role slug %q is malformed: must match %s (lowercase alphanumerics + hyphens)", roleSlug, roleSlugPattern.String())
 	}
 
 	roleDir := filepath.Join(behaviorDir, defaultsSubdir, runtimeName, roleSlug)

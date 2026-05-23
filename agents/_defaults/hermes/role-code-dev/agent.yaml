@@ -1,14 +1,16 @@
-# role-code-dev — Opus-orchestrated dev agent with a Qwen subagent for
-# mechanical work (file ops, lookups, log parsing, data crunch).
+# role-code-dev (Hermes) — Opus-orchestrated dev agent with a Qwen subagent
+# for mechanical work (file ops, lookups, log parsing, data crunch).
 #
-# Primary model: NOT overridden here — uses the runtime default
-# (anthropic/claude-opus-4-* from openclaw-defaults.json). Operators who
-# want a specific Opus revision should update the runtime default in
-# pkg/runtime/openclaw/openclaw-defaults.json or override per-agent
-# (note: the overlay's `model:` enum is currently {ollama, openai}, so
-# direct anthropic overrides are not expressible in v2).
+# Primary model: NOT overridden here — uses the Hermes runtime default
+# (currently Anthropic Opus). The overlay's `model:` enum is {ollama,
+# openai}, so direct anthropic overrides are not expressible in v2.
 #
 # Subagent: Qwen via your LLM proxy. Customize base_url + model name.
+#
+# Note: delegation_mode is OpenClaw-only and silently dropped by the
+# Hermes generator (Hermes always-delegates at the runtime layer). The
+# field is intentionally absent here to avoid misleading operators who
+# tune it expecting an effect. Set it in the openclaw sibling instead.
 version: 2
 subagents:
   model:
@@ -19,5 +21,4 @@ subagents:
     # caps tighter than the model's advertised limits.
     # context_window: 131072
     # max_tokens: 8192
-  delegation_mode: prefer
   max_concurrent: 4

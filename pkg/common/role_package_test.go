@@ -142,6 +142,37 @@ func TestApplyRolePackage_IdempotencyPreservesExistingFiles(t *testing.T) {
 	}
 }
 
+// TestApplyRolePackage_MalformedSlug_RejectedBeforeFilesystem covers the
+// defense-in-depth slug validator (IMP-7). A slug containing path
+// separators or `..` must be refused before filepath.Join — even though
+// upstream agentName/role validation should already block it, an
+// internal caller that skips that check should NOT be able to read or
+// write outside the agents/ tree by smuggling a traversal slug.
+func TestApplyRolePackage_MalformedSlug_RejectedBeforeFilesystem(t *testing.T) {
+	root := t.TempDir()
+	makeRoleDir(t, root, "openclaw", "role-ops", map[string]string{"role.meta": "type: user\n"})
+
+	bad := []string{
+		"../../../etc",
+		"role-../../../etc",
+		"role-ops/../../etc",
+		"role-OPS",            // uppercase rejected
+		"role-_ops",           // underscore rejected
+		"role-ops with space", // whitespace rejected
+	}
+	for _, slug := range bad {
+		t.Run(slug, func(t *testing.T) {
+			_, _, err := ApplyRolePackage(root, "myagent", slug, "openclaw")
+			if err == nil {
+				t.Fatalf("expected error for malformed slug %q, got nil", slug)
+			}
+			if !strings.Contains(err.Error(), "malformed") {
+				t.Errorf("error should mention \"malformed\", got %q", err.Error())
+			}
+		})
+	}
+}
+
 func TestApplyRolePackage_RoleNotFound(t *testing.T) {
 	root := t.TempDir()
 	// Set up two roles so we can verify the error lists what's available.

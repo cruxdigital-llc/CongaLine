@@ -141,6 +141,31 @@ func TestAgentLifecycle(t *testing.T) {
 		assertContainerRunning(t, agentName)
 	})
 
+	// CRIT-4 regression guard for the unpause self-heal path (followups
+	// #5): when the runtime resource backing an agent has been removed
+	// out-of-band (on AWS that's the systemd unit file; locally the
+	// equivalent is the Docker container itself), `conga admin unpause`
+	// must recreate it instead of returning the old catch-22 "container
+	// not found / no unit to start" error. Without this guard a future
+	// refactor that drops the RefreshAgent recreation path inside
+	// UnpauseAgent would silently reintroduce the bug.
+	t.Run("unpause-recreates-missing-container", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		cName := "conga-" + agentName
+
+		// Pause to detach the container, then forcibly remove it so the
+		// next unpause must recreate it from config.
+		mustRunCLI(t, append(base, "admin", "pause", agentName)...)
+		assertContainerStopped(t, agentName)
+		if out, err := exec.Command("docker", "rm", "-f", cName).CombinedOutput(); err != nil {
+			t.Fatalf("docker rm %s: %v\n%s", cName, err, out)
+		}
+		assertContainerNotExists(t, agentName)
+
+		mustRunCLI(t, append(base, "admin", "unpause", agentName)...)
+		assertContainerRunning(t, agentName)
+	})
+
 	t.Run("remove-agent", func(t *testing.T) {
 		skipIfPriorFailed(t, parent)
 		mustRunCLI(t, append(base, "admin", "remove-agent", agentName, "--force", "--delete-secrets")...)

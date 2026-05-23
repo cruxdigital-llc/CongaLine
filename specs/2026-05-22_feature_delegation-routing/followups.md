@@ -286,3 +286,102 @@ Alternatively / additionally: have `refresh` also reconcile `routing.json` from 
 **Recommend deferring**: 2 (warrants own spec), 3 + 4 (separate repo), 10 (no current driver, premature).
 
 For #3 + #4, the post-merge runbook gets a checklist in this PR's description.
+
+---
+
+## Post-Review Fixes (PR #53 comprehensive review)
+
+After the 5-agent review of PR #53 (see `review-aggregate.md`), an
+additional set of fixes was landed in the same PR to close out the
+review's critical + important findings. None were regressions in the
+original work; they are coverage and quality gaps the review surfaced.
+
+### CRIT-1 — `redeployEgressDuringRefresh` silently collapsed all policy.Load errors
+
+A YAML typo in `conga-policy.yaml` would fall through to `pf = nil` →
+deny-all egress config on every refreshed agent. **Fix**: extracted
+`loadRefreshPolicy` helper that returns errors verbatim for non-missing
+failures; missing-file remains the only case that falls back to
+deny-all (with a sink warning).
+
+**Files**: `pkg/provider/awsprovider/provider.go` (helper +
+redeployEgressDuringRefresh) + tests in `provider_test.go`.
+
+### CRIT-2 — RefreshAgent 4-step semantics had zero regression guard
+
+**Fix**: added `loadRefreshPolicy` unit tests (3 branches: missing /
+malformed / valid) and `TestRefreshAgent_StepsDocumented` — a
+structural test that scans the live RefreshAgent body for the four
+step markers and fails if any are removed during refactor.
+
+### CRIT-3 — `tools_lifecycle_test.go` + `json_schema_test.go` were promised in the spec but absent
+
+**Fix**: both created.
+- `internal/cmd/json_schema_test.go` — schema entries for `role` field
+  on `admin.add-user` and `admin.add-team`, plus the invariant that
+  every commandSchema has an Output section.
+- `internal/mcpserver/tools_lifecycle_test.go` — schema check for the
+  `role` + `runtime` params on `conga_provision_agent`, behavior-dir
+  error path, and warning propagation through the new
+  `WarningSink` plumbing.
+
+### CRIT-4 — UnpauseAgent self-heal had no integration coverage
+
+**Fix**: added `unpause-recreates-missing-container` subtest to
+`TestAgentLifecycle` in `internal/cmd/integration_test.go`. Pauses,
+forcibly removes the container, then unpauses and asserts the
+container is recreated — local-provider analog of the AWS systemd
+unit self-heal.
+
+### CRIT-5 — MCP stderr invisibility for the new warnings
+
+The `Warning: ...` lines emitted from RefreshAgent steps 3 + 4 and
+`WarnOverlayEgressGaps` went to `os.Stderr` — invisible under MCP,
+which only forwards the tool result string to the operator. **Fix**:
+added `pkg/common/warnings.go` with a context-attached
+`WarningSink`. MCP server handlers for provision / refresh / refresh-all
+/ unpause attach a sink and append drained warnings to the tool
+result. CLI callers don't attach a sink → existing stderr behavior
+preserved.
+
+### IMP-7 — `roleSlug` filesystem-traversal defense
+
+**Fix**: added `roleSlugPattern` regex `^[a-z0-9][a-z0-9-]*$` in
+`ApplyRolePackage` to reject any slug containing `..` or path
+separators *before* `filepath.Join`. Defense-in-depth — upstream
+agentName / role validation should already block this.
+
+### IMP-8 — Refresh-time egress pre-flight parity
+
+The pre-flight that warns when overlay endpoints aren't in the
+allowlist fired only on Provision. **Fix**: added the same call to all
+three providers' RefreshAgent paths. Operators editing `agent.yaml`
+and running `conga refresh` (the common iteration flow) now see the
+warning before runtime 403s.
+
+### IMP-9 — Hermes role files declared OpenClaw-only `delegation_mode`
+
+The Hermes generator silently drops `subagents.delegation_mode` (Hermes
+always-delegates at the runtime layer). The default Hermes role
+packages still carried the field, misleading operators. **Fix**:
+removed `delegation_mode` from `agents/_defaults/hermes/role-*/agent.yaml`
+and clarified the README.
+
+### IMP-11 — `followups.md #N` cross-references will rot
+
+Five sites in provider code referenced `followups.md #5/#6/#9` by
+number. Numbered list items shift as items close — meaning the
+references would silently mis-point over time. **Fix**: inline-expanded
+the load-bearing rationale at each site; removed the numeric pointers.
+
+### Deferred from the review (logged for future work)
+
+- IMP-6 (AWS egress reads operator-laptop policy, not tfvars) — works
+  in current deployments; expand if Terraform-only operators surface.
+- IMP-10 (10 identical role README files) — cosmetic.
+- IMP-12 (Hermes generator ignores `Overlay.Model` for primary) —
+  pre-existing; needs runtime work.
+- IMP-13 (`regenerateRoutingOnInstance` nil webhook resolver on AWS) —
+  harmless until Hermes/Telegram lands on AWS.
+- All SUG-* items — polish (named DelegationMode type, RoleMeta
+  struct, etc.).

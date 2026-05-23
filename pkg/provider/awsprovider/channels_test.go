@@ -241,14 +241,14 @@ func TestResolveAWSBehaviorDir(t *testing.T) {
 
 	t.Run("cwd has agents/ dir but no go.mod — does NOT resolve", func(t *testing.T) {
 		// This case used to silently resolve to "./agents" (cwd-relative
-		// shortcut). That behavior caused Phase 8's silent-wrong
-		// deployment when the MCP server's cwd was a git worktree whose
-		// agents/ dir contained only the committed _defaults/ — the
-		// loader treated per-agent overlays as missing and produced
-		// defaults-only config. The fix (followups.md #1) drops the
-		// shortcut: resolution now requires a conga-line go.mod up the
-		// parent chain, ensuring we always land on the canonical repo's
-		// agents/ regardless of which dir the operator happens to be in.
+		// shortcut). That behavior caused a silent-wrong deployment when
+		// the MCP server's cwd was a git worktree whose agents/ dir
+		// contained only the committed _defaults/ — the loader treated
+		// per-agent overlays as missing and produced defaults-only
+		// config. The fix drops the shortcut: resolution now requires a
+		// conga-line go.mod up the parent chain, ensuring we always
+		// land on the canonical repo's agents/ regardless of which dir
+		// the operator happens to be in.
 		dir := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dir, "agents"), 0700); err != nil {
 			t.Fatalf("mkdir: %v", err)

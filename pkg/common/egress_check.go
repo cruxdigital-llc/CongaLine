@@ -1,8 +1,8 @@
 package common
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 
@@ -73,13 +73,14 @@ func FormatEgressGapWarning(agentName, host string) string {
 		agentName, host, host, agentName, agentName)
 }
 
-// WarnOverlayEgressGaps writes one FormatEgressGapWarning line group per
-// missing host to w. No-op when there are no gaps. Designed for use
-// from provider ProvisionAgent flows; non-blocking.
-func WarnOverlayEgressGaps(w io.Writer, overlay *runtime.AgentOverlay, allowlist []string, agentName string) {
+// WarnOverlayEgressGaps emits one FormatEgressGapWarning line group per
+// missing host via Warn — the context's WarningSink if one is attached
+// (so MCP can surface them), or stderr otherwise. No-op when there are
+// no gaps. Designed for use from provider lifecycle flows.
+func WarnOverlayEgressGaps(ctx context.Context, overlay *runtime.AgentOverlay, allowlist []string, agentName string) {
 	gaps := CheckOverlayEgress(overlay, allowlist)
 	for _, h := range gaps {
-		fmt.Fprintln(w, FormatEgressGapWarning(agentName, h))
+		Warn(ctx, "%s", FormatEgressGapWarning(agentName, h))
 	}
 }
 
