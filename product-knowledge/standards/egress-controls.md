@@ -164,6 +164,36 @@ allowed at enforcement time.
 The bash reimplementation in `terraform/modules/infrastructure/user-data.sh.tftpl`
 uses the same merge semantics; keep both in sync when changing this rule.
 
+### Wildcard semantics: `*.example.com` matches subdomains, NOT the bare host
+
+The Envoy Lua filter (and the Go matcher `policy.MatchDomain`) treats
+`*.example.com` as a subdomain wildcard: it matches `api.example.com`
+and `wss.example.com` but **NOT** the bare `example.com`. If a service
+calls both subdomains AND the bare host, both must be in the allowlist
+explicitly:
+
+```hcl
+egress_allowed_domains = [
+  "slack.com",         # bolt-app's OAuth / app-config calls
+  "*.slack.com",       # api.slack.com, wss-primary.slack.com, files.slack.com
+  "*.slack-edge.com",  # CDN
+]
+```
+
+**Known cases**:
+- **Slack** (bolt-app SDK): hits bare `slack.com` for OAuth and
+  app-config metadata. Without it, bolt-app emits 403 warnings every
+  minute and the slack plugin's webhook listener can crash after
+  `ack()`, returning 401 to the router's forwarded events. Symptom:
+  `[router] Forward failed: 401 → http://conga-<agent>:18789/slack/events`.
+- **OpenAI / Anthropic**: typically only need the subdomain
+  (`api.anthropic.com`, `api.openai.com`) — no bare-host case.
+
+If you see persistent unexplained 403s in agent logs against a
+known-allowed host, check whether the bare host is missing from the
+allowlist. The proxy logs `egress denied: <host>` in the request body,
+not the Envoy access log.
+
 ## Operator Workflow
 
 ```mermaid

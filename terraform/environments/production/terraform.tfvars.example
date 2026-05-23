@@ -29,7 +29,15 @@ egress_allowed_domains = [
   # LLM endpoints
   "api.anthropic.com",
 
-  # Messaging platform (Slack example)
+  # Messaging platform (Slack example).
+  # IMPORTANT: include BOTH the bare host and the wildcard. The
+  # wildcard `*.slack.com` matches subdomains (api.slack.com,
+  # wss-primary.slack.com, files.slack.com) but does NOT match the
+  # bare `slack.com` that bolt-app calls for OAuth / app-config.
+  # Without the bare entry, bolt-app spams 403s and its webhook
+  # listener crashes (see specs/2026-05-22_feature_delegation-routing/
+  # followups.md #11).
+  "slack.com",
   "*.slack.com",
   "*.slack-edge.com",
 
@@ -44,9 +52,16 @@ egress_allowed_domains = [
 # Applied to every agent. Each key becomes an env var on the container,
 # uppercased with dashes converted to underscores
 # (e.g. anthropic-api-key → ANTHROPIC_API_KEY).
+#
+# Tip — per-agent cost tracking: instead of putting `anthropic-api-key`
+# here (one key shared across all agents → one line item in your
+# Anthropic billing dashboard), set it per-agent under
+# `agents.<name>.secrets` below. Each agent then uses its own API
+# key and Anthropic's per-key usage breakdown shows cost per agent.
+# See agents.myagent.secrets for the shape.
 global_secrets = {
-  "anthropic-api-key" = ""
-  # "openai-api-key"   = ""  # if any agent overlay points at an OpenAI-compatible endpoint
+  # "anthropic-api-key" = ""  # uncomment for shared-key mode; prefer per-agent for cost tracking
+  # "openai-api-key"   = ""   # if any agent overlay points at an OpenAI-compatible endpoint (e.g. self-hosted Qwen via LiteLLM)
 }
 
 # --- Agents ---
@@ -71,22 +86,38 @@ agents = {
     # egress_blocked_domains = ["*.slack-edge.com"]
     # Optional: override the global mode for this agent.
     # egress_mode = "validate"
-    # Optional: per-agent secrets.
-    # secrets = {
-    #   "trello-api-key" = "..."
-    #   "trello-token"   = "..."
-    # }
+    # Per-agent secrets. Each key becomes an env var inside this agent's
+    # container only. Common pattern: a dedicated `anthropic-api-key`
+    # here (rather than in global_secrets) so Anthropic's per-key
+    # billing dashboard shows cost per agent.
+    secrets = {
+      "anthropic-api-key" = ""  # this agent's dedicated key
+      # "trello-api-key" = "..."
+      # "trello-token"   = "..."
+    }
   }
   myteam = {
     type = "team"
     # No per-agent egress overrides — this agent inherits the global allowlist.
+    secrets = {
+      "anthropic-api-key" = ""
+    }
   }
   # Example: a team agent that also reaches a domain none of the others need.
   # specialty-team = {
   #   type                   = "team"
   #   egress_allowed_domains = ["*.linear.com"]
+  #   secrets = { "anthropic-api-key" = "" }
   # }
 }
+
+# --- Per-agent runtime overlays ---
+# Each agent can optionally have an `agents/<name>/agent.yaml` (schema
+# v2) declaring its primary model AND/OR a subagent for in-runtime
+# delegation. The agent.yaml is OPERATOR-AUTHORED and provider-agnostic
+# (same file works on local/remote/aws). See agents/_example/agent.yaml.example
+# for the template and CLAUDE.md § "Delegation Model" for the two-tier
+# subagent + role-agent architecture.
 
 # --- Channels ---
 # Each channel has shared secrets and per-agent bindings.
