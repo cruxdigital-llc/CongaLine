@@ -1,7 +1,6 @@
 package awsprovider
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -684,10 +682,10 @@ func shellSingleQuote(s string) string {
 }
 
 // resolveAWSBehaviorDir locates the live agent-overlays directory for the
-// AWS provider's config-gen path. The directory may sit at cwd or anywhere
-// up the cwd's parent chain inside this repo (identified by a go.mod whose
-// module path matches the congaline module). Returns "" when no candidate
-// is found.
+// AWS provider's config-gen path. Delegates to
+// `common.ResolveOperatorBehaviorDir`, which walks up from cwd to find the
+// congaline repo root and (critically) detects git worktrees, redirecting
+// to the main worktree's agents/ when invoked from inside one.
 //
 // Callers MUST treat "" as a hard error and refuse to regenerate agent
 // config: writing a defaults-only openclaw.json over the live one silently
@@ -695,39 +693,5 @@ func shellSingleQuote(s string) string {
 // at a self-hosted LLM). Emitting a warning and proceeding is unsafe under
 // MCP because stderr is invisible to the operator.
 func resolveAWSBehaviorDir() string {
-	// Try cwd-relative first — the common case when the operator is at the
-	// repo root, matching the convention used by `terraform apply`.
-	if info, err := os.Stat("agents"); err == nil && info.IsDir() {
-		return "agents"
-	}
-
-	// Walk up from cwd looking for the congaline go.mod, then test for
-	// <repo-root>/agents/. This handles operators running from any
-	// subdirectory of the repo.
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	const moduleMarker = "module github.com/cruxdigital-llc/conga-line"
-	dir := cwd
-	for {
-		goMod := filepath.Join(dir, "go.mod")
-		if data, readErr := os.ReadFile(goMod); readErr == nil {
-			if bytes.Contains(data, []byte(moduleMarker)) {
-				candidate := filepath.Join(dir, "agents")
-				if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
-					return candidate
-				}
-				// Found our repo but no agents/ dir — stop here so we
-				// don't accidentally pick up some unrelated parent's dir.
-				return ""
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root.
-			return ""
-		}
-		dir = parent
-	}
+	return common.ResolveOperatorBehaviorDir()
 }

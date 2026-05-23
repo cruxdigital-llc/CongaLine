@@ -96,21 +96,33 @@ func ApplyRolePackage(behaviorDir, agentName, roleSlug, runtimeName string) (dec
 
 // ResolveOperatorBehaviorDir walks up from the current working directory
 // looking for the conga-line repo (identified by go.mod containing the
-// module marker). Returns the path to the repo's agents/ directory, or
-// "" if not found.
+// module marker). Returns the absolute path to the repo's agents/
+// directory, or "" if not found.
+//
+// **Worktree-aware**: if the resolved repo root is a git worktree (i.e.
+// `<root>/.git` is a regular file rather than a directory), this function
+// follows the worktree's `gitdir:` pointer to locate the MAIN worktree and
+// returns its `agents/` instead. This is essential: per-agent overlay
+// directories (gitignored) only exist on the operator's main checkout, so a
+// conga binary running with cwd inside an isolated worktree would otherwise
+// see the worktree's `agents/` (containing only the committed `_defaults/`)
+// and silently produce defaults-only config for every agent.
+//
+// The early `./agents` cwd-relative check that earlier versions had has
+// been removed precisely because it caused the silent-wrong behavior
+// described above: when the operator's cwd happened to be inside the
+// worktree, the local `agents/` (with role packages + _example) was a
+// valid-looking-but-incomplete answer.
 //
 // This is intentionally tolerant: operators may invoke conga from inside a
 // subdirectory of the repo, the repo root, or somewhere unrelated. The
 // caller decides what to do with "" (typically: error with a helpful
 // message pointing at how to fix it).
 //
-// Mirrors the pattern from pkg/provider/awsprovider/channels.go
-// `resolveAWSBehaviorDir`; eventually that should call into here.
+// Used by both `pkg/common/role_package.go` (--role flow) and
+// `pkg/provider/awsprovider/channels.go::resolveAWSBehaviorDir` (overlay
+// load during AWS provision/refresh).
 func ResolveOperatorBehaviorDir() string {
-	if info, err := os.Stat("agents"); err == nil && info.IsDir() {
-		return "agents"
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -121,11 +133,7 @@ func ResolveOperatorBehaviorDir() string {
 		goMod := filepath.Join(dir, "go.mod")
 		if data, readErr := os.ReadFile(goMod); readErr == nil {
 			if bytes.Contains(data, []byte(moduleMarker)) {
-				candidate := filepath.Join(dir, "agents")
-				if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
-					return candidate
-				}
-				return ""
+				return resolveAgentsDirForRepoRoot(dir)
 			}
 		}
 		parent := filepath.Dir(dir)
@@ -134,6 +142,82 @@ func ResolveOperatorBehaviorDir() string {
 		}
 		dir = parent
 	}
+}
+
+// resolveAgentsDirForRepoRoot returns the path to the agents/ directory for
+// a confirmed conga-line repo root, handling the git-worktree case.
+//
+// If `<repoRoot>/.git` is a directory, this IS the main checkout: return
+// `<repoRoot>/agents`. If `<repoRoot>/.git` is a regular file, this is a
+// git worktree; parse the `gitdir:` pointer and return the main worktree's
+// agents/ instead. Falls back to the worktree's own `agents/` if the main
+// worktree can't be located or doesn't have an `agents/` dir.
+func resolveAgentsDirForRepoRoot(repoRoot string) string {
+	worktreeAgents := filepath.Join(repoRoot, "agents")
+	if info, err := os.Stat(worktreeAgents); err != nil || !info.IsDir() {
+		return ""
+	}
+
+	gitMarker := filepath.Join(repoRoot, ".git")
+	info, err := os.Stat(gitMarker)
+	if err != nil {
+		// No .git at the repo root — caller is in a detached layout we
+		// don't understand. Return the agents/ we found anyway; the
+		// loader will fail gracefully if per-agent dirs are missing.
+		return worktreeAgents
+	}
+	if info.IsDir() {
+		// Main checkout. agents/ here IS the canonical source.
+		return worktreeAgents
+	}
+
+	// .git is a regular file → worktree. Parse `gitdir: <path>` and walk
+	// up to the main worktree.
+	data, err := os.ReadFile(gitMarker)
+	if err != nil {
+		return worktreeAgents
+	}
+	mainAgents := mainWorktreeAgentsFromGitdir(string(data), repoRoot)
+	if mainAgents == "" {
+		return worktreeAgents
+	}
+	if info, err := os.Stat(mainAgents); err != nil || !info.IsDir() {
+		return worktreeAgents
+	}
+	return mainAgents
+}
+
+// mainWorktreeAgentsFromGitdir parses the `.git` file of a worktree and
+// returns the path to the main worktree's agents/ directory.
+//
+// Worktree `.git` files look like:
+//
+//	gitdir: /Users/aaron/Development/crux/congaline/.git/worktrees/explore-agent-routing
+//
+// The main worktree is the directory that contains the `.git` directory
+// referenced by that gitdir line (walk up three levels: worktrees/<name> →
+// worktrees → .git → main worktree).
+//
+// Relative gitdir paths (uncommon, but allowed by git) are resolved
+// relative to the worktree's own root.
+func mainWorktreeAgentsFromGitdir(gitFileContent, worktreeRoot string) string {
+	for _, line := range strings.Split(gitFileContent, "\n") {
+		line = strings.TrimSpace(line)
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(key) != "gitdir" {
+			continue
+		}
+		gitdir := strings.TrimSpace(value)
+		if !filepath.IsAbs(gitdir) {
+			gitdir = filepath.Join(worktreeRoot, gitdir)
+		}
+		// gitdir = .../<main>/.git/worktrees/<name>
+		// Main worktree = parent of the .git directory.
+		mainGitDir := filepath.Dir(filepath.Dir(gitdir)) // strip worktrees/<name>
+		mainWorktree := filepath.Dir(mainGitDir)         // strip .git
+		return filepath.Join(mainWorktree, "agents")
+	}
+	return ""
 }
 
 // readRoleMeta parses a role.meta file. Format: a single line

@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -292,6 +293,135 @@ func TestResolveOperatorBehaviorDir_FromCWDWithAgentsDir(t *testing.T) {
 	wantResolved, _ := filepath.EvalSymlinks(want)
 	if gotResolved != wantResolved {
 		t.Fatalf("ResolveOperatorBehaviorDir: want %s (resolved %s), got %s (resolved %s)", want, wantResolved, got, gotResolved)
+	}
+}
+
+// TestResolveOperatorBehaviorDir_WorktreeRedirectsToMain exercises the
+// regression that bit Phase 8: when the operator's cwd is inside a git
+// worktree, the function must resolve to the MAIN worktree's agents/
+// (where per-agent overlay dirs live), not the worktree's own agents/
+// (which contains only the committed _defaults/ and _example/).
+func TestResolveOperatorBehaviorDir_WorktreeRedirectsToMain(t *testing.T) {
+	tmp := t.TempDir()
+	// Set up: tmp/main is the main worktree; tmp/main/.claude/worktrees/wt1 is a git worktree.
+	main := filepath.Join(tmp, "main")
+	wt := filepath.Join(main, ".claude", "worktrees", "wt1")
+	if err := os.MkdirAll(filepath.Join(main, ".git"), 0755); err != nil {
+		t.Fatalf("mkdir main: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(main, "agents", "aaron"), 0755); err != nil {
+		t.Fatalf("mkdir main agents: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(wt, "agents", "_defaults"), 0755); err != nil {
+		t.Fatalf("mkdir wt agents/_defaults: %v", err)
+	}
+	goMod := "module github.com/cruxdigital-llc/conga-line\n\ngo 1.21\n"
+	if err := os.WriteFile(filepath.Join(main, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatalf("write main go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatalf("write wt go.mod: %v", err)
+	}
+	// Worktree's .git is a regular file pointing back to main/.git/worktrees/wt1
+	gitFileContent := fmt.Sprintf("gitdir: %s\n", filepath.Join(main, ".git", "worktrees", "wt1"))
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte(gitFileContent), 0644); err != nil {
+		t.Fatalf("write wt .git: %v", err)
+	}
+
+	// Chdir into the worktree.
+	origCWD, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCWD) })
+	if err := os.Chdir(wt); err != nil {
+		t.Fatalf("chdir worktree: %v", err)
+	}
+
+	got := ResolveOperatorBehaviorDir()
+	// On macOS, t.TempDir lives under /private/var; resolve symlinks before comparing.
+	gotResolved, _ := filepath.EvalSymlinks(got)
+	wantResolved, _ := filepath.EvalSymlinks(filepath.Join(main, "agents"))
+	if gotResolved != wantResolved {
+		t.Fatalf("worktree resolution failed:\n  want main's agents: %s\n  got:               %s\n  (wt agents would have been: %s)", wantResolved, gotResolved, filepath.Join(wt, "agents"))
+	}
+}
+
+// TestResolveOperatorBehaviorDir_MainCheckoutUnchanged confirms that when
+// .git is a directory (normal checkout, not a worktree), the function
+// returns the local agents/ — same as before.
+func TestResolveOperatorBehaviorDir_MainCheckoutUnchanged(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".git"), 0755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmp, "agents"), 0755); err != nil {
+		t.Fatalf("mkdir agents: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"),
+		[]byte("module github.com/cruxdigital-llc/conga-line\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	origCWD, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCWD) })
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	got := ResolveOperatorBehaviorDir()
+	gotResolved, _ := filepath.EvalSymlinks(got)
+	wantResolved, _ := filepath.EvalSymlinks(filepath.Join(tmp, "agents"))
+	if gotResolved != wantResolved {
+		t.Fatalf("main checkout: want %s, got %s", wantResolved, gotResolved)
+	}
+}
+
+// TestMainWorktreeAgentsFromGitdir exercises the gitdir-pointer parsing
+// directly with both absolute and relative gitdir paths.
+func TestMainWorktreeAgentsFromGitdir(t *testing.T) {
+	tests := []struct {
+		name         string
+		gitContent   string
+		worktreeRoot string
+		want         string
+	}{
+		{
+			name:         "absolute gitdir",
+			gitContent:   "gitdir: /Users/aaron/repo/.git/worktrees/feature\n",
+			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
+			want:         "/Users/aaron/repo/agents",
+		},
+		{
+			name:         "relative gitdir resolved against worktree root",
+			gitContent:   "gitdir: ../../../.git/worktrees/feature\n",
+			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
+			want:         filepath.Join("/Users/aaron/repo/.claude/worktrees/feature", "../../../.git/worktrees/feature", "..", "..", "..", "agents"),
+		},
+		{
+			name:         "extra whitespace tolerated",
+			gitContent:   "  gitdir:    /Users/aaron/repo/.git/worktrees/feature   \n",
+			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
+			want:         "/Users/aaron/repo/agents",
+		},
+		{
+			name:         "non-gitdir lines ignored",
+			gitContent:   "# comment\nworktree-purpose: feature\ngitdir: /Users/aaron/repo/.git/worktrees/feature\n",
+			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
+			want:         "/Users/aaron/repo/agents",
+		},
+		{
+			name:         "no gitdir found",
+			gitContent:   "# nothing useful here\n",
+			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
+			want:         "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mainWorktreeAgentsFromGitdir(tc.gitContent, tc.worktreeRoot)
+			// Normalize both via filepath.Clean to handle the relative-path test case.
+			if filepath.Clean(got) != filepath.Clean(tc.want) {
+				t.Fatalf("want %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
 
