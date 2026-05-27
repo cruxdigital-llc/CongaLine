@@ -193,11 +193,15 @@ func assertContainerRunning(t *testing.T, agentName string) {
 }
 
 // assertContainerNotExists asserts no container exists for the agent.
+//
+// Uses `--type=container` because the local provider names the agent's
+// Docker network the same as the container (both are "conga-<agent>").
+// Bare `docker inspect <name>` would match the network and return
+// success even after the container is gone, hiding the actual state.
 func assertContainerNotExists(t *testing.T, agentName string) {
 	t.Helper()
 	cName := "conga-" + agentName
-	err := exec.Command("docker", "inspect", cName).Run()
-	if err == nil {
+	if err := exec.Command("docker", "inspect", "--type=container", cName).Run(); err == nil {
 		t.Fatalf("container %s still exists", cName)
 	}
 }

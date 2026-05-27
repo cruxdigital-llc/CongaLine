@@ -154,12 +154,12 @@ func TestAgentLifecycle(t *testing.T) {
 		cName := "conga-" + agentName
 
 		// Pause to detach the container, then forcibly remove it so the
-		// next unpause must recreate it from config.
+		// next unpause must recreate it from config. `docker rm -f` may
+		// no-op if pause already removed the container — that's fine,
+		// the assertion below is the authoritative check.
 		mustRunCLI(t, append(base, "admin", "pause", agentName)...)
 		assertContainerStopped(t, agentName)
-		if out, err := exec.Command("docker", "rm", "-f", cName).CombinedOutput(); err != nil {
-			t.Fatalf("docker rm %s: %v\n%s", cName, err, out)
-		}
+		_ = exec.Command("docker", "rm", "-f", cName).Run()
 		assertContainerNotExists(t, agentName)
 
 		mustRunCLI(t, append(base, "admin", "unpause", agentName)...)
