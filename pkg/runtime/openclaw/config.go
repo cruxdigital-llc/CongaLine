@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
@@ -59,7 +60,55 @@ func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
 		}
 	}
 
+	if params.Agent.Type == provider.AgentTypeTeam {
+		applyTeamChannelDiscipline(config)
+	}
+
 	return json.MarshalIndent(config, "", "  ")
+}
+
+// applyTeamChannelDiscipline tightens group-chat delivery for team agents:
+// only an explicit `message` tool call is forwarded to the channel; bare text
+// content blocks (preamble narration, decision-not-to-reply prose, inter-tool
+// commentary) stay internal.
+//
+// Workaround for openclaw/openclaw#25592 ("Text between tool calls leaks to
+// messaging channels"), still open at v2026.5.26. The fix has two parts:
+//   - messages.groupChat.visibleReplies = "message_tool" — gates delivery on
+//     an explicit message() tool call.
+//   - tools.alsoAllow = ["message"] — restores the `message` tool that the
+//     "coding" profile (set in openclaw-defaults.json) strips out. Without
+//     this the agent would have no way to deliver replies and every turn
+//     would silently drop (the failure mode behind openclaw/openclaw#77320).
+//
+// Scope: team agents only. User agents operate in DMs where a touch of
+// preamble is acceptable and the silent-drop risk is higher (a missed reply
+// in a 1:1 DM is noticed immediately).
+func applyTeamChannelDiscipline(config map[string]any) {
+	messages, ok := config["messages"].(map[string]any)
+	if !ok {
+		messages = map[string]any{}
+		config["messages"] = messages
+	}
+	groupChat, ok := messages["groupChat"].(map[string]any)
+	if !ok {
+		groupChat = map[string]any{}
+		messages["groupChat"] = groupChat
+	}
+	groupChat["visibleReplies"] = "message_tool"
+
+	tools, ok := config["tools"].(map[string]any)
+	if !ok {
+		tools = map[string]any{}
+		config["tools"] = tools
+	}
+	existing, _ := tools["alsoAllow"].([]any)
+	for _, e := range existing {
+		if s, ok := e.(string); ok && s == "message" {
+			return
+		}
+	}
+	tools["alsoAllow"] = append(existing, "message")
 }
 
 // applyModelOverlay mutates config in place to reflect the operator's model

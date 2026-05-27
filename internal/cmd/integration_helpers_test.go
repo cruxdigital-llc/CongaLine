@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const testImage = "ghcr.io/openclaw/openclaw:2026.5.18"
+const testImage = "ghcr.io/openclaw/openclaw:2026.5.26"
 
 // requireDocker skips the test if Docker is not available.
 func requireDocker(t *testing.T) {

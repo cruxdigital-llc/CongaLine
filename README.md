@@ -64,7 +64,7 @@ The two are orthogonal — any provider works with any runtime.
 
 | Runtime | Language | Config | Default Image | Notes |
 |---------|----------|--------|---------------|-------|
-| **OpenClaw** | Node.js | `openclaw.json` | `ghcr.io/openclaw/openclaw:2026.5.18` | Native Slack via webhook plugin |
+| **OpenClaw** | Node.js | `openclaw.json` | `ghcr.io/openclaw/openclaw:2026.5.26` | Native Slack via webhook plugin |
 | **Hermes** | Python | `config.yaml` | `nousresearch/hermes-agent:latest` | OpenAI-compatible API on port 8642 |
 
 Adding a third runtime is a single Go package under `pkg/runtime/<name>/` implementing the 22-method `Runtime` interface. No changes to providers, CLI, or core logic.
@@ -714,10 +714,10 @@ CongaLine supports two agent runtimes — pick the image that matches the runtim
 
 ### OpenClaw
 
-Pinned to **v2026.5.18**. We pin a specific upstream minor (rather than tracking `:latest`) so deploys stay bisectable across releases.
+Pinned to **v2026.5.26**. We pin a specific upstream minor (rather than tracking `:latest`) so deploys stay bisectable across releases.
 
 ```
-ghcr.io/openclaw/openclaw:2026.5.18
+ghcr.io/openclaw/openclaw:2026.5.26
 ```
 
 ### Hermes Agent

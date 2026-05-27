@@ -11,7 +11,7 @@ func TestLoad_ValidManifest(t *testing.T) {
 apiVersion: conga.dev/v1alpha1
 kind: Environment
 setup:
-  image: "ghcr.io/openclaw/openclaw:2026.5.18"
+  image: "ghcr.io/openclaw/openclaw:2026.5.26"
   ssh_host: "demo.example.com"
   ssh_user: "ubuntu"
   install_docker: true
@@ -52,7 +52,7 @@ policy:
 	if m.Setup == nil {
 		t.Fatal("Setup is nil")
 	}
-	if m.Setup.Image != "ghcr.io/openclaw/openclaw:2026.5.18" {
+	if m.Setup.Image != "ghcr.io/openclaw/openclaw:2026.5.26" {
 		t.Errorf("Setup.Image = %q", m.Setup.Image)
 	}
 	if m.Setup.SSHHost != "demo.example.com" {

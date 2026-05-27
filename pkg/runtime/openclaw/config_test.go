@@ -692,3 +692,71 @@ func TestGenerateConfig_SubagentsOverlay_SameProviderConflictDefense(t *testing.
 		t.Fatalf("expected conflict error, got %v", err)
 	}
 }
+
+func TestGenerateConfig_TeamAgent_AppliesChannelDiscipline(t *testing.T) {
+	params := baseParams()
+	params.Agent.Type = provider.AgentTypeTeam
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	messages, ok := cfg["messages"].(map[string]any)
+	if !ok {
+		t.Fatalf("team agent missing messages section; got %+v", cfg["messages"])
+	}
+	groupChat, ok := messages["groupChat"].(map[string]any)
+	if !ok {
+		t.Fatalf("team agent missing messages.groupChat; got %+v", messages)
+	}
+	if got := groupChat["visibleReplies"]; got != "message_tool" {
+		t.Fatalf("messages.groupChat.visibleReplies: want \"message_tool\", got %v", got)
+	}
+
+	tools, ok := cfg["tools"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools section missing; got %+v", cfg["tools"])
+	}
+	alsoAllow, ok := tools["alsoAllow"].([]any)
+	if !ok {
+		t.Fatalf("tools.alsoAllow missing; got %+v", tools)
+	}
+	found := false
+	for _, v := range alsoAllow {
+		if s, ok := v.(string); ok && s == "message" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("tools.alsoAllow must contain \"message\" to keep replies from silently dropping; got %+v", alsoAllow)
+	}
+}
+
+func TestGenerateConfig_UserAgent_NoChannelDiscipline(t *testing.T) {
+	// User agents operate in DMs where mild preamble is fine and silent-drop
+	// risk is higher. The team-only branch must NOT fire here.
+	params := baseParams() // baseParams uses AgentTypeUser
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg := decodeJSON(t, out)
+
+	if msgs, ok := cfg["messages"].(map[string]any); ok {
+		if gc, ok := msgs["groupChat"].(map[string]any); ok {
+			if _, set := gc["visibleReplies"]; set {
+				t.Fatalf("user agent must not set messages.groupChat.visibleReplies; got %+v", gc)
+			}
+		}
+	}
+	if tools, ok := cfg["tools"].(map[string]any); ok {
+		if _, set := tools["alsoAllow"]; set {
+			t.Fatalf("user agent must not set tools.alsoAllow; got %+v", tools)
+		}
+	}
+}

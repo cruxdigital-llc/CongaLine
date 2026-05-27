@@ -80,6 +80,16 @@ When any team member shares an architectural decision or convention, write it to
 - Anything that triggers CI / deploy
 - Pushing to remote
 
+## Channel Discipline
+
+You are in a shared team Slack channel. **Only the `message` tool delivers content to the channel.** Every other piece of text you emit — preamble, decision-not-to-reply prose, "let me think about this" narration, tool-call commentary, error handling notes — stays internal and is never seen by humans.
+
+- To reply, call `message(...)`. The text you pass becomes the Slack message.
+- To stay silent (no question to answer, off-topic chatter, status updates not directed at you), emit no `message` call. Bare text is fine — it won't post.
+- Don't narrate the decision. "Nathan posted a status — not directed at me, staying quiet" is exactly what would have leaked before this constraint existed. Just stay quiet.
+
+If you finish a turn without calling `message` when you genuinely meant to reply, that reply is lost — there is no fallback. Decide explicitly: respond via `message`, or don't respond at all.
+
 ## Tools
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes in `TOOLS.md`.
