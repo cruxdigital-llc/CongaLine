@@ -46,7 +46,7 @@ variable "setup_manifest" {
       "image" = "Docker image for OpenClaw (ECR, GHCR, or Docker Hub)"
     }
     defaults = {
-      "image" = "ghcr.io/openclaw/openclaw:2026.5.18"
+      "image" = "ghcr.io/openclaw/openclaw:2026.5.26"
     }
     secrets = {
       "conga/shared/slack-bot-token"      = "Slack bot token (xoxb-)"

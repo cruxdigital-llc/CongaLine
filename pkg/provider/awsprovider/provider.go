@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -167,6 +168,21 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 		return fmt.Errorf("failed to generate egress config: %w", err)
 	}
 	proxyBootstrapJS := policy.ProxyBootstrapJS()
+
+	// Pre-flight: warn if the overlay's primary or subagent endpoints are
+	// not in the effective egress allowlist. Best-effort — if the local
+	// agents/ overlay directory isn't resolvable (operator invoking from
+	// outside the repo), skip the check. Provisioning itself proceeds via
+	// the shell scripts uploaded to the instance; the overlay is consumed
+	// inside the bootstrap heredoc rather than here.
+	if behaviorDir := resolveAWSBehaviorDir(); behaviorDir != "" {
+		overlay, overlayErr := common.LoadAgentOverlay(behaviorDir, cfg)
+		if overlayErr != nil {
+			common.Warn(ctx, "failed to load agent overlay for egress check: %v", overlayErr)
+		} else {
+			common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+		}
+	}
 
 	var scriptTemplate string
 	var templateData interface{}
@@ -397,6 +413,24 @@ func (p *AWSProvider) PauseAgent(ctx context.Context, name string) error {
 	return nil
 }
 
+// UnpauseAgent brings a paused agent back online by:
+//  1. Clearing the paused flag in SSM so RefreshAgent will run.
+//  2. Calling RefreshAgent, which regenerates openclaw.json + .env,
+//     (re)writes the systemd unit if missing, restarts the container,
+//     reconciles routing.json, and (re)deploys the egress proxy.
+//
+// This replaces the previous bash-based unpause script that simply ran
+// `systemctl start`. The script failed silently when the systemd unit
+// file had been deleted (e.g. by manual cleanup), leaving the agent
+// stuck in "paused but unstartable" state — a catch-22 because Refresh
+// refuses to run on paused agents.
+//
+// On refresh failure, the paused flag is rolled back so the SSM state
+// matches reality.
+//
+// (Designed as part of the delegation-routing spec follow-up work; see
+// specs/2026-05-22_feature_delegation-routing/spec.md for the broader
+// surface area.)
 func (p *AWSProvider) UnpauseAgent(ctx context.Context, name string) error {
 	agent, err := discovery.ResolveAgent(ctx, p.clients.SSM, name)
 	if err != nil {
@@ -407,34 +441,44 @@ func (p *AWSProvider) UnpauseAgent(ctx context.Context, name string) error {
 		return nil
 	}
 
-	instanceID, err := p.findInstance(ctx)
-	if err != nil {
-		return err
-	}
-
-	script, err := p.renderAgentScript(scripts.UnpauseAgentScript, "unpause", name, agent)
-	if err != nil {
-		return err
-	}
-
-	spin := ui.NewSpinner(fmt.Sprintf("Unpausing agent %s...", name))
-	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, 60*time.Second)
-	spin.Stop()
-	if err != nil {
-		return err
-	}
-	if result.Status != "Success" {
-		fmt.Fprintf(os.Stderr, "Output:\n%s\n%s\n", result.Stdout, result.Stderr)
-		return fmt.Errorf("unpause failed on instance")
-	}
-
+	// Step 1: clear paused flag. RefreshAgent refuses paused agents.
 	if err := p.setAgentPaused(ctx, name, agent, false); err != nil {
-		return fmt.Errorf("agent started but failed to update SSM: %w", err)
+		return fmt.Errorf("failed to clear paused flag: %w", err)
 	}
 
+	// Step 2: refresh. This handles unit-file (re)creation, container
+	// start, routing.json reconciliation, and egress proxy redeploy.
+	spin := ui.NewSpinner(fmt.Sprintf("Unpausing agent %s (via refresh)...", name))
+	refreshErr := p.RefreshAgent(ctx, name)
+	spin.Stop()
+	if refreshErr != nil {
+		// Roll back the paused flag so SSM state matches reality.
+		if rollbackErr := p.setAgentPaused(ctx, name, agent, true); rollbackErr != nil {
+			return fmt.Errorf("refresh failed (%w) and rollback of paused flag also failed: %v", refreshErr, rollbackErr)
+		}
+		return fmt.Errorf("unpause failed during refresh: %w", refreshErr)
+	}
 	return nil
 }
 
+// RefreshAgent brings an agent's runtime state in sync with SSM:
+//
+//  1. Regenerate openclaw.json + .env via the Go path → upload via SSM
+//  2. Run refresh-user.sh.tmpl on the instance: refetch secrets, write
+//     systemd unit (recreates if missing), restart container.
+//  3. Reconcile routing.json from current SSM agent state + restart
+//     router so changed bindings take effect. Refresh used to skip
+//     routing.json, leaving the router with stale routes after a
+//     pause/unpause via SSM put-parameter — that's why this step exists.
+//  4. Redeploy egress proxy with the current policy file. This pushes
+//     the latest allowlist (and validate/enforce mode) to the proxy on
+//     disk + restarts it. Closes the bootstrap-time-config-never-updates
+//     gap: without this step, the proxy keeps whatever Envoy config the
+//     EC2 boot script wrote (deny-all until `conga policy deploy` runs).
+//
+// Each step is independent: a failure in routing.json reconciliation
+// shouldn't undo the openclaw.json update. We log + continue with a
+// warning rather than aborting the whole refresh.
 func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error {
 	agent, err := discovery.ResolveAgent(ctx, p.clients.SSM, agentName)
 	if err != nil {
@@ -449,33 +493,128 @@ func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error 
 		return err
 	}
 
-	// Regenerate openclaw.json via the Go code path so gateway mode,
-	// channel bindings, and allowlist entries stay in sync with SSM state.
+	// Step 0: refresh-time egress pre-flight. Provision-time has the same
+	// check; without doing it here too, operators editing agent.yaml
+	// (e.g. swapping a subagent base_url) and running refresh would
+	// silently land in 403-at-runtime territory. Best-effort: skip
+	// silently if either the overlay dir or the policy can't be located —
+	// the agent itself can still refresh.
+	if behaviorDir := resolveAWSBehaviorDir(); behaviorDir != "" {
+		if overlay, overlayErr := common.LoadAgentOverlay(behaviorDir, *agent); overlayErr == nil {
+			policyPath := filepath.Join(provider.DefaultDataDir(), "conga-policy.yaml")
+			if pf, _ := policy.Load(policyPath); pf != nil {
+				merged := pf.MergeForAgent(agentName)
+				common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(merged.Egress), agentName)
+			}
+		}
+	}
+
+	// Step 1: regenerate openclaw.json + .env via Go (uploaded to instance).
 	if err := p.regenerateAgentConfigOnInstance(ctx, instanceID, *agent); err != nil {
 		return fmt.Errorf("failed to regenerate config for %s: %w", agentName, err)
 	}
 
+	// Step 2: run refresh-user.sh.tmpl — refetch secrets + write unit + restart.
 	tmpl, err := template.New("refresh").Parse(scripts.RefreshUserScript)
 	if err != nil {
 		return fmt.Errorf("failed to parse refresh template: %w", err)
 	}
-
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, struct{ AgentName, AWSRegion string }{agentName, p.region}); err != nil {
 		return fmt.Errorf("failed to render refresh script: %w", err)
 	}
-
 	spin := ui.NewSpinner(fmt.Sprintf("Refreshing secrets for %s...", agentName))
 	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, buf.String(), 120*time.Second)
 	spin.Stop()
 	if err != nil {
 		return err
 	}
-
 	if result.Status != "Success" {
 		return fmt.Errorf("refresh failed:\n%s\n%s", result.Stdout, result.Stderr)
 	}
+
+	// Step 3: reconcile routing.json from current SSM agent state, then
+	// restart the router so the change takes effect. Non-fatal: warn on
+	// failure and continue — the agent itself is still healthy. Warn
+	// routes through the context's WarningSink so MCP callers see it
+	// in the tool result (stderr is invisible under MCP).
+	if err := p.regenerateRoutingOnInstance(ctx, instanceID); err != nil {
+		common.Warn(ctx, "routing.json regeneration failed for %s: %v", agentName, err)
+	} else if err := p.restartRouterOnInstance(ctx, instanceID); err != nil {
+		common.Warn(ctx, "router restart failed after %s refresh: %v", agentName, err)
+	}
+
+	// Step 4: redeploy egress proxy with current policy. Non-fatal: warn
+	// + continue. The bootstrap-time Envoy config is empty (deny-all)
+	// until this step succeeds at least once, so it's important — but
+	// we don't want a transient policy-deploy failure to fail an
+	// otherwise-successful refresh.
+	if err := p.redeployEgressDuringRefresh(ctx, agentName); err != nil {
+		common.Warn(ctx, "egress redeploy failed for %s: %v", agentName, err)
+	}
+
 	return nil
+}
+
+// redeployEgressDuringRefresh loads the current policy, generates the
+// Envoy config + manifest, and pushes them to the instance via the
+// existing DeployEgress code path. Used by RefreshAgent to keep the
+// egress proxy in sync with policy changes after the operator runs
+// `conga policy set-egress` and then `conga refresh` (without this,
+// only `conga policy deploy` would push the new config and operators
+// would have to remember the two-step).
+func (p *AWSProvider) redeployEgressDuringRefresh(ctx context.Context, agentName string) error {
+	policyPath := filepath.Join(provider.DefaultDataDir(), "conga-policy.yaml")
+	pf, policyContent, err := loadRefreshPolicy(ctx, policyPath)
+	if err != nil {
+		return err
+	}
+
+	var egressPolicy *policy.EgressPolicy
+	mode := policy.EgressModeEnforce
+	if pf != nil {
+		merged := pf.MergeForAgent(agentName)
+		egressPolicy = merged.Egress
+		if egressPolicy != nil {
+			mode = egressPolicy.Mode
+		}
+	}
+
+	envoyConfig, err := policy.GenerateProxyConf(egressPolicy)
+	if err != nil {
+		return fmt.Errorf("generate proxy conf: %w", err)
+	}
+	manifest := policy.BuildManifest(egressPolicy)
+	manifestBytes, _ := manifest.MarshalForDeploy()
+
+	return p.DeployEgress(ctx, agentName, policyContent, envoyConfig, string(manifestBytes), mode)
+}
+
+// loadRefreshPolicy loads conga-policy.yaml for the refresh egress-redeploy
+// step. policy.Load already distinguishes missing-file (returns nil, nil)
+// from broken-file (returns nil, err) — so we surface any err verbatim
+// (YAML typo, permission denied, I/O error) and only fall back to deny-all
+// when the file genuinely does not exist. Without this split, a typo in
+// conga-policy.yaml would silently regress every refreshed agent to a
+// deny-all proxy config. Returns:
+//   - (pf, content, nil) on successful load
+//   - (nil, "", nil) when the file genuinely does not exist; warning emitted
+//   - (nil, "", err) on YAML / I/O failure
+func loadRefreshPolicy(ctx context.Context, policyPath string) (*policy.PolicyFile, string, error) {
+	pf, err := policy.Load(policyPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("load policy %s: %w", policyPath, err)
+	}
+	if pf == nil {
+		common.Warn(ctx, "no conga-policy.yaml found at %s; egress proxy will be deployed with deny-all config", policyPath)
+		return nil, "", nil
+	}
+
+	data, readErr := os.ReadFile(policyPath)
+	if readErr != nil {
+		return nil, "", fmt.Errorf("read policy %s: %w", policyPath, readErr)
+	}
+	return pf, string(data), nil
 }
 
 func (p *AWSProvider) RefreshAll(ctx context.Context) error {

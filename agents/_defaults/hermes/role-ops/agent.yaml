@@ -1,0 +1,12 @@
+# role-ops (Hermes) — operations agent.
+#
+# NOTE: The OpenClaw sibling of this role uses a `model:` block to point
+# at a Qwen endpoint. On Hermes, that overlay path is not yet wired up
+# (see product-knowledge/standards/upstream-openclaw-issues.md, CRIT-A
+# entry). Until the spec lands, configure the primary model directly in
+# Hermes's `cli-config.yaml` on the container, OR rely on the Hermes
+# setup-time default (configured via `conga admin setup`).
+#
+# This file is intentionally a minimal v2 shell. It's still required so
+# the role package overlay-load step finds something.
+version: 2

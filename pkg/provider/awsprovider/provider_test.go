@@ -3,6 +3,9 @@ package awsprovider
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -10,6 +13,7 @@ import (
 	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	awsutil "github.com/cruxdigital-llc/conga-line/pkg/aws"
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
+	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 )
 
@@ -144,6 +148,144 @@ func TestSetAgentPaused_PreservesUnknownFields(t *testing.T) {
 	}
 	if unpaused["custom_field"] != "preserve_me" {
 		t.Errorf("custom_field lost after unpause: got %v", unpaused["custom_field"])
+	}
+}
+
+// TestLoadRefreshPolicy_* exercise the refresh-time policy loader that
+// backs `redeployEgressDuringRefresh`. The critical invariant is the
+// missing-vs-malformed split: a typo in conga-policy.yaml MUST surface
+// as an error so the refresh aborts before the proxy gets a deny-all
+// config; a genuinely missing file MUST fall back to deny-all + warn
+// (this is the bootstrap-time state before any `conga policy deploy`).
+//
+// Without this split, a typo silently regressed every refreshed agent —
+// the original silent-failure documented in PR #53's review (CRIT-1).
+func TestLoadRefreshPolicy_MissingFile_DenyAllWithWarning(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "conga-policy.yaml")
+
+	sink := &common.WarningSink{}
+	ctx := common.WithWarningSink(context.Background(), sink)
+
+	pf, content, err := loadRefreshPolicy(ctx, missing)
+	if err != nil {
+		t.Fatalf("missing file should not error, got: %v", err)
+	}
+	if pf != nil {
+		t.Errorf("missing file should return nil policy, got %+v", pf)
+	}
+	if content != "" {
+		t.Errorf("missing file should return empty content, got %q", content)
+	}
+	warnings := sink.Drain()
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "no conga-policy.yaml") {
+		t.Errorf("warning should mention missing policy file, got %q", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "deny-all") {
+		t.Errorf("warning should mention deny-all fallback, got %q", warnings[0])
+	}
+}
+
+func TestLoadRefreshPolicy_MalformedYAML_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	broken := filepath.Join(dir, "conga-policy.yaml")
+	// Intentionally malformed: tab indent + unclosed mapping.
+	if err := os.WriteFile(broken, []byte("egress:\n\tallowed_domains: ["), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	sink := &common.WarningSink{}
+	ctx := common.WithWarningSink(context.Background(), sink)
+
+	pf, content, err := loadRefreshPolicy(ctx, broken)
+	if err == nil {
+		t.Fatal("malformed YAML should return error, got nil — this is the silent failure CRIT-1 was meant to fix")
+	}
+	if pf != nil || content != "" {
+		t.Errorf("error path should return zero values, got pf=%v content=%q", pf, content)
+	}
+	if !strings.Contains(err.Error(), "load policy") {
+		t.Errorf("error should mention the policy path context, got %q", err.Error())
+	}
+	if warnings := sink.Drain(); len(warnings) != 0 {
+		t.Errorf("malformed YAML should not emit deny-all warning, got %v", warnings)
+	}
+}
+
+func TestLoadRefreshPolicy_ValidYAML_ReturnsParsedPlusContent(t *testing.T) {
+	dir := t.TempDir()
+	valid := filepath.Join(dir, "conga-policy.yaml")
+	src := "apiVersion: conga.dev/v1alpha1\negress:\n  mode: validate\n  allowed_domains:\n    - api.anthropic.com\n"
+	if err := os.WriteFile(valid, []byte(src), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	sink := &common.WarningSink{}
+	ctx := common.WithWarningSink(context.Background(), sink)
+
+	pf, content, err := loadRefreshPolicy(ctx, valid)
+	if err != nil {
+		t.Fatalf("valid YAML should not error, got: %v", err)
+	}
+	if pf == nil {
+		t.Fatal("valid YAML should return non-nil policy")
+	}
+	if pf.Egress == nil || pf.Egress.Mode != "validate" {
+		t.Errorf("expected egress.mode=validate, got %+v", pf.Egress)
+	}
+	if content != src {
+		t.Errorf("content should be the raw file bytes, got %q", content)
+	}
+	if warnings := sink.Drain(); len(warnings) != 0 {
+		t.Errorf("valid policy should not emit warnings, got %v", warnings)
+	}
+}
+
+// TestRefreshAgent_StepsDocumented is a structural regression guard:
+// the AWS RefreshAgent flow has four steps (config regen → refresh
+// script → routing reconcile → egress redeploy). Steps 3 and 4 were
+// added in PR #53 to fix followup items #6 and #9. If a future
+// refactor drops either step the warning sink wiring or the helper
+// calls below will go missing — this test catches that by scanning
+// the live source code for the helper invocations.
+//
+// Not a substitute for an end-to-end mock test, but it does ensure no
+// one can silently delete the routing or egress steps from RefreshAgent
+// without a test failure.
+func TestRefreshAgent_StepsDocumented(t *testing.T) {
+	src, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("read provider.go: %v", err)
+	}
+	body := string(src)
+
+	// Locate the RefreshAgent body.
+	const startMarker = "func (p *AWSProvider) RefreshAgent(ctx"
+	const endMarker = "func (p *AWSProvider) redeployEgressDuringRefresh"
+	start := strings.Index(body, startMarker)
+	end := strings.Index(body, endMarker)
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("could not locate RefreshAgent body; markers shifted — update this test")
+	}
+	refreshBody := body[start:end]
+
+	required := []struct {
+		name    string
+		snippet string
+	}{
+		{"step 1 (config regen)", "regenerateAgentConfigOnInstance"},
+		{"step 2 (refresh-user.sh)", "RefreshUserScript"},
+		{"step 3a (routing.json reconcile)", "regenerateRoutingOnInstance"},
+		{"step 3b (router restart)", "restartRouterOnInstance"},
+		{"step 4 (egress redeploy)", "redeployEgressDuringRefresh"},
+	}
+	for _, r := range required {
+		if !strings.Contains(refreshBody, r.snippet) {
+			t.Errorf("RefreshAgent missing %s — %q not found in body. Either restore the step or update this test if the contract changed.", r.name, r.snippet)
+		}
 	}
 }
 

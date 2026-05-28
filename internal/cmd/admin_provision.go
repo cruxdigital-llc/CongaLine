@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
@@ -11,6 +13,11 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 	"github.com/spf13/cobra"
 )
+
+// cmdErrWriter returns the stream the --role command writes its operator-
+// facing notes to. Indirected so tests can capture output without touching
+// os.Stderr directly. Default is os.Stderr.
+var cmdErrWriter = func() io.Writer { return os.Stderr }
 
 func adminAddUserRun(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandContext()
@@ -64,6 +71,20 @@ func adminAddUserRun(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// Role: flag > JSON > none. When set, copy role-package defaults into
+	// the agent's overlay dir BEFORE provisioning so the provider's
+	// overlay loader picks them up. Mutex with the command's implicit
+	// type: add-user requires `type: user` in role.meta.
+	role := adminRole
+	if role == "" {
+		if s, ok := ui.GetString("role"); ok {
+			role = s
+		}
+	}
+	if err := applyRolePackageIfRequested(role, agentName, agentRuntime, "user"); err != nil {
+		return err
 	}
 
 	cfg := provider.AgentConfig{
@@ -134,6 +155,17 @@ func adminAddTeamRun(cmd *cobra.Command, args []string) error {
 	}
 	gatewayPort, err := resolveGatewayPort(ctx)
 	if err != nil {
+		return err
+	}
+
+	// Role: flag > JSON > none. See adminAddUserRun for full semantics.
+	role := adminRole
+	if role == "" {
+		if s, ok := ui.GetString("role"); ok {
+			role = s
+		}
+	}
+	if err := applyRolePackageIfRequested(role, agentName, teamRuntime, "team"); err != nil {
 		return err
 	}
 
@@ -209,6 +241,53 @@ func resolveChannelBinding(agentType, agentRuntime string) ([]channels.ChannelBi
 		return nil, err
 	}
 	return []channels.ChannelBinding{binding}, nil
+}
+
+// applyRolePackageIfRequested is the CLI side of the --role flow:
+// resolves the operator's local agents/ dir, copies the role package's
+// default files into the agent's overlay dir, verifies the role's
+// declared type matches the command's implicit type (add-user → "user",
+// add-team → "team"), and reports what got copied to stderr for
+// operator visibility. No-op when role is empty.
+//
+// Returns an error (which aborts provisioning) when:
+//   - the operator's agents/ dir cannot be located
+//   - the role doesn't exist for the requested runtime
+//   - role.meta is missing or malformed
+//   - the role's declared type doesn't match the command intent
+//   - file copy fails
+//
+// Existing files in the destination are preserved (operator
+// customizations win — see pkg/common/role_package.go).
+func applyRolePackageIfRequested(role, agentName, agentRuntime, cmdType string) error {
+	if role == "" {
+		return nil
+	}
+
+	behaviorDir := common.ResolveOperatorBehaviorDir()
+	if behaviorDir == "" {
+		return fmt.Errorf("--role %s: cannot locate the congaline agents/ directory from the current working directory. Run `conga` from the conga-line repo root (or a subdirectory of it), or omit --role and author the overlay manually", role)
+	}
+
+	resolvedRuntime := string(runtime.ResolveRuntime(agentRuntime, ""))
+
+	declaredType, copied, err := common.ApplyRolePackage(behaviorDir, agentName, role, resolvedRuntime)
+	if err != nil {
+		return fmt.Errorf("--role %s: %w", role, err)
+	}
+
+	if declaredType != cmdType {
+		return fmt.Errorf("--role %s declares type %q in role.meta, but you ran `conga admin add-%s`. Use `conga admin add-%s --role %s` instead",
+			role, declaredType, cmdType, declaredType, role)
+	}
+
+	if len(copied) > 0 {
+		fmt.Fprintf(cmdErrWriter(), "role %s: copied %v into agents/%s/. Customize before first use — at minimum, point base_url at your endpoint.\n",
+			role, copied, agentName)
+	} else {
+		fmt.Fprintf(cmdErrWriter(), "role %s: agent dir already populated, no files copied (existing customizations preserved).\n", role)
+	}
+	return nil
 }
 
 func resolveGatewayPort(ctx context.Context) (int, error) {

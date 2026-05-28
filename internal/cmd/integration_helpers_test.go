@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const testImage = "ghcr.io/openclaw/openclaw:2026.5.18"
+const testImage = "ghcr.io/openclaw/openclaw:2026.5.26"
 
 // requireDocker skips the test if Docker is not available.
 func requireDocker(t *testing.T) {
@@ -193,21 +193,32 @@ func assertContainerRunning(t *testing.T, agentName string) {
 }
 
 // assertContainerNotExists asserts no container exists for the agent.
+//
+// Uses `--type=container` because the local provider names the agent's
+// Docker network the same as the container (both are "conga-<agent>").
+// Bare `docker inspect <name>` would match the network and return
+// success even after the container is gone, hiding the actual state.
 func assertContainerNotExists(t *testing.T, agentName string) {
 	t.Helper()
 	cName := "conga-" + agentName
-	err := exec.Command("docker", "inspect", cName).Run()
-	if err == nil {
+	if err := exec.Command("docker", "inspect", "--type=container", cName).Run(); err == nil {
 		t.Fatalf("container %s still exists", cName)
 	}
 }
 
 // assertContainerStopped asserts the agent's container exists but is not running.
+//
+// Uses `--type=container` for the same reason as assertContainerNotExists:
+// the local provider names the agent's Docker network the same as the
+// container. Without scoping, a post-pause docker inspect would match
+// the network — the format template returns an empty string with err=nil,
+// and this helper would silently treat that as "stopped" even if no
+// container had existed at all.
 func assertContainerStopped(t *testing.T, agentName string) {
 	t.Helper()
 	cName := "conga-" + agentName
 	// Container may have been removed entirely by pause, or just stopped
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", cName).Output()
+	out, err := exec.Command("docker", "inspect", "--type=container", "-f", "{{.State.Running}}", cName).Output()
 	if err != nil {
 		// Container doesn't exist — that counts as stopped
 		return

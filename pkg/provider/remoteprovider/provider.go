@@ -281,6 +281,10 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		fmt.Fprintf(os.Stderr, "No egress policy configured — proxy will deny all outbound traffic. Use 'conga policy set-egress' to allow domains.\n")
 	}
 
+	// 5b. Pre-flight: warn if the overlay's primary or subagent endpoints
+	// are not in the effective egress allowlist. Non-blocking.
+	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+
 	// 6. Create Docker network
 	netName := networkName(cfg.Name)
 	if !p.networkExists(ctx, netName) {
@@ -683,6 +687,13 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		fmt.Fprintf(os.Stderr, "No egress policy configured — proxy will deny all outbound traffic. Use 'conga policy set-egress' to allow domains.\n")
 	}
 
+	// Refresh-time egress pre-flight: warn if the overlay's primary or
+	// subagent endpoints aren't in the effective allowlist. Mirrors the
+	// provision-time check so operators editing agent.yaml and running
+	// refresh (the common flow) still get the heads-up before runtime
+	// 403s start landing.
+	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), agentName)
+
 	cName := containerName(agentName)
 	netName := networkName(agentName)
 
@@ -788,6 +799,14 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 			return fmt.Errorf("failed to reconnect router to network %s: %w", netName, err)
 		}
 	}
+
+	// Reconcile routing.json from current agent state. Without this,
+	// refreshes after pause/unpause cycles can leave the router holding
+	// stale routes.
+	if err := p.regenerateRouting(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update routing.json after refresh of %s: %v\n", agentName, err)
+	}
+
 	return nil
 }
 

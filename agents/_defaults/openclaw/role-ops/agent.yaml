@@ -1,0 +1,14 @@
+# role-ops — Qwen-backed operations agent (no subagent).
+#
+# Customize the base_url + model name to match your environment. The
+# defaults below point at a placeholder endpoint that won't resolve;
+# update before first use.
+version: 2
+model:
+  provider: openai
+  name: qwen-2.5-72b-instruct
+  base_url: https://litellm.internal/v1
+  # context_window / max_tokens: uncomment + set if your proxy enforces
+  # caps tighter than the model's advertised limits.
+  # context_window: 131072
+  # max_tokens: 8192

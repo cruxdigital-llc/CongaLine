@@ -56,13 +56,27 @@ func resolveBehaviorFiles(behaviorDir string, agent provider.AgentConfig) Behavi
 		}
 	}
 
-	// USER.md: agent-specific > render runtime+type template
+	// USER.md resolution order:
+	//   1. <agentDir>/USER.md         — pre-rendered, agent-authored (highest priority)
+	//   2. <agentDir>/USER.md.tmpl    — per-agent template (e.g. dropped in by `--role` copy)
+	//   3. <defaultDir>/USER.md.tmpl  — runtime+type default template
+	//
+	// (2) was added in spec.md § "CLI changes" so role packages can ship a
+	// .tmpl that gets templated with the agent's name + channel vars at
+	// deploy time, the same as the (3) fallback path.
 	if data, err := os.ReadFile(filepath.Join(agentDir, "USER.md")); err == nil {
 		files["USER.md"] = BehaviorFile{Content: data, Source: "agent"}
 	} else {
-		tmplPath := filepath.Join(defaultDir, "USER.md.tmpl")
-		if data, err := os.ReadFile(tmplPath); err == nil {
-			content := string(data)
+		var tmplData []byte
+		source := "default"
+		if data, err := os.ReadFile(filepath.Join(agentDir, "USER.md.tmpl")); err == nil {
+			tmplData = data
+			source = "agent"
+		} else if data, err := os.ReadFile(filepath.Join(defaultDir, "USER.md.tmpl")); err == nil {
+			tmplData = data
+		}
+		if tmplData != nil {
+			content := string(tmplData)
 			content = strings.ReplaceAll(content, "{{.AgentName}}", agent.Name)
 			content = strings.ReplaceAll(content, "{{AGENT_NAME}}", agent.Name) // legacy compat — drop once all .tmpl files use {{.AgentName}}
 
@@ -76,7 +90,7 @@ func resolveBehaviorFiles(behaviorDir string, agent provider.AgentConfig) Behavi
 				}
 			}
 
-			files["USER.md"] = BehaviorFile{Content: []byte(content), Source: "default"}
+			files["USER.md"] = BehaviorFile{Content: []byte(content), Source: source}
 		}
 	}
 

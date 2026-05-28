@@ -1,6 +1,6 @@
 <!--
 GLaDOS-MANAGED DOCUMENT
-Last Updated: 2026-05-19
+Last Updated: 2026-05-22
 To modify: Edit directly. This is the single source of truth for where per-agent
 configuration lives. Update when introducing a new per-agent concern; do NOT
 create a new config file/format without consulting the decision rule below.
@@ -18,7 +18,7 @@ create a new config file/format without consulting the decision rule below.
 |---|---|---|---|---|---|
 | **Infrastructure** | Agent existence, gateway port, egress allowlist (incl. private IPs), channel bindings, secret values, host resources | `terraform/environments/<env>/terraform.tfvars` `agents = {}` map | HCL (Terraform) | AWS (declarative). Local/remote use CLI flags (`conga admin add-user`). | Operator. Gitignored — only `.example` is committed. |
 | **Cluster policy** | Egress allow/deny lists, routing rules, posture (enforce/validate), drift detection | `~/.conga/conga-policy.yaml` with per-agent overrides under `agents.<name>.*` | YAML | All providers | Operator. Lifecycle via `conga policy {validate,deploy,drift}`. Egress overrides are **additive** with the global lists (see `standards/egress-controls.md` — *Global + agent policies are additive*); routing and posture overrides still replace. |
-| **Runtime overlay** | Model (provider, name, base_url), prompts (SOUL/AGENTS/USER), future: memory, tools, limits, multi-modal model refs, fallback chains | `agents/<name>/agent.yaml` + `agents/<name>/*.md` | YAML + Markdown | All providers (provider-agnostic; same files produce same runtime config on local/remote/AWS) | Operator. Gitignored — only `agents/_example/` is committed. |
+| **Runtime overlay** | Model (provider, name, base_url), **subagents** (in-runtime delegation — secondary model + behavior knobs), prompts (SOUL/AGENTS/USER), future: memory, tools, limits, multi-modal model refs, fallback chains | `agents/<name>/agent.yaml` + `agents/<name>/*.md` | YAML + Markdown | All providers (provider-agnostic; same files produce same runtime config on local/remote/AWS) | Operator. Gitignored at the per-agent dir level — only `agents/_example/` and `agents/_defaults/` (role packages + runtime/type defaults) are committed. |
 | **Runtime persistence** | Identity (name, type, runtime choice, allocated port, channel binding state) | `~/.conga/agents/<name>.json` (local) / `/opt/conga/agents/<name>.json` (remote) / SSM `/conga/agents/<name>` (AWS) | JSON | Per-provider | **Materialized by the provider** at provision time, not hand-edited. |
 | **Secrets** | API keys, OAuth tokens, channel bot tokens | Files mode 0400 (`~/.conga/secrets/agents/<name>/<key>` on local/remote) or AWS Secrets Manager (`conga/agents/<name>/<key>` on AWS) | Native | Per-provider | Operator. Authored via tfvars (AWS) or `conga secrets set` (local/remote). Never in git. |
 
@@ -67,6 +67,25 @@ Walk the rule:
 1. Affects AWS infra? No.
 2. Policy decision? No.
 3. Runtime-consumed, operator-authored, provider-agnostic? Yes. → **`agents/<name>/SOUL.md`** (or `AGENTS.md`, `USER.md`). Already the established pattern; don't duplicate in `agent.yaml`.
+
+### Example 5: "I want agent X to use Opus as its primary and delegate mechanical work to a cheap Qwen"
+Walk the rule:
+1. Affects AWS infra? **The endpoints' reachability** (egress allowlist) IS infra → both Anthropic and the LLM-proxy host must appear in `agents.<name>.egress_allowed_domains` (AWS tfvars) or `agents.<name>.egress.allowed_domains` (local/remote policy). The `conga admin add-user` flow warns at provision time when a declared overlay endpoint isn't allowed (see `pkg/common/egress_check.go`).
+2. Security/policy decision? No.
+3. Runtime-consumed, operator-authored, provider-agnostic? **Yes.** → **`agents/<name>/agent.yaml`** with a `subagents:` block (schema `version: 2`):
+   ```yaml
+   version: 2
+   # No model: block — primary stays at the runtime default (Anthropic Opus from openclaw-defaults.json).
+   subagents:
+     model:
+       provider: openai
+       name: qwen-2.5-72b-instruct
+       base_url: https://litellm.lan/v1
+     delegation_mode: prefer
+     max_concurrent: 4
+   ```
+   The five-role catalog at `agents/_defaults/<runtime>/role-*/` ships exactly this shape — the operator can copy one of the canonical roles by running `conga admin add-user --role role-code-dev <name>` (or `--role role-writing`). The CLI copies the role's `agent.yaml`, `SOUL.md`, `AGENTS.md`, and `USER.md.tmpl` into `agents/<name>/`, preserving any pre-existing customization.
+4. Credential? The orchestrator's Anthropic API key flows through the existing `anthropic-api-key` secret. If the subagent's provider is `openai`, its key flows through the existing `openai-api-key` secret. **No new secret names are introduced for subagents** — the secret-name → env-var mapping is unchanged.
 
 ## Why three layers (overlay vs policy vs infra) instead of one?
 

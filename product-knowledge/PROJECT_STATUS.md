@@ -255,6 +255,58 @@ token at provision time in both local and remote ProvisionAgent paths
 - [ ] **Phase 5**: docs/memory hygiene + 7-day soak window before any
   fast-follow or dependent feature work
 
+### 29. Delegation Routing — ✅ Verified Complete (live-tested on AWS)
+*Lead: Architect + PM + QA*
+*See `specs/2026-05-22_feature_delegation-routing/` for full trace*
+
+Two-tier delegation. **Tier 1** (subagents, ephemeral, in-runtime):
+v2 `agent.yaml` `subagents:` block translates to OpenClaw's
+`agents.defaults.subagents` / Hermes' `delegation:`; runtime owns
+the spawn decision via `sessions_spawn` / `delegate_task` tools.
+**Tier 2** (role agents, persistent): 5 role packages under
+`agents/_defaults/<runtime>/role-*/` (Ops/Data/Research on Qwen,
+Code-Dev/Writing on Opus + Qwen subagent), provisioned via
+`conga admin add-user|add-team --role <slug>` (CLI + JSON + MCP).
+No new Conga data-model concept.
+
+- [x] Requirements + Plan + Phase 1 upstream capability check (both
+  runtimes confirmed) + Spec (8-phase contract)
+- [x] Persona review (Architect + PM + QA APPROVE) +
+  pre-impl standards gate (0 violations, 1 warning resolved inline)
+- [x] Phase 1 — Schema v2 + `SubagentsOverlay` type + validation
+- [x] Phase 2 — OpenClaw generator emits
+  `agents.defaults.subagents.{model, delegationMode, maxConcurrent}`
+  + merged models allowlist + extended `models.providers`
+- [x] Phase 3 — Hermes generator emits `delegation:` block with
+  degraded-mode warning for unsupported openai endpoints
+- [x] Phase 4 — `CheckOverlayEgress` + `WarnOverlayEgressGaps` +
+  per-provider wiring (auto-derive + warn at provision)
+- [x] Phase 5 — 10 role packages (5 × 2 runtimes) + integrity test
+- [x] Phase 6 — `--role` flag across CLI + JSON schema + MCP tool;
+  idempotency preserved
+- [x] Phase 7 — Docs (`agent.yaml.example` v2 bump,
+  `config-taxonomy.md` worked example #5, `CLAUDE.md` Delegation
+  Model section)
+- [x] Phase 8 — Verification: full suite green (21 packages), vet
+  clean, gofmt clean. **Live-tested on AWS**: all 5 fleet overlays
+  migrated to v2 (Opus primary + Qwen subagent on Spark LiteLLM);
+  aaron deployed and running on Opus 4.7; deployed openclaw.json
+  inspected and confirmed correct (`subagents` block,
+  models allowlist, providers).
+- [x] **Bonus mid-session**: bumped runtime default Opus 4-6 → 4-7
+  (commit `3505f20`). aaron now runs `claude-opus-4-7
+  (thinking=medium, fast=off)`.
+- [x] No regression on Feature #27 — byte-equality guard
+  (`TestGenerateConfig_V2NoSubagentsBlock_IdenticalToV1`) holds.
+- [x] `/glados:verify-feature` passed (post-impl standards gate
+  PASS, persona verification APPROVE)
+- [ ] **Pending**: live chat smoke (Aaron DM → aaron, observe
+  subagent spawn in container logs)
+- [ ] **Follow-up (task #24)**: lift runtime defaults out of
+  `//go:embed` into `agents/_defaults/<runtime>/runtime-defaults.json`;
+  fix worktree-vs-parent CWD silent-wrong in
+  `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()`
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
@@ -268,6 +320,7 @@ token at provision time in both local and remote ProvisionAgent paths
 - Agent defaults (`agents/_defaults/<runtime>/<type>/SOUL.md`, `AGENTS.md`) are manually maintained — will drift on OpenClaw image upgrades and need periodic reconciliation
 
 ## Recent Changes
+- 2026-05-22: Delegation Routing — two-tier delegation model. **Tier 1 (subagents, ephemeral, in-runtime)**: `agent.yaml` schema bumped to v2 with a new top-level `subagents:` block. OpenClaw generator emits `agents.defaults.subagents.{model, delegationMode, maxConcurrent}` + merges subagent into the models allowlist + extends `models.providers`; Hermes generator emits the `delegation:` block with `max_concurrent_children` / `max_spawn_depth` (Hermes-only knob) + degraded-mode warning for openai endpoints not matching its native provider adapters. Runtime owns the spawn decision via OpenClaw's `sessions_spawn` tool / Hermes' `delegate_task` tool. **Tier 2 (role agents, persistent)**: 5 role packages (`role-ops`/`role-data`/`role-research` Qwen-backed `type: user`; `role-code-dev`/`role-writing` Opus-backed with Qwen subagent, `type: team`) shipped under `agents/_defaults/<runtime>/role-*/`, provisioned via new `conga admin add-user|add-team --role <slug>` (CLI + JSON + MCP parity). **Mid-session bonus**: bumped runtime default Anthropic Opus 4-6 → 4-7. **Live-tested on AWS**: all 5 fleet overlays migrated to v2; aaron deployed on Opus 4.7 + Qwen subagent on Spark LiteLLM; deployed openclaw.json shape verified. **Architectural debt logged** for follow-up: (a) lift `openclaw-defaults.json` out of `//go:embed` so model bumps don't require a binary rebuild + MCP restart; (b) `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()` silently pick up the wrong `agents/` dir when running from a git worktree. New packages: `pkg/common/egress_check.go` (auto-derive + warn at provision), `pkg/common/role_package.go` (`ApplyRolePackage` + `ResolveOperatorBehaviorDir`). New tests: ~76 across overlay, both generators, CLI, MCP, role-package machinery, role-defaults integrity. 21 packages pass, go vet / gofmt clean. Naming choice documented: matches OpenClaw upstream's "subagent" terminology to avoid colliding with their "delegate" (= org-identity agent) concept. See `specs/2026-05-22_feature_delegation-routing/`.
 - 2026-05-20: Local Model Routing — per-agent LLM override via a new `agents/<name>/agent.yaml` overlay (schema v1, strict-key parsing). Supports `ollama` (native; no `/v1`) and `openai` (OpenAI-compatible; `/v1`) providers. Allowlist is additive — runtime default stays available for `/model` switching, `fallbacks: []` prevents silent auto-failover. New: `pkg/runtime/overlay.go` (types + validation), `pkg/common/overlay_agent.go` (loader), `applyModelOverlay` in `pkg/runtime/openclaw/config.go`. All three providers (local, remote, aws) load the overlay before `GenerateConfig`. New `product-knowledge/standards/config-taxonomy.md` documents the canonical per-agent config split (infra → tfvars, policy → `conga-policy.yaml`, runtime overlay → `agent.yaml`, persistence → JSON/SSM, secrets → secrets store). Live-tested on AWS — a production user agent now defaults to a self-hosted LLM via LiteLLM. Two bugs caught during live testing: missing `models[]` array (OpenClaw schema), clobbering-vs-additive allowlist. 22 packages pass, go vet/gofmt clean. Observation logged for `/glados:recombobulate`: runtime config generators need integration tests against actual runtime schema, not just internal-shape assertions. See `specs/2026-05-19_feature_local-model-routing/`.
 - 2026-04-07: Per-Agent Behavior Configuration — replaced the base + team/user composition model with a simpler two-layer approach: shared defaults at `behavior/default/` and per-agent overrides at `behavior/agents/<name>/`. Agent files fully replace defaults (no concatenation). New CLI: `conga agent {list,add,rm,show,diff}`. Manifest-tracked deployments with deletion reconciliation. Terraform auto-refresh trigger restarts agents when behavior files change. ExecStartPre now syncs deploy-behavior.sh from S3. OpenClaw-only files supported (SOUL.md, AGENTS.md, USER.md) — arbitrary filenames not loaded by OpenClaw. Tested end-to-end on local and AWS. See `specs/2026-04-04_feature_per-agent-config-overlay/`.
 - 2026-04-05: Agent Portability — new `Runtime` interface (`pkg/runtime/`) making the agent runtime pluggable alongside the existing `Provider` interface. OpenClaw runtime extracted from `pkg/common/` into `pkg/runtime/openclaw/` (zero behavioral change). Hermes Agent runtime implemented in `pkg/runtime/hermes/` (YAML config, port 8642, Python health detection). Local provider fully wired to Runtime interface. `--runtime openclaw|hermes` flag, runtime choice persisted during `conga admin setup`, inherited by `add-user`/`add-team`. Data model: `Runtime` field on `AgentConfig`, `Config`, `SetupConfig`, `Manifest`. 20 new files, 13 modified, 38 runtime tests, all 16 test suites pass. Remote/AWS provider wiring deferred. See `specs/2026-04-05_feature_agent-portability/`.

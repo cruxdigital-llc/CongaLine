@@ -13,6 +13,7 @@ var (
 	adminGatewayPort   int
 	adminIAMIdentity   string
 	adminChannel       string
+	adminRole          string
 	adminForce         bool
 	adminDeleteSecrets bool
 )
@@ -32,6 +33,7 @@ func init() {
 	addUserCmd.Flags().IntVar(&adminGatewayPort, "gateway-port", 0, "Gateway port (auto-assigned if 0)")
 	addUserCmd.Flags().StringVar(&adminIAMIdentity, "iam-identity", "", "IAM identity (SSO username/email)")
 	addUserCmd.Flags().StringVar(&adminChannel, "channel", "", "Channel binding (platform:id, e.g., slack:U0123456789)")
+	addUserCmd.Flags().StringVar(&adminRole, "role", "", "Role package (e.g. role-ops, role-research). Copies overlay defaults from agents/_defaults/<runtime>/role-<slug>/")
 
 	addTeamCmd := &cobra.Command{
 		Use:   "add-team <name>",
@@ -41,6 +43,7 @@ func init() {
 	}
 	addTeamCmd.Flags().IntVar(&adminGatewayPort, "gateway-port", 0, "Gateway port (auto-assigned if 0)")
 	addTeamCmd.Flags().StringVar(&adminChannel, "channel", "", "Channel binding (platform:id, e.g., slack:C0123456789)")
+	addTeamCmd.Flags().StringVar(&adminRole, "role", "", "Role package (e.g. role-code-dev, role-writing). Copies overlay defaults from agents/_defaults/<runtime>/role-<slug>/")
 
 	listAgentsCmd := &cobra.Command{
 		Use:   "list-agents",

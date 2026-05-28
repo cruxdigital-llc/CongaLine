@@ -322,8 +322,8 @@ ENVFILE
 {
   "agents": {
     "defaults": {
-      "model": { "primary": "anthropic/claude-opus-4-6", "fallbacks": [] },
-      "models": { "anthropic/claude-opus-4-6": { "params": {} } },
+      "model": { "primary": "anthropic/claude-opus-4-7", "fallbacks": [] },
+      "models": { "anthropic/claude-opus-4-7": { "params": {} } },
       "workspace": "/home/node/.openclaw/data/workspace",
       "heartbeat": {
         "every": "55m",
@@ -418,8 +418,8 @@ ENVFILE
 {
   "agents": {
     "defaults": {
-      "model": { "primary": "anthropic/claude-opus-4-6", "fallbacks": [] },
-      "models": { "anthropic/claude-opus-4-6": { "params": {} } },
+      "model": { "primary": "anthropic/claude-opus-4-7", "fallbacks": [] },
+      "models": { "anthropic/claude-opus-4-7": { "params": {} } },
       "workspace": "/home/node/.openclaw/data/workspace",
       "heartbeat": {
         "every": "55m",
@@ -1322,6 +1322,31 @@ if [ $BOOTSTRAP_ERRORS -gt 0 ]; then
   echo "=== Conga Bootstrap FAILED: $(date -u) ==="
   exit 1
 fi
+
+# Note on egress proxy configs: the bash bootstrap above generated
+# Envoy configs from whatever was at /opt/conga/conga-policy.yaml at
+# bootstrap time. That file is pulled from S3 (line ~151); if the
+# terraform `conga_policy` resource hadn't uploaded to S3 yet (race
+# during initial provisioning), the file is empty and the bash-
+# generated Lua filter has an empty allowlist — i.e. deny-all.
+#
+# This is the correct fail-safe posture, but it means agents can't
+# reach Slack/Anthropic/etc. until policy is explicitly deployed.
+# The conga binary is NOT installed on the instance (lives only on
+# the operator's machine), so we can't self-deploy here.
+#
+# After bootstrap completes, the operator should run on their own
+# machine:
+#
+#   conga policy deploy --all       (or: conga refresh-all)
+#
+# Either command regenerates the live Envoy configs from the current
+# policy file. The refresh path also covers the case where the
+# policy hasn't changed but the proxy config drifted (e.g. after a
+# secret rotation that triggered a stale-binary in-provider refresh
+# cascade — see followups.md #3). With followups.md #6 landed,
+# `conga refresh-agent` redeploys policy as part of every refresh,
+# so any routine operation will pick up policy state going forward.
 touch /opt/conga/.bootstrap-complete
 echo "=== Conga Bootstrap Complete: $(date -u) ==="
 echo "Router: conga-router (Socket Mode → HTTP forwarding)"

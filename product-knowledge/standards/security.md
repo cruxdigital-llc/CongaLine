@@ -38,7 +38,7 @@ These controls apply identically regardless of provider. They happen automatical
 | Config integrity monitoring | SHA256 hash baseline, periodic check, alert on mismatch | Detects tampering that bypasses other controls |
 | Router event signing | HMAC-SHA256 on forwarded Slack events | Prevents event forgery between router and containers |
 | Gateway token auth | Random token + device pairing | Prevents unauthorized web UI access |
-| Pinned image | Known-good OpenClaw version (currently v2026.5.18) | Avoids regressions; pinning a specific minor (not `:latest`) keeps deploys bisectable across upstream releases |
+| Pinned image | Known-good OpenClaw version (currently v2026.5.26) | Avoids regressions; pinning a specific minor (not `:latest`) keeps deploys bisectable across upstream releases |
 
 ## Enforcement Escalation by Provider
 

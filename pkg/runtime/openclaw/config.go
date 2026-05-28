@@ -4,8 +4,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
@@ -52,7 +54,61 @@ func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
 		}
 	}
 
+	if params.Overlay != nil && params.Overlay.Subagents != nil {
+		if err := applySubagentsOverlay(config, params.Overlay.Subagents); err != nil {
+			return nil, fmt.Errorf("apply subagents overlay: %w", err)
+		}
+	}
+
+	if params.Agent.Type == provider.AgentTypeTeam {
+		applyTeamChannelDiscipline(config)
+	}
+
 	return json.MarshalIndent(config, "", "  ")
+}
+
+// applyTeamChannelDiscipline tightens group-chat delivery for team agents:
+// only an explicit `message` tool call is forwarded to the channel; bare text
+// content blocks (preamble narration, decision-not-to-reply prose, inter-tool
+// commentary) stay internal.
+//
+// Workaround for openclaw/openclaw#25592 ("Text between tool calls leaks to
+// messaging channels"), still open at v2026.5.26. The fix has two parts:
+//   - messages.groupChat.visibleReplies = "message_tool" — gates delivery on
+//     an explicit message() tool call.
+//   - tools.alsoAllow = ["message"] — restores the `message` tool that the
+//     "coding" profile (set in openclaw-defaults.json) strips out. Without
+//     this the agent would have no way to deliver replies and every turn
+//     would silently drop (the failure mode behind openclaw/openclaw#77320).
+//
+// Scope: team agents only. User agents operate in DMs where a touch of
+// preamble is acceptable and the silent-drop risk is higher (a missed reply
+// in a 1:1 DM is noticed immediately).
+func applyTeamChannelDiscipline(config map[string]any) {
+	messages, ok := config["messages"].(map[string]any)
+	if !ok {
+		messages = map[string]any{}
+		config["messages"] = messages
+	}
+	groupChat, ok := messages["groupChat"].(map[string]any)
+	if !ok {
+		groupChat = map[string]any{}
+		messages["groupChat"] = groupChat
+	}
+	groupChat["visibleReplies"] = "message_tool"
+
+	tools, ok := config["tools"].(map[string]any)
+	if !ok {
+		tools = map[string]any{}
+		config["tools"] = tools
+	}
+	existing, _ := tools["alsoAllow"].([]any)
+	for _, e := range existing {
+		if s, ok := e.(string); ok && s == "message" {
+			return
+		}
+	}
+	tools["alsoAllow"] = append(existing, "message")
 }
 
 // applyModelOverlay mutates config in place to reflect the operator's model
@@ -78,7 +134,7 @@ func applyModelOverlay(config map[string]any, m *runtime.ModelOverlay) error {
 	}
 	// agents.defaults.models: MERGE the overlay's model into the existing
 	// allowlist rather than replacing it. This preserves the runtime defaults
-	// (e.g. anthropic/claude-opus-4-6 from openclaw-defaults.json) so operators
+	// (e.g. anthropic/claude-opus-4-7 from openclaw-defaults.json) so operators
 	// can /model into them mid-conversation. Lockdown — if you want it — should
 	// be enforced at the egress policy layer, not by trimming the allowlist.
 	allowlist, ok := defaults["models"].(map[string]any)
@@ -137,6 +193,131 @@ func applyModelOverlay(config map[string]any, m *runtime.ModelOverlay) error {
 	providers[m.Provider] = providerCfg
 
 	return nil
+}
+
+// applySubagentsOverlay mutates config in place to emit OpenClaw's native
+// subagent configuration under agents.defaults.subagents, extending the
+// models allowlist + models.providers map to include the subagent model.
+//
+// Upstream mechanism: OpenClaw v2026.5.18+ recognizes
+// agents.defaults.subagents.{model, delegationMode, maxConcurrent} and pairs
+// it with the sessions_spawn tool — see docs/tools/subagents.md and
+// docs/concepts/parallel-specialist-lanes.md in github.com/openclaw/openclaw.
+//
+// Per-block precondition: AgentOverlay.Validate has confirmed that the
+// subagent does NOT conflict with the primary (same provider id with
+// different base_urls is rejected upstream of this call). The defensive
+// re-check below is for programmatic AgentOverlay use that skips Validate.
+func applySubagentsOverlay(config map[string]any, s *runtime.SubagentsOverlay) error {
+	m := s.Model
+	modelRef := m.Provider + "/" + m.Name
+
+	agents, ok := config["agents"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("openclaw-defaults.json missing agents section")
+	}
+	defaults, ok := agents["defaults"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("openclaw-defaults.json missing agents.defaults section")
+	}
+
+	// agents.defaults.subagents — the upstream config block.
+	// max_spawn_depth is intentionally NOT emitted here (Hermes-only knob).
+	subBlock := map[string]any{
+		"model": modelRef,
+	}
+	if s.DelegationMode != "" {
+		subBlock["delegationMode"] = s.DelegationMode
+	}
+	if s.MaxConcurrent > 0 {
+		subBlock["maxConcurrent"] = s.MaxConcurrent
+	}
+	defaults["subagents"] = subBlock
+
+	// Merge the subagent model into the existing allowlist so the orchestrator
+	// can also /model into it manually. Preserves the additive-allowlist
+	// principle established by Feature #27.
+	allowlist, ok := defaults["models"].(map[string]any)
+	if !ok {
+		allowlist = map[string]any{}
+		defaults["models"] = allowlist
+	}
+	if _, present := allowlist[modelRef]; !present {
+		allowlist[modelRef] = map[string]any{}
+	}
+
+	// Extend models.providers.<id>: either append to an existing provider
+	// entry (when primary uses the same provider) or create one from scratch.
+	models, ok := config["models"].(map[string]any)
+	if !ok {
+		models = map[string]any{}
+		config["models"] = models
+	}
+	providers, ok := models["providers"].(map[string]any)
+	if !ok {
+		providers = map[string]any{}
+		models["providers"] = providers
+	}
+
+	modelEntry := map[string]any{
+		"id":   m.Name,
+		"name": m.Name,
+	}
+	if m.ContextWindow > 0 {
+		modelEntry["contextWindow"] = m.ContextWindow
+	}
+	if m.MaxTokens > 0 {
+		modelEntry["maxTokens"] = m.MaxTokens
+	}
+
+	if existing, providerExists := providers[m.Provider].(map[string]any); providerExists {
+		// Defensive: same provider key but different base_url is a conflict
+		// the validation layer should already have rejected. This guards
+		// against programmatic AgentOverlay construction that skips Validate.
+		existingBaseURL, _ := existing["baseUrl"].(string)
+		if trimSubagentBaseURL(existingBaseURL) != trimSubagentBaseURL(m.BaseURL) {
+			return fmt.Errorf("subagent base_url %q conflicts with primary's %q for the same provider key %q; each provider id must map to one endpoint",
+				m.BaseURL, existingBaseURL, m.Provider)
+		}
+		existingModels, _ := existing["models"].([]any)
+		for _, em := range existingModels {
+			emMap, ok := em.(map[string]any)
+			if !ok {
+				continue
+			}
+			if emMap["id"] == m.Name {
+				// Already present (e.g. operator set primary and subagent to
+				// the same model name — odd but not invalid).
+				return nil
+			}
+		}
+		existing["models"] = append(existingModels, modelEntry)
+		return nil
+	}
+
+	// Provider not yet configured — create the entry from scratch.
+	providerCfg := map[string]any{"models": []any{modelEntry}}
+	switch m.Provider {
+	case runtime.ProviderOllama:
+		providerCfg["baseUrl"] = m.BaseURL
+		providerCfg["apiKey"] = runtime.OllamaLocalAPIKey
+		providerCfg["api"] = runtime.ProviderOllama
+	case runtime.ProviderOpenAI:
+		if m.BaseURL != "" {
+			providerCfg["baseUrl"] = m.BaseURL
+		}
+		// apiKey flows via OPENAI_API_KEY env var — see CLAUDE.md note on
+		// OpenClaw issue #9627.
+	default:
+		return fmt.Errorf("unsupported overlay provider %q (validation should have caught this)", m.Provider)
+	}
+	providers[m.Provider] = providerCfg
+
+	return nil
+}
+
+func trimSubagentBaseURL(s string) string {
+	return strings.TrimRight(s, "/")
 }
 
 func (r *Runtime) ConfigFileName() string { return "openclaw.json" }

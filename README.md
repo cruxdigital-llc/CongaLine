@@ -64,7 +64,7 @@ The two are orthogonal — any provider works with any runtime.
 
 | Runtime | Language | Config | Default Image | Notes |
 |---------|----------|--------|---------------|-------|
-| **OpenClaw** | Node.js | `openclaw.json` | `ghcr.io/openclaw/openclaw:2026.5.18` | Native Slack via webhook plugin |
+| **OpenClaw** | Node.js | `openclaw.json` | `ghcr.io/openclaw/openclaw:2026.5.26` | Native Slack via webhook plugin |
 | **Hermes** | Python | `config.yaml` | `nousresearch/hermes-agent:latest` | OpenAI-compatible API on port 8642 |
 
 Adding a third runtime is a single Go package under `pkg/runtime/<name>/` implementing the 22-method `Runtime` interface. No changes to providers, CLI, or core logic.
@@ -590,7 +590,7 @@ model:
 
 ### Additive allowlist behavior
 
-When an overlay is applied, the runtime's default model (`anthropic/claude-opus-4-6` for OpenClaw) **stays in the allowlist**. The overlay just adds the new model and changes the primary. So operators can `/model anthropic/claude-opus-4-6` mid-conversation to swap, then `/model openai/qwen36` to switch back. Both keys (`OPENAI_API_KEY` from per-agent secrets, `ANTHROPIC_API_KEY` from global secrets) are present in the container env.
+When an overlay is applied, the runtime's default model (`anthropic/claude-opus-4-7` for OpenClaw) **stays in the allowlist**. The overlay just adds the new model and changes the primary. So operators can `/model anthropic/claude-opus-4-7` mid-conversation to swap, then `/model openai/qwen36` to switch back. Both keys (`OPENAI_API_KEY` from per-agent secrets, `ANTHROPIC_API_KEY` from global secrets) are present in the container env.
 
 If you want to **lock** an agent to one model, do it at the egress policy layer (remove `api.anthropic.com` from that agent's `allowed_domains`), not via the overlay — the allowlist is a UX surface for `/model` selection, not a security boundary.
 
@@ -714,10 +714,10 @@ CongaLine supports two agent runtimes — pick the image that matches the runtim
 
 ### OpenClaw
 
-Pinned to **v2026.5.18**. We pin a specific upstream minor (rather than tracking `:latest`) so deploys stay bisectable across releases.
+Pinned to **v2026.5.26**. We pin a specific upstream minor (rather than tracking `:latest`) so deploys stay bisectable across releases.
 
 ```
-ghcr.io/openclaw/openclaw:2026.5.18
+ghcr.io/openclaw/openclaw:2026.5.26
 ```
 
 ### Hermes Agent

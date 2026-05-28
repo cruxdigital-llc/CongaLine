@@ -21,11 +21,16 @@
 # ------------------------------------------------------------------------------
 
 # Required. The schema version this document was authored against.
-# - 1 is the current version.
-# - A missing `version:` is accepted with a one-time warning (treated as 1).
+# - 2 is the current version (adds `subagents:` block for in-runtime delegation).
+# - 1 is still accepted unchanged for back-compat (Feature #27 documents).
+# - A missing `version:` is accepted with a one-time warning (treated as current).
 # - Any other value is a hard failure: conga prints "binary too old; upgrade"
 #   rather than silently mis-parsing a newer schema.
-version: 1
+#
+# Schema additions per version:
+#   v1: model: block (Feature #27 Local Model Routing)
+#   v2: subagents: block (Feature #29 Delegation Routing — see below)
+version: 2
 
 # ------------------------------------------------------------------------------
 # model — override the agent's LLM provider, model, and endpoint.
@@ -86,41 +91,84 @@ model:
   # max_tokens: 8192
 
 # ------------------------------------------------------------------------------
+# subagents — declare a cheaper secondary model the orchestrator can delegate
+# mechanical work to (lookups, file ops, log parsing, data crunch, format
+# conversions). Added in v2; rejected in v1 documents with a friendly
+# "bump to version 2" error.
+#
+# Upstream mechanism:
+#   - OpenClaw runtime: agents.defaults.subagents.{model, delegationMode,
+#     maxConcurrent} + sessions_spawn tool. See OpenClaw
+#     docs/tools/subagents.md and docs/concepts/parallel-specialist-lanes.md.
+#   - Hermes runtime: delegation: {model, max_concurrent_children,
+#     max_spawn_depth} + delegate_task tool. See Hermes
+#     website/docs/user-guide/features/delegation.md.
+#
+# The orchestrator (this agent's primary model) decides when to spawn a
+# subagent — the runtime owns that policy. Conga's job here is just to make
+# the subagent model AVAILABLE in the runtime config.
+# ------------------------------------------------------------------------------
+subagents:
+  # Required when the subagents: block is present. Same provider/name/
+  # base_url shape as model.* above; same validation (provider enum
+  # {ollama, openai}, base_url shape, etc.).
+  model:
+    provider: openai
+    name: qwen-2.5-72b-instruct
+    base_url: https://litellm.internal/v1
+    # context_window / max_tokens optional — see the model: block above
+    # for rationale.
+    # context_window: 131072
+    # max_tokens: 8192
+
+  # OpenClaw-only: prompt-level nudge to the orchestrator.
+  #   "suggest" (default) — gentle nudge to use subagents for slow / long work
+  #   "prefer"            — stronger nudge: delegate anything more involved
+  #                         than a direct reply
+  # Hermes ignores this field (the loader accepts it for forward-compat).
+  delegation_mode: suggest
+
+  # Universal: concurrency cap for subagent runs.
+  # 0 / absent = use runtime default (OpenClaw ~8, Hermes 3).
+  max_concurrent: 4
+
+  # Hermes-only: nesting depth (1..3, default 1).
+  # 1 = flat (subagents cannot spawn their own subagents).
+  # OpenClaw's nesting policy is implicit; it ignores this field.
+  # max_spawn_depth: 1
+
+# ------------------------------------------------------------------------------
 # RESERVED KEYS — do NOT use today.
 #
-# These top-level keys are reserved for future versions of the schema. Setting
-# any of them in a `version: 1` document will fail the strict-key parser. They
-# are listed here so contributors know what's coming and don't try to wedge new
-# concerns into the existing `model:` block.
-#
-# When any of these lands, schema bumps to `version: 2` and the loader handles
-# both versions explicitly. Never silently extend; never reuse names.
+# These top-level keys are reserved for future versions. Setting any of them
+# in a v1 or v2 document fails the strict-key parser. Listed here so
+# contributors know what's coming.
 # ------------------------------------------------------------------------------
 #
-# # Fallback chain for model failover. Requires the Bifrost / Model Routing work
-# # (see product-knowledge/ROADMAP.md). Planned, not implemented.
+# # Fallback chain for model failover. Requires the Bifrost / Model Routing
+# # work (see product-knowledge/ROADMAP.md).
 # model:
 #   fallbacks:
 #     - openai/gpt-5.5
-#     - anthropic/claude-opus-4-6
+#     - anthropic/claude-opus-4-7
 #
-# # Per-agent memory backend. Planned. Anticipated shape:
+# # Per-agent memory backend. Anticipated:
 # memory:
-#   provider: ollama        # embedding provider id
-#   endpoint: http://...    # if not the same as the chat endpoint
+#   provider: ollama
+#   endpoint: http://...
 #
-# # Per-agent tool / MCP server allowlist. Planned.
+# # Per-agent tool / MCP allowlist.
 # tools:
 #   allowlist:
 #     - github
 #     - linear
 #
-# # Per-agent token / cost limits. Planned.
+# # Per-agent token / cost limits.
 # limits:
 #   max_tokens_per_turn: 8192
 #   daily_token_cap: 5000000
 #
-# # Per-agent multi-modal model refs (image / pdf / video). Planned.
+# # Per-agent multi-modal model refs (image / pdf / video).
 # images:
 #   provider: ollama
 #   name: qwen2.5vl:7b

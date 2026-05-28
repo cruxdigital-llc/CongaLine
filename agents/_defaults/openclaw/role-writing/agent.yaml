@@ -1,0 +1,18 @@
+# role-writing — Opus-orchestrated writing agent with a Qwen subagent
+# for mechanical text work (translation, formatting, word counts,
+# reference checks).
+#
+# Primary model: uses the runtime default (Anthropic Opus). See
+# role-code-dev/agent.yaml for notes on overriding the primary.
+#
+# Subagent: Qwen via your LLM proxy. Customize base_url + model name.
+version: 2
+subagents:
+  model:
+    provider: openai
+    name: qwen-2.5-72b-instruct
+    base_url: https://litellm.internal/v1
+    # context_window: 131072
+    # max_tokens: 8192
+  delegation_mode: prefer
+  max_concurrent: 4

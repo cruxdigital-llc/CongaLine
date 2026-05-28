@@ -158,10 +158,11 @@ func (s *Server) toolRefreshAgent() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
+			ctx, sink := withSink(ctx)
 			if err := s.prov.RefreshAgent(ctx, name); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult(fmt.Sprintf("Agent %q refreshed.", name)), nil
+			return okWithWarnings(fmt.Sprintf("Agent %q refreshed.", name), sink), nil
 		},
 	}
 }
@@ -180,10 +181,11 @@ func (s *Server) toolRefreshAll() server.ServerTool {
 			ctx, cancel := toolCtx(ctx)
 			defer cancel()
 
+			ctx, sink := withSink(ctx)
 			if err := s.prov.RefreshAll(ctx); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return okResult("All agents refreshed."), nil
+			return okWithWarnings("All agents refreshed.", sink), nil
 		},
 	}
 }

@@ -24,7 +24,7 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - **Remote provider**: `pkg/provider/remoteprovider/` — SSH-based Docker operations on any remote host, file-based secrets (mode 0400), SSH tunneling for gateway access, config integrity monitoring
 - **Common package**: `pkg/common/` — shared logic used by all providers: config generation, routing (`GenerateRoutingJSON`), behavior file resolution (`resolveBehaviorFiles`), manifest tracking, port allocation, validation
 - **Behavior files**: `agents/_defaults/<runtime>/<type>/` has runtime+type-specific defaults (SOUL.md, AGENTS.md, USER.md.tmpl) for each combination of runtime (openclaw, hermes) and agent type (user, team). SOUL.md and AGENTS.md differ between user agents (privacy-focused, personal memory) and team agents (multi-user awareness, shared memory). `agents/<name>/` has per-agent overrides that fully replace the defaults. CLI: `conga agent {list,add,rm,show,diff}`. See `pkg/common/behavior.go` and `pkg/common/overlay.go`.
-- **Per-agent runtime overlay**: `agents/<name>/agent.yaml` is an optional, versioned YAML file that lives alongside the prompt files. Today it carries `model:` (provider, name, base_url) to point a single agent at a self-hosted LLM. Future versions will absorb `memory:`, `tools:`, `limits:`, etc. — operators should NOT create new files per concern. Schema is strict-keyed; unknown keys fail loudly. See `agents/_example/agent.yaml.example` for the template and `product-knowledge/standards/config-taxonomy.md` for the full per-agent config taxonomy (infra → tfvars, policy → `conga-policy.yaml`, runtime overlay → `agent.yaml`, persistence → JSON/SSM, secrets → secrets store). Loader: `pkg/common/overlay_agent.go`; types: `pkg/runtime/overlay.go`.
+- **Per-agent runtime overlay**: `agents/<name>/agent.yaml` is an optional, versioned YAML file that lives alongside the prompt files. v1 carries `model:` (provider, name, base_url) to point a single agent at a self-hosted LLM. v2 adds `subagents:` for in-runtime delegation (see "Delegation Model" below). Future versions will absorb `memory:`, `tools:`, `limits:`, etc. — operators should NOT create new files per concern. Schema is strict-keyed; unknown keys fail loudly. See `agents/_example/agent.yaml.example` for the template and `product-knowledge/standards/config-taxonomy.md` for the full per-agent config taxonomy (infra → tfvars, policy → `conga-policy.yaml`, runtime overlay → `agent.yaml`, persistence → JSON/SSM, secrets → secrets store). Loader: `pkg/common/overlay_agent.go`; types: `pkg/runtime/overlay.go`.
 - **Provider selection**: `--provider aws|local|remote` flag, persisted in `~/.conga/config.json` (default: `local`)
 - **Slack is optional**: When no Slack tokens are provided, openclaw.json omits the `channels` section and the agent runs in gateway-only mode. The router is only started when Slack is configured.
 
@@ -73,6 +73,46 @@ This is an infrastructure-as-code project deploying Conga Line (autonomous AI as
 - **Gateway runs in `mode: "local"`** (gateway + agent runtime in the same container — this is the default OpenClaw topology, unrelated to the congaline "remote" provider). The 0.0.0.0 binding inside the container that Docker `-p 127.0.0.1:<host>:18789` port forwarding requires comes from `gateway.bind: "lan"`, not from `mode`. OpenClaw v2026.3.22+ explicitly rejects `mode: "remote"` (split remote-transport topology) without `--allow-unconfigured`; we are not that topology.
 - **`allowedOrigins`** must include both `localhost:18789` (for CLI tools inside the container) and `localhost:{hostPort}` (for browser access via SSM/SSH tunnels). Without both, `conga connect` gets "origin not allowed".
 
+## Delegation Model
+
+Two-tier delegation lets a top-tier orchestrator (Opus) drive personality + reasoning while a cheaper secondary model (typically Qwen via LiteLLM) handles mechanical work. See `specs/2026-05-22_feature_delegation-routing/`.
+
+**Tier 1 — Subagents** (ephemeral, in-runtime). The agent's `agent.yaml` (schema `version: 2`) declares an optional `subagents:` block:
+
+```yaml
+version: 2
+subagents:
+  model:
+    provider: openai
+    name: qwen-2.5-72b-instruct
+    base_url: https://litellm.lan/v1
+  delegation_mode: prefer    # OpenClaw-only: "suggest" (default) or "prefer"
+  max_concurrent: 4
+  # max_spawn_depth: 1       # Hermes-only knob (1..3)
+```
+
+The orchestrator's runtime decides when to spawn a subagent — Conga's job is just to make the model available in the runtime config. Upstream mechanisms:
+- **OpenClaw**: `sessions_spawn` tool + `agents.defaults.subagents.{model, delegationMode, maxConcurrent}` config. See `docs/tools/subagents.md` and `docs/concepts/parallel-specialist-lanes.md` in `github.com/openclaw/openclaw`.
+- **Hermes**: `delegate_task` tool + `delegation:` block. See `website/docs/user-guide/features/delegation.md` in `github.com/NousResearch/hermes-agent`.
+
+**Vocabulary note**: OpenClaw upstream uses **"delegate"** for an entirely different concept — a named org-identity agent acting on behalf of humans (`docs/concepts/delegate-architecture.md`). Both upstream runtimes converge on **"subagent"** for the ephemeral in-runtime concept Conga implements; we match that terminology.
+
+**Tier 2 — Role agents** (persistent, model-bound). Five canonical roles ship as overlay packages under `agents/_defaults/<runtime>/role-*/`. Provision via `conga admin add-user --role <slug>` or `conga admin add-team --role <slug>`:
+
+| Role | Slug | Type | Primary | Subagent | Use case |
+|---|---|---|---|---|---|
+| Operations | `role-ops` | user | Qwen | — | Monitoring, infra checks, status reports |
+| Data | `role-data` | user | Qwen | — | Reporting, CSV/metrics analysis, format work |
+| Research | `role-research` | user | Qwen | — | Web research, doc digests, competitive intel |
+| Code/Dev | `role-code-dev` | team | Opus (runtime default) | Qwen | Code review, architecture, debugging |
+| Writing | `role-writing` | team | Opus (runtime default) | Qwen | Drafts, edits, content strategy |
+
+`role.meta` (single-line `type: user` or `type: team`) tells the CLI which sub-command the role expects. Mismatch (e.g. `add-user --role role-code-dev`) errors with an actionable message pointing at the correct command. The `--role` flag copies the role's `SOUL.md`, `AGENTS.md`, `USER.md.tmpl`, and `agent.yaml` into `agents/<name>/`, preserving any pre-existing operator customization — running `--role` twice is idempotent.
+
+**Egress**: a v2 overlay's `base_url` host(s) need to be in the agent's egress allowlist (`agents.<name>.egress_allowed_domains` in tfvars, or the per-agent egress section of `conga-policy.yaml`). `conga admin add-user`/`add-team` calls `common.WarnOverlayEgressGaps` after the overlay loads and emits a stderr warning for every declared endpoint that isn't allowed. Non-blocking; the operator fixes the allowlist before first use.
+
+**Customization**: every role package ships an `agent.yaml` with a placeholder `https://litellm.internal/v1` base_url. Operators MUST edit `agents/<name>/agent.yaml` after `--role` to point at their actual LLM proxy. The role's README explains.
+
 ## Planning
 
 - GLaDOS planning docs in `product-knowledge/`
@@ -101,12 +141,13 @@ pointing at the spec dir.
 - `SLACK_APP_TOKEN` is held only by the router (in `router.env`) — containers do not need it
 - Router must be connected to each agent's Docker network (`docker network connect conga-<agent_name> conga-router`) so it can reach the container's webhook endpoint
 - Routing config at routing.json maps channels and member IDs to container webhook URLs (`http://conga-{name}:18789/slack/events`)
-- The deployed image is pinned to `ghcr.io/openclaw/openclaw:2026.5.18`. Pinning to a specific minor (rather than tracking `:latest`) keeps deploys bisectable across upstream releases. Historical note: an earlier Slack socket-mode regression ([openclaw/openclaw#45311](https://github.com/openclaw/openclaw/issues/45311)) held the pin at `v2026.3.11` until it was resolved upstream in `v2026.3.22` (PR [#45953](https://github.com/openclaw/openclaw/pull/45953), Slack Bolt import-interop hardening).
+- The deployed image is pinned to `ghcr.io/openclaw/openclaw:2026.5.26`. Pinning to a specific minor (rather than tracking `:latest`) keeps deploys bisectable across upstream releases. Historical notes: (1) an earlier Slack socket-mode regression ([openclaw/openclaw#45311](https://github.com/openclaw/openclaw/issues/45311)) held the pin at `v2026.3.11` until it was resolved upstream in `v2026.3.22` (PR [#45953](https://github.com/openclaw/openclaw/pull/45953), Slack Bolt import-interop hardening). (2) v2026.5.18 leaked Claude `thinking` blocks into Slack channels through non-streaming delivery paths ([openclaw/openclaw#84319](https://github.com/openclaw/openclaw/issues/84319)); fixed in PR [#84322](https://github.com/openclaw/openclaw/pull/84322), first stable release containing the fix is v2026.5.20.
 
 ## OpenClaw Behavioral Issues
 
 - **Billing/rate errors are cached**: When Anthropic returns a billing or rate limit error, OpenClaw's model fallback system caches the rejection. Even after the billing issue is resolved, the container must be restarted to clear the cached error state.
 - **Container restart reconnects router automatically**: On AWS, agent systemd units include `ExecStartPost` to reconnect the router. On local and remote, `RefreshAgent()` reconnects the router after container restart.
+- **Team agents leak preamble text to Slack channels** ([openclaw/openclaw#25592](https://github.com/openclaw/openclaw/issues/25592), still open at v2026.5.26): bare `text` content blocks emitted before a tool call (preamble narration, decision-not-to-reply prose, inter-tool commentary) are delivered to the channel as visible messages. Distinct from #84319 (structured `thinking` blocks), which is fixed. Conga's workaround for team agents only: `applyTeamChannelDiscipline` in `pkg/runtime/openclaw/config.go` emits `messages.groupChat.visibleReplies: "message_tool"` + `tools.alsoAllow: ["message"]`. Paired with a "Channel Discipline" section in team `AGENTS.md` defaults so the agent knows to call `message()` explicitly. Silent-drop risk if the model forgets the tool call (see [#85384](https://github.com/openclaw/openclaw/issues/85384) / closed-not-planned [#77320](https://github.com/openclaw/openclaw/issues/77320)). Full context: `product-knowledge/standards/upstream-openclaw-issues.md`.
 
 ## Known Limitations
 
