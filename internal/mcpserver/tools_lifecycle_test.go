@@ -142,11 +142,14 @@ func (m *warningProvider) ProvisionAgent(ctx context.Context, cfg provider.Agent
 	return m.mockProvider.ProvisionAgent(ctx, cfg)
 }
 
-// TestRefreshAgent_PropagatesWarningsToToolResult covers CRIT-5 — the
-// reason the WarningSink exists. Provider warnings emitted via
-// common.Warn during a refresh must appear in the tool result so MCP
-// operators (where stderr is invisible) see them. Without the sink
-// wiring, these warnings vanish.
+// TestRefreshAgent_PropagatesWarningsToToolResult guards the refresh
+// tool's WarningSink wiring (toolRefreshAgent → withSink → okWithWarnings).
+// The mock provider emits via common.Warn(ctx, ...); the test asserts
+// those warnings appear in the MCP tool result text. It does NOT verify
+// that real providers route through common.Warn (vs fmt.Fprintf to
+// stderr) — followups #13 tracks the broader migration of remaining
+// stderr sites. This is a CRIT-5 wiring guard, not a provider-level
+// coverage assertion.
 func TestRefreshAgent_PropagatesWarningsToToolResult(t *testing.T) {
 	base := &mockProvider{name: "mock"}
 	mock := &warningProvider{
@@ -249,10 +252,12 @@ func TestRefreshAgent_WarningsSurfaceOnErrorPath(t *testing.T) {
 }
 
 // TestProvisionAgent_PropagatesWarningsToToolResult mirrors the refresh
-// test for the provision tool. Without this, a future change that drops
-// the `ctx, sink := withSink(ctx)` line from toolProvisionAgent would
-// silently lose the WarnOverlayEgressGaps output emitted by every
-// provider's ProvisionAgent path.
+// guard for the provision tool: verifies the `withSink` + okWithWarnings
+// wiring inside toolProvisionAgent surfaces common.Warn output in the
+// MCP result text. A future change that drops the `ctx, sink := withSink(ctx)`
+// line — or that swaps okWithWarnings back to a plain success result —
+// would fail this test. Like the refresh variant, it doesn't assert
+// real providers actually route through common.Warn (see followups #13).
 func TestProvisionAgent_PropagatesWarningsToToolResult(t *testing.T) {
 	// chdir to tmpdir so the role-package path is skipped; the test
 	// focuses on the post-role provision call.
@@ -287,11 +292,12 @@ func TestProvisionAgent_PropagatesWarningsToToolResult(t *testing.T) {
 	}
 }
 
-// TestUnpauseAgent_PropagatesWarningsToToolResult covers the unpause
-// path. Important because UnpauseAgent on AWS internally calls
-// RefreshAgent (followups #5 self-heal), so warnings emitted during
-// the refresh inside an unpause are exactly the kind operators need to
-// see in MCP.
+// TestUnpauseAgent_PropagatesWarningsToToolResult guards the unpause
+// tool's WarningSink wiring. Verifies that if UnpauseAgent emits via
+// common.Warn, those warnings reach the MCP result text. The test
+// uses a mock that emits directly from UnpauseAgent — it does not
+// exercise AWS's internal unpause→refresh self-heal path (followups #5),
+// just the MCP wrapping around whatever Unpause emits.
 func TestUnpauseAgent_PropagatesWarningsToToolResult(t *testing.T) {
 	base := &mockProvider{name: "mock"}
 	mock := &warningProvider{
@@ -318,9 +324,13 @@ func TestUnpauseAgent_PropagatesWarningsToToolResult(t *testing.T) {
 	}
 }
 
-// TestRefreshAll_PropagatesWarningsToToolResult covers the bulk-refresh
-// tool. Without this, per-agent warnings from a fleet refresh
-// (N agents × multiple steps each) would silently vanish under MCP.
+// TestRefreshAll_PropagatesWarningsToToolResult guards the bulk-refresh
+// tool's WarningSink wiring. A future change to toolRefreshAll that
+// dropped the `withSink` / okWithWarnings pattern would fail this test.
+// Per-agent warnings (N agents × multiple steps) all flow through the
+// same sink, so a single-mock emission is sufficient to exercise the
+// wrapping. Like the per-agent variants, this guards MCP wiring, not
+// real-provider Warn usage (see followups #13).
 func TestRefreshAll_PropagatesWarningsToToolResult(t *testing.T) {
 	base := &mockProvider{name: "mock"}
 	mock := &refreshAllWarningProvider{

@@ -86,3 +86,19 @@ func TestWarningSink_Concurrent_NoRace(t *testing.T) {
 		t.Errorf("expected 50 warnings, got %d", len(got))
 	}
 }
+
+// TestWarningSink_DrainReturnsDefensiveCopy guards CONV-4: Drain must return
+// a copy of the accumulated warnings, not the live backing slice. Without
+// the copy, a subsequent Add (e.g. from a caller's own goroutine that hasn't
+// yet observed the drain) would mutate the slice the caller is iterating
+// over — a classic Go aliasing bug that's invisible until it isn't.
+func TestWarningSink_DrainReturnsDefensiveCopy(t *testing.T) {
+	sink := &WarningSink{}
+	sink.Add("first")
+	out := sink.Drain()
+	sink.Add("second-post-drain")
+
+	if len(out) != 1 || out[0] != "first" {
+		t.Fatalf("Drain return must not be mutated by post-Drain Add; got %v", out)
+	}
+}
