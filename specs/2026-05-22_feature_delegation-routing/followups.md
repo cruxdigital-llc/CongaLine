@@ -385,3 +385,59 @@ the load-bearing rationale at each site; removed the numeric pointers.
   harmless until Hermes/Telegram lands on AWS.
 - All SUG-* items — polish (named DelegationMode type, RoleMeta
   struct, etc.).
+
+---
+
+## 13. Full sink migration across all lifecycle stderr warnings
+
+**Severity**: medium — same MCP-stderr-invisibility silent-failure class
+that motivated CRIT-5, applied to the remaining call sites.
+
+**Origin**: surfaced by the second-pass silent-failure review of PR
+#53 (review-aggregate-pass2.md § SCOPE-A). CRIT-5 migrated the four
+call sites the first-pass review specifically named (RefreshAgent
+steps 3+4 + `WarnOverlayEgressGaps` in all three providers). The
+second-pass review counted ~85 additional `fmt.Fprintf(os.Stderr,
+"Warning: ...")` sites in lifecycle methods across the three providers
+that still write to stderr — invisible under MCP.
+
+**Examples** (non-exhaustive):
+- `pkg/provider/localprovider/provider.go`: ProvisionAgent (lines 276,
+  281, 298, 301, 303, 367, 394, 396, 398, 405, 411), RefreshAgent
+  (lines 733, 770, 792, 798, 801, 803, 890, 916, 918, 920, 933),
+  UnpauseAgent (line 695)
+- `pkg/provider/remoteprovider/provider.go`: same pattern across
+  ProvisionAgent + RefreshAgent (lines 641, 642, 669, 682, 685, 687,
+  763, 788, 790, 792, 807, …)
+- `pkg/provider/awsprovider/provider.go:141` (state-bucket parameter
+  not found), `:160` (egress policy load), `:649` (RefreshAll
+  per-agent failure aggregation)
+- `pkg/provider/awsprovider/channels.go`: multiple lifecycle warnings
+
+**Effect under MCP**: an operator calling e.g. `conga_provision_agent`
+gets "Agent provisioned successfully" with zero visibility into
+warnings like "failed to load egress policy", "behavior file
+deployment failed", or "iptables egress rules not applied". The
+provision claims success even when partial-failures occurred.
+
+**Proposed fix**: mechanical migration — replace each
+`fmt.Fprintf(os.Stderr, "Warning: %s", …)` in lifecycle methods with
+`common.Warn(ctx, …)`. The sink machinery already exists; this is
+purely a search-and-replace pass with per-site verification that the
+function actually has a `ctx context.Context` in scope.
+
+**Scope**: ~85 call sites + a handful of new tests confirming
+end-to-end propagation for each lifecycle method (similar to the
+existing `TestRefreshAgent_PropagatesWarningsToToolResult` /
+`TestProvisionAgent_PropagatesWarningsToToolResult` /
+`TestUnpauseAgent_PropagatesWarningsToToolResult` /
+`TestRefreshAll_PropagatesWarningsToToolResult` quartet).
+Estimated 3-5 hours of mechanical work + careful review for any
+`fmt.Fprintf` callers that aren't actually warnings (e.g.
+informational `Egress proxy active in validate mode` should probably
+NOT migrate — it's a status note, not a warning).
+
+**Status**: 🟡 deferred — separate focused PR. The CRIT-5 sink
+infrastructure works correctly on both success and error paths
+(verified by `TestRefreshAgent_WarningsSurfaceOnErrorPath`); this
+follow-up extends coverage to the remaining call sites.

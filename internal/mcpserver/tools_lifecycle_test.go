@@ -2,6 +2,7 @@ package mcpserver_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -141,11 +142,14 @@ func (m *warningProvider) ProvisionAgent(ctx context.Context, cfg provider.Agent
 	return m.mockProvider.ProvisionAgent(ctx, cfg)
 }
 
-// TestRefreshAgent_PropagatesWarningsToToolResult covers CRIT-5 — the
-// reason the WarningSink exists. Provider warnings emitted via
-// common.Warn during a refresh must appear in the tool result so MCP
-// operators (where stderr is invisible) see them. Without the sink
-// wiring, these warnings vanish.
+// TestRefreshAgent_PropagatesWarningsToToolResult guards the refresh
+// tool's WarningSink wiring (toolRefreshAgent → withSink → okWithWarnings).
+// The mock provider emits via common.Warn(ctx, ...); the test asserts
+// those warnings appear in the MCP tool result text. It does NOT verify
+// that real providers route through common.Warn (vs fmt.Fprintf to
+// stderr) — followups #13 tracks the broader migration of remaining
+// stderr sites. This is a CRIT-5 wiring guard, not a provider-level
+// coverage assertion.
 func TestRefreshAgent_PropagatesWarningsToToolResult(t *testing.T) {
 	base := &mockProvider{name: "mock"}
 	mock := &warningProvider{
@@ -205,4 +209,165 @@ func TestRefreshAgent_NoWarnings_PlainResult(t *testing.T) {
 	if strings.Contains(text, "Warnings:") {
 		t.Errorf("empty sink should not produce a Warnings: block, got %q", text)
 	}
+}
+
+// TestRefreshAgent_WarningsSurfaceOnErrorPath is the regression guard
+// for CONV-1 — the warnings accumulated in the sink before a lifecycle
+// method errors MUST appear in the error result, because that's
+// precisely when the warnings have the highest diagnostic value (e.g.
+// a step-0 egress-gap warning preceding a step-1 config-regen failure
+// tells the operator the misconfiguration is likely the root cause).
+// Dropping warnings on the error path silently defeats CRIT-5's intent.
+func TestRefreshAgent_WarningsSurfaceOnErrorPath(t *testing.T) {
+	base := &mockProvider{name: "mock", err: errors.New("simulated step-1 failure")}
+	mock := &warningProvider{
+		mockProvider: base,
+		refreshWarn:  []string{"egress-gap: example.com not in allowlist"},
+	}
+
+	srv := mcpserver.NewServer(mock, "test")
+	testSrv, err := mcptest.NewServer(t, srv.Tools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testSrv.Close()
+
+	result := callTool(t, testSrv.Client(), "conga_refresh_agent", map[string]any{
+		"agent_name": "agent1",
+	})
+	if !result.IsError {
+		t.Fatal("expected IsError=true when provider returns an error")
+	}
+
+	text := textContent(t, result)
+	if !strings.Contains(text, "simulated step-1 failure") {
+		t.Errorf("error result must include the original error, got %q", text)
+	}
+	if !strings.Contains(text, "Warnings:") {
+		t.Errorf("error result must include Warnings: block when sink has entries, got %q", text)
+	}
+	if !strings.Contains(text, "egress-gap: example.com not in allowlist") {
+		t.Errorf("error result must include the accumulated warning verbatim, got %q", text)
+	}
+}
+
+// TestProvisionAgent_PropagatesWarningsToToolResult mirrors the refresh
+// guard for the provision tool: verifies the `withSink` + okWithWarnings
+// wiring inside toolProvisionAgent surfaces common.Warn output in the
+// MCP result text. A future change that drops the `ctx, sink := withSink(ctx)`
+// line — or that swaps okWithWarnings back to a plain success result —
+// would fail this test. Like the refresh variant, it doesn't assert
+// real providers actually route through common.Warn (see followups #13).
+func TestProvisionAgent_PropagatesWarningsToToolResult(t *testing.T) {
+	// chdir to tmpdir so the role-package path is skipped; the test
+	// focuses on the post-role provision call.
+	origDir, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+	_ = os.Chdir(t.TempDir())
+
+	base := &mockProvider{name: "mock"}
+	mock := &warningProvider{
+		mockProvider:  base,
+		provisionWarn: []string{"overlay endpoint litellm.lan not in egress allowlist"},
+	}
+
+	srv := mcpserver.NewServer(mock, "test")
+	testSrv, err := mcptest.NewServer(t, srv.Tools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testSrv.Close()
+
+	result := callTool(t, testSrv.Client(), "conga_provision_agent", map[string]any{
+		"agent_name":   "newagent",
+		"type":         "user",
+		"gateway_port": 18800,
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, result))
+	}
+	text := textContent(t, result)
+	if !strings.Contains(text, "Warnings:") || !strings.Contains(text, "overlay endpoint litellm.lan not in egress allowlist") {
+		t.Errorf("provision result must surface the warning, got %q", text)
+	}
+}
+
+// TestUnpauseAgent_PropagatesWarningsToToolResult guards the unpause
+// tool's WarningSink wiring. Verifies that if UnpauseAgent emits via
+// common.Warn, those warnings reach the MCP result text. The test
+// uses a mock that emits directly from UnpauseAgent — it does not
+// exercise AWS's internal unpause→refresh self-heal path (followups #5),
+// just the MCP wrapping around whatever Unpause emits.
+func TestUnpauseAgent_PropagatesWarningsToToolResult(t *testing.T) {
+	base := &mockProvider{name: "mock"}
+	mock := &warningProvider{
+		mockProvider: base,
+		unpauseWarn:  []string{"systemd unit was missing; recreated"},
+	}
+
+	srv := mcpserver.NewServer(mock, "test")
+	testSrv, err := mcptest.NewServer(t, srv.Tools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testSrv.Close()
+
+	result := callTool(t, testSrv.Client(), "conga_unpause_agent", map[string]any{
+		"agent_name": "agent1",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, result))
+	}
+	text := textContent(t, result)
+	if !strings.Contains(text, "Warnings:") || !strings.Contains(text, "systemd unit was missing; recreated") {
+		t.Errorf("unpause result must surface the warning, got %q", text)
+	}
+}
+
+// TestRefreshAll_PropagatesWarningsToToolResult guards the bulk-refresh
+// tool's WarningSink wiring. A future change to toolRefreshAll that
+// dropped the `withSink` / okWithWarnings pattern would fail this test.
+// Per-agent warnings (N agents × multiple steps) all flow through the
+// same sink, so a single-mock emission is sufficient to exercise the
+// wrapping. Like the per-agent variants, this guards MCP wiring, not
+// real-provider Warn usage (see followups #13).
+func TestRefreshAll_PropagatesWarningsToToolResult(t *testing.T) {
+	base := &mockProvider{name: "mock"}
+	mock := &refreshAllWarningProvider{
+		mockProvider:    base,
+		refreshAllWarns: []string{"agent1: routing.json regen failed", "agent2: egress redeploy partial"},
+	}
+
+	srv := mcpserver.NewServer(mock, "test")
+	testSrv, err := mcptest.NewServer(t, srv.Tools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testSrv.Close()
+
+	result := callTool(t, testSrv.Client(), "conga_refresh_all", nil)
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, result))
+	}
+	text := textContent(t, result)
+	if !strings.Contains(text, "Warnings:") {
+		t.Errorf("refresh-all result must include Warnings: block when sink has entries, got %q", text)
+	}
+	if !strings.Contains(text, "agent1: routing.json regen failed") || !strings.Contains(text, "agent2: egress redeploy partial") {
+		t.Errorf("refresh-all must surface per-agent warnings verbatim, got %q", text)
+	}
+}
+
+// refreshAllWarningProvider is a tiny specialization of warningProvider
+// for the RefreshAll tool — emits warnings on the bulk call.
+type refreshAllWarningProvider struct {
+	*mockProvider
+	refreshAllWarns []string
+}
+
+func (m *refreshAllWarningProvider) RefreshAll(ctx context.Context) error {
+	for _, w := range m.refreshAllWarns {
+		common.Warn(ctx, "%s", w)
+	}
+	return m.mockProvider.RefreshAll(ctx)
 }

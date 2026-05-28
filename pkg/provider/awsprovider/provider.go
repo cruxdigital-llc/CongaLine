@@ -493,16 +493,28 @@ func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error 
 		return err
 	}
 
-	// Step 0: refresh-time egress pre-flight. Provision-time has the same
-	// check; without doing it here too, operators editing agent.yaml
-	// (e.g. swapping a subagent base_url) and running refresh would
-	// silently land in 403-at-runtime territory. Best-effort: skip
-	// silently if either the overlay dir or the policy can't be located —
-	// the agent itself can still refresh.
+	// Step 0: refresh-time egress pre-flight. Provision-time has the
+	// same check; without doing it here too, operators editing
+	// agent.yaml (e.g. swapping a subagent base_url) and running
+	// refresh would silently land in 403-at-runtime territory.
+	//
+	// Errors loading the overlay or policy are surfaced as warnings
+	// (not fatal — the agent itself can still refresh) but they must
+	// NOT be silently swallowed: a YAML typo in conga-policy.yaml that
+	// prevents the pre-flight from running is the same silent-failure
+	// pattern loadRefreshPolicy itself was extracted to prevent. The
+	// missing-behavior-dir case stays a hard error because regenerate-
+	// AgentConfigOnInstance (step 1) already refuses on that condition.
 	if behaviorDir := resolveAWSBehaviorDir(); behaviorDir != "" {
-		if overlay, overlayErr := common.LoadAgentOverlay(behaviorDir, *agent); overlayErr == nil {
+		overlay, overlayErr := common.LoadAgentOverlay(behaviorDir, *agent)
+		if overlayErr != nil {
+			common.Warn(ctx, "failed to load agent overlay for refresh-time egress check: %v", overlayErr)
+		} else {
 			policyPath := filepath.Join(provider.DefaultDataDir(), "conga-policy.yaml")
-			if pf, _ := policy.Load(policyPath); pf != nil {
+			pf, _, policyErr := loadRefreshPolicy(ctx, policyPath)
+			if policyErr != nil {
+				common.Warn(ctx, "skipping refresh-time egress pre-flight: %v", policyErr)
+			} else if pf != nil {
 				merged := pf.MergeForAgent(agentName)
 				common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(merged.Egress), agentName)
 			}
@@ -585,34 +597,41 @@ func (p *AWSProvider) redeployEgressDuringRefresh(ctx context.Context, agentName
 		return fmt.Errorf("generate proxy conf: %w", err)
 	}
 	manifest := policy.BuildManifest(egressPolicy)
-	manifestBytes, _ := manifest.MarshalForDeploy()
+	manifestBytes, err := manifest.MarshalForDeploy()
+	if err != nil {
+		return fmt.Errorf("marshal manifest for %s: %w", agentName, err)
+	}
 
 	return p.DeployEgress(ctx, agentName, policyContent, envoyConfig, string(manifestBytes), mode)
 }
 
 // loadRefreshPolicy loads conga-policy.yaml for the refresh egress-redeploy
-// step. policy.Load already distinguishes missing-file (returns nil, nil)
-// from broken-file (returns nil, err) — so we surface any err verbatim
-// (YAML typo, permission denied, I/O error) and only fall back to deny-all
-// when the file genuinely does not exist. Without this split, a typo in
-// conga-policy.yaml would silently regress every refreshed agent to a
-// deny-all proxy config. Returns:
+// step. Splits "file missing" (acceptable: pre-first-deploy state, fall
+// back to nil policy + deny-all warning) from "file broken / unreadable"
+// (YAML typo, empty file, permission denied, I/O error) — the latter
+// must surface as an error so a typo doesn't silently regress every
+// refreshed agent to a deny-all proxy config.
+//
+// Reads the file once and parses from the resulting bytes so the parsed
+// PolicyFile and the raw content are guaranteed to agree (closes a TOCTOU
+// window where a concurrent `conga policy set-egress` could land between
+// a parse-read and a content-read, producing mismatched Envoy config vs
+// uploaded policy YAML). Returns:
 //   - (pf, content, nil) on successful load
 //   - (nil, "", nil) when the file genuinely does not exist; warning emitted
-//   - (nil, "", err) on YAML / I/O failure
+//   - (nil, "", err) on any other failure (empty, YAML, permission, I/O)
 func loadRefreshPolicy(ctx context.Context, policyPath string) (*policy.PolicyFile, string, error) {
-	pf, err := policy.Load(policyPath)
+	data, err := os.ReadFile(policyPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("load policy %s: %w", policyPath, err)
+		if os.IsNotExist(err) {
+			common.Warn(ctx, "no conga-policy.yaml found at %s; egress proxy will be deployed with deny-all config", policyPath)
+			return nil, "", nil
+		}
+		return nil, "", fmt.Errorf("read policy %s: %w", policyPath, err)
 	}
-	if pf == nil {
-		common.Warn(ctx, "no conga-policy.yaml found at %s; egress proxy will be deployed with deny-all config", policyPath)
-		return nil, "", nil
-	}
-
-	data, readErr := os.ReadFile(policyPath)
-	if readErr != nil {
-		return nil, "", fmt.Errorf("read policy %s: %w", policyPath, readErr)
+	pf, err := policy.LoadFromBytes(data)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse policy %s: %w", policyPath, err)
 	}
 	return pf, string(data), nil
 }
