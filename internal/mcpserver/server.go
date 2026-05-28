@@ -78,8 +78,24 @@ func withSink(ctx context.Context) (context.Context, *common.WarningSink) {
 // drained from sink as a "Warnings:" block. Empty sink → plain message.
 func okWithWarnings(msg string, sink *common.WarningSink) *mcp.CallToolResult {
 	warnings := sink.Drain()
+	return okResult(appendWarnings(msg, warnings))
+}
+
+// errResultWithWarnings returns an error result, appending any warnings
+// drained from sink to the error message. The whole point of CRIT-5's
+// sink machinery is to surface non-fatal warnings to MCP operators;
+// dropping them on the error path defeats the purpose, because that's
+// exactly when the warnings have the highest diagnostic value (e.g. a
+// step-0 egress-gap warning preceding a step-1 failure tells the
+// operator the same misconfiguration is likely the root cause).
+func errResultWithWarnings(err error, sink *common.WarningSink) *mcp.CallToolResult {
+	warnings := sink.Drain()
+	return mcp.NewToolResultError(appendWarnings(err.Error(), warnings))
+}
+
+func appendWarnings(msg string, warnings []string) string {
 	if len(warnings) == 0 {
-		return okResult(msg)
+		return msg
 	}
 	var b strings.Builder
 	b.WriteString(msg)
@@ -89,5 +105,5 @@ func okWithWarnings(msg string, sink *common.WarningSink) *mcp.CallToolResult {
 		b.WriteString(w)
 		b.WriteString("\n")
 	}
-	return okResult(b.String())
+	return b.String()
 }

@@ -274,8 +274,9 @@ func readRoleMeta(path string) (string, error) {
 
 // availableRoles returns the slugs (e.g. "role-ops", "role-code-dev")
 // of role packages defined for the given runtime under
-// <behaviorDir>/_defaults/<runtime>/. Returns an empty slice if the
-// directory doesn't exist. Sorted for stable error messages.
+// <behaviorDir>/_defaults/<runtime>/. Returns nil if the directory
+// doesn't exist or contains no role-* subdirectories. Sorted for
+// stable error messages.
 func availableRoles(behaviorDir, runtimeName string) []string {
 	runtimeDir := filepath.Join(behaviorDir, defaultsSubdir, runtimeName)
 	entries, err := os.ReadDir(runtimeDir)

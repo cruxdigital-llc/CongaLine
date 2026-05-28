@@ -131,7 +131,7 @@ func (s *Server) toolProvisionAgent() server.ServerTool {
 
 			ctx, sink := withSink(ctx)
 			if err := s.prov.ProvisionAgent(ctx, cfg); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return errResultWithWarnings(err, sink), nil
 			}
 			return okWithWarnings(fmt.Sprintf("Agent %q provisioned successfully.", agentName), sink), nil
 		},
@@ -245,7 +245,7 @@ func (s *Server) toolUnpauseAgent() server.ServerTool {
 
 			ctx, sink := withSink(ctx)
 			if err := s.prov.UnpauseAgent(ctx, agentName); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return errResultWithWarnings(err, sink), nil
 			}
 			return okWithWarnings(fmt.Sprintf("Agent %q unpaused.", agentName), sink), nil
 		},

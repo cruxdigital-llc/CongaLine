@@ -16,18 +16,27 @@ type WarningSink struct {
 	warnings []string
 }
 
+// Add appends a warning to the sink. Safe for concurrent use.
 func (s *WarningSink) Add(msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.warnings = append(s.warnings, msg)
 }
 
-// Drain returns the accumulated warnings and clears the sink. Callers
-// typically drain once after the provider call completes.
+// Drain returns the accumulated warnings and clears the sink. The
+// returned slice is a defensive copy: the caller owns it outright and
+// concurrent Add calls cannot mutate it (and a future refactor of the
+// reset line to `s.warnings = s.warnings[:0]` cannot turn this into a
+// data race).
 func (s *WarningSink) Drain() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.warnings
+	if len(s.warnings) == 0 {
+		s.warnings = nil
+		return nil
+	}
+	out := make([]string, len(s.warnings))
+	copy(out, s.warnings)
 	s.warnings = nil
 	return out
 }

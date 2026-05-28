@@ -207,11 +207,52 @@ func TestLoadRefreshPolicy_MalformedYAML_ReturnsError(t *testing.T) {
 	if pf != nil || content != "" {
 		t.Errorf("error path should return zero values, got pf=%v content=%q", pf, content)
 	}
-	if !strings.Contains(err.Error(), "load policy") {
+	// Error message context — either "read policy" or "parse policy"
+	// depending on whether the failure was I/O or YAML; both name the
+	// path so the operator can fix it.
+	if !strings.Contains(err.Error(), "policy") {
 		t.Errorf("error should mention the policy path context, got %q", err.Error())
 	}
 	if warnings := sink.Drain(); len(warnings) != 0 {
 		t.Errorf("malformed YAML should not emit deny-all warning, got %v", warnings)
+	}
+}
+
+// TestLoadRefreshPolicy_EmptyFile_ReturnsError covers the "file exists
+// but is empty / whitespace-only" branch — a third state distinct from
+// missing and malformed. policy.LoadFromBytes refuses empty input
+// (deliberately, so an interrupted `conga policy set-egress` mid-write
+// doesn't pass as a no-op deny-all). loadRefreshPolicy must propagate
+// that as an error rather than collapse into deny-all.
+func TestLoadRefreshPolicy_EmptyFile_ReturnsError(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		content []byte
+	}{
+		{"zero bytes", []byte{}},
+		{"whitespace only", []byte("   \n\n\t\n")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "conga-policy.yaml")
+			if err := os.WriteFile(path, tt.content, 0o600); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+
+			sink := &common.WarningSink{}
+			ctx := common.WithWarningSink(context.Background(), sink)
+
+			pf, content, err := loadRefreshPolicy(ctx, path)
+			if err == nil {
+				t.Fatal("empty / whitespace-only policy should return error, got nil — would silently regress to deny-all")
+			}
+			if pf != nil || content != "" {
+				t.Errorf("error path should return zero values, got pf=%v content=%q", pf, content)
+			}
+			if warnings := sink.Drain(); len(warnings) != 0 {
+				t.Errorf("empty file should not emit deny-all warning (that's for the missing-file branch only), got %v", warnings)
+			}
+		})
 	}
 }
 

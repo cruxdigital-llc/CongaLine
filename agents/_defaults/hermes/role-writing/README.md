@@ -1,4 +1,4 @@
-# role-writing
+# role-writing (Hermes)
 
 Opus-orchestrated writing agent with a Qwen subagent for mechanical text work. Channel-driven (`type: team`). Suggested for drafts, edits, content strategy — work where voice and judgment matter, with Qwen handling the predictable text transformations (translation, formatting, word counts).
 
@@ -6,7 +6,7 @@ Opus-orchestrated writing agent with a Qwen subagent for mechanical text work. C
 
 Edit `agents/<your-agent>/agent.yaml` and set `subagents.model.base_url` to your LLM proxy. The default is a placeholder. Then `conga refresh --agent <your-agent>`.
 
-The primary stays at the runtime default (Opus from `openclaw-defaults.json`). See `role-code-dev/agent.yaml` comments for primary override notes.
+The primary stays at the Hermes runtime default (Opus). Note: the overlay's `subagents.delegation_mode` is OpenClaw-only and silently dropped on Hermes — Hermes always-delegates at the runtime layer, so the field has no effect here.
 
 ## Egress
 
