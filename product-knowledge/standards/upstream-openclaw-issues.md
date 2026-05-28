@@ -62,6 +62,38 @@ The leaked content is **not** an Anthropic `thinking` block. Those are tagged `i
 
 ---
 
+### CRIT-A (internal) — Hermes runtime ignores `agent.yaml` `model:` overlay
+
+**Scope:** Conga-internal gap, not an upstream OpenClaw/Hermes bug. Logged here because the user-visible symptom (silently using a different model than the operator declared) is the same class as the upstream leaks tracked above, and the workaround pattern (degraded mode with a loud warning) is symmetric.
+
+**Symptom.** The Hermes runtime config generator (`pkg/runtime/hermes/config.go`) consumes only `params.Overlay.Subagents`; until recently it did not read `params.Overlay.Model`. Operators following the role-package READMEs for `agents/_defaults/hermes/role-{ops,data,research}/` were instructed to set a `model:` block pointing at a Qwen endpoint — but the Hermes generator never emitted it. The agent silently used whatever was set as the runtime default during `conga admin setup` (typically Anthropic Opus), so:
+
+- the "cheap model" cost saving never materialized
+- the provision-time egress pre-flight warned about the `model.base_url` host not being in the allowlist, actively misleading operators into "fixing" their allowlist
+- nothing actually used the endpoint
+
+Closed cleanly: review pass-2 finding CRIT-A.
+
+**Conga workaround (degraded mode).** Three parts:
+
+1. **`applyModelOverlay` in `pkg/runtime/hermes/config.go`** — when `params.Overlay.Model` is non-nil, writes `cfg["model"] = provider + "/" + name` so `hermes /status` reflects operator intent. When the `base_url` isn't a recognized Hermes adapter host (`openrouter.ai`, `nousresearch.com`, `z.ai`, `kimi.com`, `minimax.com`), a one-time stderr warning explains the agent will fall back to whatever provider config Hermes has wired up at runtime (typically the setup-time default) and won't actually address the custom endpoint.
+
+2. **Role packages** — `agents/_defaults/hermes/role-{ops,data,research}/agent.yaml` no longer ship a `model:` block. They're minimal `version: 2` shells. The corresponding READMEs explain that Hermes per-agent primary-model override happens via `cli-config.yaml` on the container, not via the Conga overlay, until the spec lands.
+
+3. **Test in `pkg/runtime/hermes/config_test.go`** — `TestGenerateConfig_HermesModelOverlay_DegradedMode` + `_KnownAdapterHostNoWarning` + `_OverridesParamsModel` lock the behavior in.
+
+**Validation.** After refreshing a Hermes agent with a `model:` overlay:
+- `cat /home/node/.hermes/cli-config.yaml | grep '^model:'` shows `provider/name` from the overlay (not `params.Model`).
+- `journalctl -u conga-<agent>` (or container logs) shows the one-time warning for custom `base_url` hosts.
+- `pkg/common/role_defaults_test.go` enforces that Hermes Qwen roles ship **without** `model:` (the opposite of the OpenClaw assertion); a future role package that re-adds `model:` to a Hermes Qwen role will fail the test.
+
+**Escape conditions.** Remove this degraded-mode path when:
+- A spec — provisionally `spec/2026-XX-XX_feature_hermes-model-overlay/` — wires up real per-agent primary-model routing in Hermes (full parity with OpenClaw's `models.providers.<id>` block), with end-to-end testing against a real Hermes container.
+
+Until that spec ships, the Hermes side of the role catalog is intentionally Anthropic-leaning. OpenClaw users get full delegation routing; Hermes users get subagent routing only.
+
+---
+
 ### #73182 — Claude thinking default silently flipped to `medium` (cost regression)
 
 **Upstream:** [openclaw/openclaw#73182](https://github.com/openclaw/openclaw/issues/73182) — open since 2026-04-28.

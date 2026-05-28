@@ -1,11 +1,13 @@
-# role-data
+# role-data (Hermes)
 
-Qwen-backed data/reporting agent. DM-driven (`type: user`). Suggested for CSV crunching, metrics summarization, format conversion, and scheduled reports — mechanical work where a cheap model is the right tool.
+Data/reporting agent. DM-driven (`type: user`). Suggested for CSV crunching, metrics summarization, format conversion, and scheduled reports.
 
-## After provisioning
+## Important: model selection
 
-Edit `agents/<your-agent>/agent.yaml` to point `model.base_url` at your actual LLM proxy or Qwen endpoint. The default `https://litellm.internal/v1` is a placeholder. Then `conga refresh --agent <your-agent>`.
+The OpenClaw sibling uses an `agent.yaml` `model:` block to route through a cheap Qwen endpoint. **On Hermes, the per-agent `model:` overlay is not yet implemented** — see `product-knowledge/standards/upstream-openclaw-issues.md` (CRIT-A entry).
+
+Until the spec lands, this Hermes agent uses whatever was set as the runtime default during `conga admin setup`. To override per-agent, edit Hermes's `cli-config.yaml` directly on the container after provisioning. Setting `model:` in this role's `agent.yaml` will produce a stderr warning and a `cfg.model` value that Hermes can't actually route to a custom `base_url`.
 
 ## Egress
 
-Add the `base_url` host to the agent's egress allowlist (`terraform.tfvars` agents.<name>.egress_allowed_domains on AWS, or `~/.conga/conga-policy.yaml` agents.<name>.egress.allowed_domains on local/remote). The provisioning flow warns if it's missing.
+Add any external model/data endpoints to the agent's egress allowlist.

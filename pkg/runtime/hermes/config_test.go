@@ -344,3 +344,111 @@ func TestGenerateConfig_HermesSubagents_WarningEmittedOnce(t *testing.T) {
 		t.Fatalf("expected exactly one degraded-mode warning across two calls, got %d: %q", got, stderr)
 	}
 }
+
+// TestGenerateConfig_HermesModelOverlay_DegradedMode covers CRIT-A from
+// review-aggregate-pass2.md follow-up: the Hermes runtime now reads
+// params.Overlay.Model in degraded mode. cfg["model"] is set to provider/name
+// so /status reflects the operator's intent, and a one-time stderr warning
+// fires when base_url isn't a recognized Hermes adapter host.
+func TestGenerateConfig_HermesModelOverlay_DegradedMode(t *testing.T) {
+	resetHermesWarnings()
+	params := baseHermesParams()
+	params.Agent.Name = "primary-degraded"
+	params.Model = "anthropic/setup-default" // setup-time default we'd otherwise inherit
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOpenAI,
+			Name:     "qwen-2.5-72b-instruct",
+			BaseURL:  "https://litellm.internal/v1",
+		},
+	}
+
+	r := &Runtime{}
+	var (
+		out []byte
+		err error
+	)
+	stderr := captureHermesStderr(t, func() {
+		out, err = r.GenerateConfig(params)
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	cfg := decodeYAML(t, out)
+	if got := cfg["model"]; got != "openai/qwen-2.5-72b-instruct" {
+		t.Fatalf("expected cfg.model to reflect overlay (openai/qwen-2.5-72b-instruct), got %v", got)
+	}
+	if !strings.Contains(stderr, "primary-degraded") {
+		t.Fatalf("expected warning to name the agent, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "litellm.internal") {
+		t.Fatalf("expected warning to name the unrecognized base_url, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "primary model") {
+		t.Fatalf("expected warning to clarify it's about the primary model (not the subagent), got %q", stderr)
+	}
+}
+
+func TestGenerateConfig_HermesModelOverlay_KnownAdapterHostNoWarning(t *testing.T) {
+	resetHermesWarnings()
+	params := baseHermesParams()
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOpenAI,
+			Name:     "qwen3-coder",
+			BaseURL:  "https://openrouter.ai/api/v1",
+		},
+	}
+
+	r := &Runtime{}
+	var (
+		out []byte
+		err error
+	)
+	stderr := captureHermesStderr(t, func() {
+		out, err = r.GenerateConfig(params)
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	cfg := decodeYAML(t, out)
+	if got := cfg["model"]; got != "openai/qwen3-coder" {
+		t.Fatalf("expected cfg.model = openai/qwen3-coder, got %v", got)
+	}
+	if strings.Contains(stderr, "does not natively address") {
+		t.Fatalf("known adapter host should not trigger a primary-model degraded warning; got %q", stderr)
+	}
+}
+
+// TestGenerateConfig_HermesModelOverlay_OverridesParamsModel asserts the
+// overlay's model wins over the setup-time params.Model. This is what gives
+// operator intent a visible representation in /status even though the
+// underlying provider routing happens elsewhere.
+func TestGenerateConfig_HermesModelOverlay_OverridesParamsModel(t *testing.T) {
+	resetHermesWarnings()
+	params := baseHermesParams()
+	params.Model = "anthropic/claude-opus-4-7"
+	params.Overlay = &runtime.AgentOverlay{
+		Version: 2,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOllama,
+			Name:     "qwen3:6b",
+			BaseURL:  "http://192.168.1.10:11434",
+		},
+	}
+
+	r := &Runtime{}
+	out, err := r.GenerateConfig(params)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	cfg := decodeYAML(t, out)
+	if got := cfg["model"]; got != "ollama/qwen3:6b" {
+		t.Fatalf("overlay must win over params.Model; expected ollama/qwen3:6b, got %v", got)
+	}
+}

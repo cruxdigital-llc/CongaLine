@@ -79,11 +79,43 @@ func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
 		cfg["model"] = params.Model
 	}
 
+	// Per-agent model overlay. Hermes's provider config is structured
+	// differently from OpenClaw's models.providers.<id> block, so the overlay
+	// is applied in degraded mode: cfg["model"] is set to provider/name so
+	// /status reflects operator intent, but custom base_urls (e.g. LiteLLM
+	// proxies) are not natively addressable. A one-time stderr warning fires
+	// when the base_url isn't a recognized Hermes adapter host. See
+	// product-knowledge/standards/upstream-openclaw-issues.md for the full
+	// degraded-mode rationale and the spec slot for a real implementation.
+	if params.Overlay != nil && params.Overlay.Model != nil {
+		applyModelOverlay(cfg, params.Overlay.Model, params.Agent.Name)
+	}
+
 	if params.Overlay != nil && params.Overlay.Subagents != nil {
 		applySubagentsOverlay(cfg, params.Overlay.Subagents, params.Agent.Name)
 	}
 
 	return yaml.Marshal(cfg)
+}
+
+// applyModelOverlay emits the operator's primary-model intent into cfg["model"]
+// (overriding any setup-time params.Model) and warns when the base_url isn't
+// one Hermes natively supports.
+func applyModelOverlay(cfg map[string]any, m *runtime.ModelOverlay, agentName string) {
+	cfg["model"] = m.Provider + "/" + m.Name
+
+	if m.Provider == runtime.ProviderOpenAI && m.BaseURL != "" && !hermesProviderRecognized(m.BaseURL) {
+		emitHermesModelDegradedWarning(agentName, m.BaseURL)
+	}
+}
+
+func emitHermesModelDegradedWarning(agentName, baseURL string) {
+	key := "model:" + agentName + ":" + baseURL
+	if _, loaded := hermesDegradedWarningOnce.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	fmt.Fprintf(stderrWriter(), "warning: agent %s: hermes runtime does not natively address the primary model's openai base_url %q; cfg.model is set to the overlay's provider/name but Hermes will use whatever provider config is wired up at runtime (typically the setup-time default). To genuinely route the primary model through a custom endpoint, configure it directly in Hermes's cli-config.yaml until upstream support lands.\n",
+		agentName, baseURL)
 }
 
 // applySubagentsOverlay emits Hermes' top-level delegation: block based on

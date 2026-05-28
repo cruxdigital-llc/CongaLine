@@ -75,10 +75,19 @@ func TestRoleDefaults_AgentYAMLParses(t *testing.T) {
 					t.Fatalf("role %s: wantsSubagent=%v, hasSubagent=%v", roleEntry.Name(), wantsSubagent, hasSubagent)
 				}
 
-				// Qwen-only roles must declare a primary model (the whole
-				// point of these roles is to point at a cheap model).
-				if !wantsSubagent && overlay.Model == nil {
-					t.Fatalf("role %s: Qwen role must declare model:", roleEntry.Name())
+				// Qwen-only roles on OpenClaw must declare a primary model
+				// (the whole point of these roles is to point at a cheap
+				// model). On Hermes, the model: overlay path is not yet
+				// implemented (CRIT-A in upstream-openclaw-issues.md), so
+				// the Hermes Qwen roles intentionally ship as version-2
+				// shells with no model: block — operators configure the
+				// primary model directly in Hermes's cli-config.yaml.
+				isHermes := runtimeEntry.Name() == "hermes"
+				if !wantsSubagent && overlay.Model == nil && !isHermes {
+					t.Fatalf("role %s: Qwen role on %s must declare model:", roleEntry.Name(), runtimeEntry.Name())
+				}
+				if !wantsSubagent && overlay.Model != nil && isHermes {
+					t.Fatalf("role %s: Hermes Qwen role must NOT declare model: until the overlay path is implemented; got %+v", roleEntry.Name(), overlay.Model)
 				}
 				// Opus roles must NOT declare a primary model (they inherit
 				// the runtime default).
