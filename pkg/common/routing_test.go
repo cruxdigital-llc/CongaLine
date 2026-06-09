@@ -25,11 +25,15 @@ func TestGenerateRoutingJSON(t *testing.T) {
 		t.Fatalf("failed to parse output: %v", err)
 	}
 
+	// The router delivers over the Docker network to the container-internal
+	// gateway port (BaseGatewayPort), regardless of each agent's host-side
+	// GatewayPort. leadership's host port is 18790, but its route must still
+	// target :18789.
 	if got := cfg.Members["U0123456789"]; got != "http://conga-myagent:18789/slack/events" {
 		t.Errorf("member route = %q, want http://conga-myagent:18789/slack/events", got)
 	}
-	if got := cfg.Channels["C9876543210"]; got != "http://conga-leadership:18790/slack/events" {
-		t.Errorf("channel route = %q, want http://conga-leadership:18790/slack/events", got)
+	if got := cfg.Channels["C9876543210"]; got != "http://conga-leadership:18789/slack/events" {
+		t.Errorf("channel route = %q, want http://conga-leadership:18789/slack/events", got)
 	}
 }
 
