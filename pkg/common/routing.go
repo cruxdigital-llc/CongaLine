@@ -16,13 +16,14 @@ type RoutingConfig struct {
 
 // WebhookTarget contains the port and path for delivering channel events to a container.
 type WebhookTarget struct {
-	Port int    // Container-internal port for webhook delivery (0 = use agent's GatewayPort)
+	Port int    // Container-internal port for webhook delivery (0 = use BaseGatewayPort, the container-internal gateway port)
 	Path string // HTTP path (e.g., "/slack/events" or "/webhooks/slack")
 }
 
 // WebhookTargetResolver returns the webhook target for a given agent runtime
 // and channel platform. Used by GenerateRoutingJSON to construct per-runtime URLs.
-// When nil, the channel's default WebhookPath() and agent's GatewayPort are used.
+// When nil, the channel's default WebhookPath() and the container-internal
+// BaseGatewayPort are used.
 type WebhookTargetResolver func(agentRuntime, platform string) WebhookTarget
 
 // GenerateRoutingJSON builds routing.json from a list of agents.
@@ -46,8 +47,11 @@ func GenerateRoutingJSON(agents []provider.AgentConfig, resolver WebhookTargetRe
 			}
 
 			// Resolve the webhook target: runtime-specific if resolver provided,
-			// otherwise fall back to the channel's default path and agent's port.
-			port := a.GatewayPort
+			// otherwise fall back to the channel's default path and the
+			// container-internal gateway port. The router reaches the container
+			// over the Docker network by hostname, where the gateway always
+			// listens on BaseGatewayPort — NOT the agent's host-side GatewayPort.
+			port := BaseGatewayPort
 			webhookPath := ch.WebhookPath()
 			if resolver != nil {
 				target := resolver(a.Runtime, binding.Platform)

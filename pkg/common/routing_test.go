@@ -25,11 +25,15 @@ func TestGenerateRoutingJSON(t *testing.T) {
 		t.Fatalf("failed to parse output: %v", err)
 	}
 
+	// The router delivers over the Docker network to the container-internal
+	// gateway port (BaseGatewayPort), regardless of each agent's host-side
+	// GatewayPort. leadership's host port is 18790, but its route must still
+	// target :18789.
 	if got := cfg.Members["U0123456789"]; got != "http://conga-myagent:18789/slack/events" {
 		t.Errorf("member route = %q, want http://conga-myagent:18789/slack/events", got)
 	}
-	if got := cfg.Channels["C9876543210"]; got != "http://conga-leadership:18790/slack/events" {
-		t.Errorf("channel route = %q, want http://conga-leadership:18790/slack/events", got)
+	if got := cfg.Channels["C9876543210"]; got != "http://conga-leadership:18789/slack/events" {
+		t.Errorf("channel route = %q, want http://conga-leadership:18789/slack/events", got)
 	}
 }
 
@@ -133,5 +137,36 @@ func TestGenerateRoutingJSON_MixedRuntimes(t *testing.T) {
 	// Hermes agent should get port 8644 + /webhooks/slack
 	if got := cfg.Members["U0002222222"]; got != "http://conga-hermes1:8644/webhooks/slack" {
 		t.Errorf("Hermes route = %q, want http://conga-hermes1:8644/webhooks/slack", got)
+	}
+}
+
+// TestGenerateRoutingJSON_ZeroPortFallback locks in the contract that a
+// resolver returning Port == 0 (e.g. the local provider's openclaw branch,
+// where rt.WebhookPort() is 0) falls through to BaseGatewayPort — NOT the
+// agent's host-side GatewayPort. The host port (18790 here) must never reach
+// the inter-container URL.
+func TestGenerateRoutingJSON_ZeroPortFallback(t *testing.T) {
+	agents := []provider.AgentConfig{
+		{Name: "ocagent", Type: provider.AgentTypeUser, Runtime: "openclaw",
+			Channels: []channels.ChannelBinding{{Platform: "slack", ID: "U0003333333"}}, GatewayPort: 18790},
+	}
+
+	// Resolver mirrors the local provider: openclaw returns Port 0 (use default).
+	resolver := func(agentRuntime, platform string) WebhookTarget {
+		return WebhookTarget{Port: 0, Path: "/slack/events"}
+	}
+
+	data, err := GenerateRoutingJSON(agents, resolver)
+	if err != nil {
+		t.Fatalf("GenerateRoutingJSON() error: %v", err)
+	}
+
+	var cfg RoutingConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	if got := cfg.Members["U0003333333"]; got != "http://conga-ocagent:18789/slack/events" {
+		t.Errorf("zero-port route = %q, want http://conga-ocagent:18789/slack/events (BaseGatewayPort, not host port 18790)", got)
 	}
 }
