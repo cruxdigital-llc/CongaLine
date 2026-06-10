@@ -3,10 +3,13 @@ package localprovider
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/cruxdigital-llc/conga-line/pkg/common"
 )
 
 // configFileForAgent returns the config file path for the given agent,
@@ -76,6 +79,39 @@ func (p *LocalProvider) saveConfigBaseline(ctx context.Context, agentName string
 	return os.WriteFile(baselinePath, []byte(hash), 0600)
 }
 
+// checkAgentCustomConfig validates the admin-owned include (agent-custom.json)
+// does not declare Conga-owned keys. The integrity hash covers only the managed
+// root, so this is the control that keeps the channel allowlist (a security
+// boundary) from being extended via the include's deep-merge union. Reserved-key
+// violations are reported; an unparseable (JSON5) include is left to the
+// authoritative in-container check (warn-only here) to avoid false alarms on
+// legit commented config — see spec §5.5 / §14.
+func (p *LocalProvider) checkAgentCustomConfig(ctx context.Context, agentName string) (warn string, err error) {
+	cfg, gerr := p.GetAgent(ctx, agentName)
+	if gerr != nil {
+		return "", nil
+	}
+	rt, rerr := p.runtimeForAgent(*cfg)
+	if rerr != nil {
+		return "", nil
+	}
+	fname := rt.CustomConfigFileName()
+	if fname == "" {
+		return "", nil
+	}
+	data, rerr := os.ReadFile(filepath.Join(p.dataSubDir(agentName), fname))
+	if rerr != nil {
+		return "", nil // absence is self-healed on next write
+	}
+	if verr := common.ValidateAgentCustomConfig(data); verr != nil {
+		if errors.Is(verr, common.ErrCustomConfigUnparseable) {
+			return fmt.Sprintf("%s could not be validated (not strict JSON); manual review advised", fname), nil
+		}
+		return "", fmt.Errorf("CONFIG INTEGRITY VIOLATION (%s): %w", fname, verr)
+	}
+	return "", nil
+}
+
 // RunIntegrityCheck checks all agent configs and logs results.
 func (p *LocalProvider) RunIntegrityCheck() error {
 	ctx := context.Background()
@@ -96,6 +132,15 @@ func (p *LocalProvider) RunIntegrityCheck() error {
 		if err := p.checkConfigIntegrity(ctx, a.Name); err != nil {
 			fmt.Fprintf(f, "%s ALERT %s: %v\n", now, a.Name, err)
 			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
+			continue
+		}
+		// Managed root is intact; now guard the admin-owned include.
+		if warn, err := p.checkAgentCustomConfig(ctx, a.Name); err != nil {
+			fmt.Fprintf(f, "%s ALERT %s: %v\n", now, a.Name, err)
+			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
+		} else if warn != "" {
+			fmt.Fprintf(f, "%s WARN %s: %s\n", now, a.Name, warn)
+			fmt.Fprintf(os.Stderr, "WARN: %s: %s\n", a.Name, warn)
 		} else {
 			fmt.Fprintf(f, "%s OK %s: config integrity verified\n", now, a.Name)
 		}

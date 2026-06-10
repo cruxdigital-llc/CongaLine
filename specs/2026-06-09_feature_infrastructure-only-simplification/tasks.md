@@ -25,15 +25,21 @@
   add `$include` + include creation to the bootstrap bash for fresh-deploy correctness. (tftpl =
   no provider release.)
 
-## Phase 3 — Integrity: hash root + validate effective channel allowlist (security-critical)
-- [ ] **T3.1** Keep the existing root-hash baseline (`saveConfigBaseline`/`checkConfigIntegrity`)
-  unchanged (target stays `openclaw.json`). Confirm `agent-custom.json` is **not** hashed.
-- [ ] **T3.2** Add **effective-allowlist validation**: resolve the merged `channels.*` (in-container
-  `openclaw config get channels`, or compare merged file) and assert every channel/section maps to
-  a binding in the agent record (`AgentConfig.Channels`, platform-agnostic). Alert on any extra.
-  Wire into the integrity check path (local/remote `integrity.go`; AWS `check-config-integrity.sh`
-  + `user-data.sh.tftpl`). Reuse the existing violation log/journal path.
-- [ ] **T3.3** Security regression test: an include injecting `channels.<id>` is flagged by T3.2.
+## Phase 3 — Integrity (security-critical) ✅ Go-side DONE; AWS-bash remaining
+- [x] **T3.1** Root-hash baseline unchanged (target `openclaw.json`); `agent-custom.json` not hashed.
+- [x] **T3.2** `common.ValidateAgentCustomConfig` (pkg/common/custom_config.go): forbids the include
+  from declaring Conga-owned keys (`$include`,`channels`,`gateway`,`plugins`) — stricter than
+  "validate merged allowlist" and robust (no unsafe JSON5 comment-stripping; surfaces
+  `ErrCustomConfigUnparseable` instead). Wired into local + remote `RunIntegrityCheck` (new
+  `checkAgentCustomConfig`, ALERT on reserved key, WARN on unparseable). Kept separate from the
+  refresh-time hash check.
+- [x] **T3.3** Security regression test: `custom_config_test.go` flags injected `channels` (+ gateway,
+  plugins, $include) and the JSON5-unparseable case.
+- [ ] **T3.4 (remaining)** AWS: add the same check to the `check-config-integrity.sh` systemd-timer
+  script in `user-data.sh.tftpl` (jq: alert if agent-custom.json has `.channels/.gateway/.plugins`).
+  tftpl edit — no provider release. **Re-audit at the post-implementation security gate.**
+- [ ] **T3.5 (hardening, optional)** Authoritative JSON5-aware variant: `openclaw config get channels`
+  in-container compared to the agent record, closing the JSON5-evasion gap noted in T3.2.
 
 ## Phase 4 — `conga agent rebaseline` ✅ DONE
 - [x] **T4.1** `provider.Provider.ResetAgentCustomConfig` + impls (local FS, remote SSH, AWS SSM with
