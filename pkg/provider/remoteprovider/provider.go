@@ -204,6 +204,30 @@ func (p *RemoteProvider) ResolveAgentByIdentity(ctx context.Context) (*provider.
 
 // --- Agent Lifecycle ---
 
+// ensureAgentCustomConfig guarantees the admin-owned customization file the
+// generated config references (via "$include") exists on the remote host next
+// to openclaw.json. A missing include target invalidates the whole OpenClaw
+// config, so this runs after every config upload (provision/refresh/bind),
+// creating an empty "{}" only if absent — it NEVER overwrites admin content.
+// No-op for runtimes without a custom config file (e.g. Hermes).
+func (p *RemoteProvider) ensureAgentCustomConfig(ctx context.Context, cfg provider.AgentConfig, dataDir string) error {
+	rt, err := runtime.Get(runtime.ResolveRuntime(cfg.Runtime, ""))
+	if err != nil {
+		return nil // best-effort; default runtime handled elsewhere
+	}
+	name := rt.CustomConfigFileName()
+	if name == "" {
+		return nil
+	}
+	path := posixpath.Join(dataDir, name)
+	// Create "{}" only if absent; never clobber existing admin customization.
+	cmd := fmt.Sprintf("test -e %s || printf '{}\\n' > %s", shellQuote(path), shellQuote(path))
+	if _, err := p.ssh.Run(ctx, cmd); err != nil {
+		return fmt.Errorf("ensure %s: %w", name, err)
+	}
+	return nil
+}
+
 func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConfig) error {
 	// 1. Save agent config
 	if err := p.saveAgentConfig(&cfg); err != nil {
@@ -249,6 +273,9 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	p.ssh.Run(ctx, fmt.Sprintf("test -f %s || echo '# Memory' > %s", shellQuote(memoryPath), shellQuote(memoryPath)))
 
 	if err := p.ssh.Upload(posixpath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
+		return err
+	}
+	if err := p.ensureAgentCustomConfig(ctx, cfg, dataDir); err != nil {
 		return err
 	}
 
@@ -659,6 +686,9 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		return fmt.Errorf("failed to create data directory %s: %w", dataDir, err)
 	}
 	if err := p.ssh.Upload(posixpath.Join(dataDir, "openclaw.json"), openClawJSON, 0644); err != nil {
+		return err
+	}
+	if err := p.ensureAgentCustomConfig(ctx, *cfg, dataDir); err != nil {
 		return err
 	}
 

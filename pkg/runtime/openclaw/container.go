@@ -10,6 +10,15 @@ import (
 // ContainerPort is the gateway port inside OpenClaw containers.
 const ContainerPort = 18789
 
+// AgentCustomConfigFile is the admin-owned OpenClaw config file that Conga
+// references from the managed openclaw.json via "$include". Conga generates the
+// managed root wholesale but never reads or overwrites this file (except
+// `conga agent rebaseline`, which backs it up and resets it to "{}"). OpenClaw
+// deep-merges it under the root, with the root winning on conflicting scalar
+// keys. It lives next to openclaw.json in the agent data dir. See
+// specs/2026-06-09_feature_infrastructure-only-simplification/spec.md.
+const AgentCustomConfigFile = "agent-custom.json"
+
 func (r *Runtime) ContainerSpec(agent provider.AgentConfig) runtime.ContainerSpec {
 	return runtime.ContainerSpec{
 		ContainerPort: ContainerPort,

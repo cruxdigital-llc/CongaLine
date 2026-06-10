@@ -39,6 +39,10 @@ standard `openclaw.json` once at provision time, then let administrators customi
 
 - **2026-06-09** — Drafted `spec.md`. Pre-spec, ran two more isolated probes on `aaron` to settle load-bearing assumptions: (probe3) on **conflicting scalar** keys the **root wins** (Conga-owned values can't be overridden); (probe4) on **objects, deep-merge unions** — an include CAN **add** `channels.*` entries / new channel sections. The union result is a security finding (channel allowlist is a declared boundary). All probes isolated via `OPENCLAW_CONFIG_PATH`; aaron untouched, probes cleaned up.
 
+- **2026-06-09** — `/glados:implement-feature` started. Capabilities: in-container `openclaw config validate`/`get` (for the §9 validation hook + tests), conga MCP `container_exec` + AWS SSM (live verify on AWS fleet). No UI/DB tools relevant. Created `tasks.md` breakdown for review before coding.
+
+- **2026-06-09** — Impl P1+P2 landed. **C1 verified on `aaron`** (isolated): a missing `$include` target invalidates the whole config → helper must self-heal on every root write. Files: `pkg/runtime/runtime.go` (+`CustomConfigFileName()`), `pkg/runtime/openclaw/{config.go,container.go}` ($include injection + const + method), `pkg/runtime/hermes/config.go` (method→""), `pkg/provider/localprovider/{provider.go,channels.go}` (helper + 3 calls), `pkg/provider/remoteprovider/{provider.go,channels.go}` (helper + 3 calls), `pkg/provider/awsprovider/channels.go` (create-if-absent + root:root 0444 re-protect). Tests: `config_test.go` `TestGenerateConfig_IncludesAdminCustomFile`. Build/vet/gofmt clean; runtime+local+remote suites pass.
+
 ## Spec Review & Standards Gate (pre-implementation)
 
 ### Persona Review

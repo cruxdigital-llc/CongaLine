@@ -178,3 +178,7 @@ func emitHermesDegradedWarning(agentName, baseURL string) {
 }
 
 func (r *Runtime) ConfigFileName() string { return "config.yaml" }
+
+// CustomConfigFileName returns "" — the Hermes runtime has no admin-owned
+// include file (the $include layering is OpenClaw-specific).
+func (r *Runtime) CustomConfigFileName() string { return "" }

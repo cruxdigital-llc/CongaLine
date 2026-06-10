@@ -90,7 +90,32 @@ func (p *LocalProvider) Name() string { return "local" }
 func (p *LocalProvider) agentsDir() string             { return filepath.Join(p.dataDir, "agents") }
 func (p *LocalProvider) configDir() string             { return filepath.Join(p.dataDir, "config") }
 func (p *LocalProvider) dataSubDir(name string) string { return filepath.Join(p.dataDir, "data", name) }
-func (p *LocalProvider) routerDir() string             { return filepath.Join(p.dataDir, "router") }
+
+// ensureAgentCustomConfig guarantees the admin-owned customization file the
+// generated config references (via "$include") exists next to it. A missing
+// include target invalidates the whole OpenClaw config, so this runs after
+// every config write (provision/refresh/bind), creating an empty "{}" if absent.
+// It NEVER overwrites existing admin content. No-op for runtimes without a
+// custom config file (e.g. Hermes). Mode 0644: the operator owns it and edits
+// freely; the container (uid 1000) reads it. Conga never writes it again except
+// via `agent rebaseline`.
+func (p *LocalProvider) ensureAgentCustomConfig(rt runtime.Runtime, dataDir string) error {
+	name := rt.CustomConfigFileName()
+	if name == "" {
+		return nil
+	}
+	path := filepath.Join(dataDir, name)
+	if _, err := os.Stat(path); err == nil {
+		return nil // exists — never clobber admin customization
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0644); err != nil {
+		return fmt.Errorf("create %s: %w", name, err)
+	}
+	return nil
+}
+func (p *LocalProvider) routerDir() string { return filepath.Join(p.dataDir, "router") }
 
 // behaviorDir returns the local snapshot directory that holds per-agent
 // overlays and shipped defaults: <dataDir>/agents/.
@@ -246,6 +271,9 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to create data directories: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, rt.ConfigFileName()), configBytes, 0644); err != nil {
+		return err
+	}
+	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
 		return err
 	}
 
@@ -759,6 +787,9 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return fmt.Errorf("failed to create data directory %s: %w", dataDir, err)
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, rt.ConfigFileName()), configBytes, 0644); err != nil {
+		return err
+	}
+	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
 		return err
 	}
 

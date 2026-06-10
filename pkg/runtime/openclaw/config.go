@@ -64,6 +64,12 @@ func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
 		applyTeamChannelDiscipline(config)
 	}
 
+	// Reference the admin-owned customization file. OpenClaw deep-merges it under
+	// this managed root (root wins on conflicting scalars). Conga never reads or
+	// writes the include; providers guarantee it exists (a missing $include target
+	// makes the whole config invalid). See AgentCustomConfigFile.
+	config["$include"] = []string{AgentCustomConfigFile}
+
 	return json.MarshalIndent(config, "", "  ")
 }
 
@@ -321,6 +327,11 @@ func trimSubagentBaseURL(s string) string {
 }
 
 func (r *Runtime) ConfigFileName() string { return "openclaw.json" }
+
+// CustomConfigFileName returns the admin-owned include file referenced from the
+// managed openclaw.json via "$include". Providers ensure it exists ("{}") on
+// every config write; a missing $include target invalidates the whole config.
+func (r *Runtime) CustomConfigFileName() string { return AgentCustomConfigFile }
 
 // buildGatewayConfig produces the gateway section of openclaw.json.
 func buildGatewayConfig(containerPort, hostPort int, token string) map[string]any {
