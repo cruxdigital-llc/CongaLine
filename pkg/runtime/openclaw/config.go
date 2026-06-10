@@ -64,11 +64,17 @@ func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
 		applyTeamChannelDiscipline(config)
 	}
 
-	// Reference the admin-owned customization file. OpenClaw deep-merges it under
-	// this managed root (root wins on conflicting scalars). Conga never reads or
-	// writes the include; providers guarantee it exists (a missing $include target
-	// makes the whole config invalid). See AgentCustomConfigFile.
-	config["$include"] = []string{AgentCustomConfigFile}
+	// Reference the layered custom-config files. OpenClaw deep-merges them under
+	// this managed root in array order (later wins); the root wins over every
+	// include (verified). Effective precedence: root > admin-drift > per-agent > fleet.
+	// Providers guarantee all three exist (a missing $include target makes the
+	// whole config invalid). See FleetCustomConfigFile / AgentManagedCustomConfigFile
+	// / AgentCustomConfigFile.
+	config["$include"] = []string{
+		FleetCustomConfigFile,
+		AgentManagedCustomConfigFile,
+		AgentCustomConfigFile,
+	}
 
 	return json.MarshalIndent(config, "", "  ")
 }

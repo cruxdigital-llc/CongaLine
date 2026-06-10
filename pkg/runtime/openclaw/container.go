@@ -19,6 +19,20 @@ const ContainerPort = 18789
 // specs/2026-06-09_feature_infrastructure-only-simplification/spec.md.
 const AgentCustomConfigFile = "agent-custom.json"
 
+// FleetCustomConfigFile and AgentManagedCustomConfigFile are the Conga-DEPLOYED
+// declarative custom-config layers (feature #31). Conga writes them into each
+// agent's data dir from committed sources — fleet-custom.json from
+// agents/_defaults/<runtime>/fleet-custom.json (applies to all agents), and
+// agent-managed-custom.json from agents/<name>/custom.json (per-agent) — and
+// references all three via the "$include" array. OpenClaw deep-merges in array
+// order (later wins), and the managed root wins over every include (verified).
+// Effective precedence: root > agent-custom (admin drift) > agent-managed (per-agent) > fleet.
+// See specs/2026-06-10_feature_fleet-baseline-configuration/spec.md.
+const (
+	FleetCustomConfigFile        = "fleet-custom.json"
+	AgentManagedCustomConfigFile = "agent-managed-custom.json"
+)
+
 func (r *Runtime) ContainerSpec(agent provider.AgentConfig) runtime.ContainerSpec {
 	return runtime.ContainerSpec{
 		ContainerPort: ContainerPort,

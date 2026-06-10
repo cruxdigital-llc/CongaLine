@@ -804,8 +804,11 @@ func TestGenerateConfig_IncludesAdminCustomFile(t *testing.T) {
 			if !ok {
 				t.Fatalf("missing $include array; got %T %+v", cfg["$include"], cfg["$include"])
 			}
-			if len(inc) != 1 || inc[0] != AgentCustomConfigFile {
-				t.Fatalf("$include = %+v, want [%q]", inc, AgentCustomConfigFile)
+			// Feature #31: layered includes, order = precedence (later wins),
+			// admin-drift (agent-custom.json) last so it wins over per-agent + fleet.
+			want := []any{FleetCustomConfigFile, AgentManagedCustomConfigFile, AgentCustomConfigFile}
+			if !reflect.DeepEqual(inc, want) {
+				t.Fatalf("$include = %+v, want %+v", inc, want)
 			}
 
 			// Purely additive: core managed sections still present alongside it.
