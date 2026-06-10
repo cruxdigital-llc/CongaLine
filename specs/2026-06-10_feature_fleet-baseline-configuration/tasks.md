@@ -14,9 +14,16 @@
 - [x] **T4.1/4.2/4.3** Each provider deploys fleet-custom.json + agent-managed-custom.json from
   sources (or `{}`) at every Go write path (provision/refresh/bind), beside the #30
   `ensureAgentCustomConfig`. AWS re-protects all three managed includes root:root 0444. Build+tests green.
-- [ ] **T4.4 (remaining)** AWS **boot tftpl** + **provision scripts** (add-user/add-team): deploy the
-  managed include files from the S3-synced `/opt/conga/agents/` sources (fresh-deploy path).
-- [ ] **T4.5 (remaining)** Per-provider deploy tests (provision deploys layers; refresh re-syncs 2–3 not 4).
+- [x] **T4.4** AWS **boot tftpl** + **provision scripts** (add-user/add-team): the fresh-deploy path
+  now emits the 3-element `$include` array and `deploy-agents.sh` deploys fleet-custom.json +
+  agent-managed-custom.json from the S3-synced `/opt/conga/agents/` sources (or `{}`), root:root 0444,
+  openclaw-gated. Centralized the file deploy in `deploy-agents.sh.tmpl` (runs in all 3 fresh-deploy
+  paths after the s3 sync); updated the `$include` jq at all 3 config-write sites
+  (`add-user.sh.tmpl`, `add-team.sh.tmpl`, `user-data.sh.tftpl`). Tests: render assertions
+  (add-user/add-team 3-element `$include`) + `deploy-agents.sh.tmpl` content test. Green.
+- [ ] **T4.5 (remaining)** Per-**Go-provider** deploy tests (provision deploys layers; refresh
+  re-syncs 2–3 not 4). The bash fresh-deploy path is covered by T4.4's tests; this is the Go side
+  (local/remote/AWS-regenerate) — fold into P9.
 
 ## Phase 2 — De-embed `openclaw-defaults.json` (with embedded fallback) ✅ DONE (Go scope)
 > **Scope decision (operator, 2026-06-10):** Go de-embed now; the AWS **bash boot/provision**
