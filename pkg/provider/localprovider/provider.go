@@ -26,7 +26,8 @@ import (
 
 	// Import runtime implementations so they register via init().
 	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/hermes"
-	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
+
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 )
 
 const (
@@ -112,6 +113,37 @@ func (p *LocalProvider) ensureAgentCustomConfig(rt runtime.Runtime, dataDir stri
 	}
 	if err := os.WriteFile(path, []byte("{}\n"), 0644); err != nil {
 		return fmt.Errorf("create %s: %w", name, err)
+	}
+	return nil
+}
+
+// deployManagedCustomConfig writes the Conga-managed declarative custom-config
+// layers (#31) — fleet-custom.json (all agents) and agent-managed-custom.json
+// (per-agent) — from their committed sources, or "{}" if a source is absent
+// (the $include target must exist). These re-sync on every write (so fleet/per-
+// agent changes propagate); the admin-drift agent-custom.json is handled
+// separately by ensureAgentCustomConfig and never clobbered. No-op for runtimes
+// without $include layering (Hermes).
+func (p *LocalProvider) deployManagedCustomConfig(rt runtime.Runtime, cfg provider.AgentConfig, dataDir string) error {
+	if rt.CustomConfigFileName() == "" {
+		return nil
+	}
+	srcs := common.ResolveCustomConfigSources(p.behaviorDir(), cfg)
+	layers := []struct {
+		name    string
+		content []byte
+	}{
+		{openclaw.FleetCustomConfigFile, srcs.Fleet},
+		{openclaw.AgentManagedCustomConfigFile, srcs.PerAgent},
+	}
+	for _, l := range layers {
+		content := l.content
+		if content == nil {
+			content = []byte("{}\n")
+		}
+		if err := os.WriteFile(filepath.Join(dataDir, l.name), content, 0644); err != nil {
+			return fmt.Errorf("deploy %s: %w", l.name, err)
+		}
 	}
 	return nil
 }
@@ -303,6 +335,9 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return err
 	}
 	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
+		return err
+	}
+	if err := p.deployManagedCustomConfig(rt, cfg, dataDir); err != nil {
 		return err
 	}
 
@@ -819,6 +854,9 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return err
 	}
 	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
+		return err
+	}
+	if err := p.deployManagedCustomConfig(rt, *cfg, dataDir); err != nil {
 		return err
 	}
 

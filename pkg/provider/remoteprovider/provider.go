@@ -16,6 +16,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 )
 
@@ -252,6 +253,36 @@ func (p *RemoteProvider) ResetAgentCustomConfig(ctx context.Context, name string
 	return nil
 }
 
+// deployManagedCustomConfig uploads the Conga-managed declarative custom-config
+// layers (#31) to the remote host — fleet-custom.json + agent-managed-custom.json
+// from their committed sources (operator's local agents/ dir), or "{}" if absent.
+// Re-synced on every write; admin-drift agent-custom.json handled separately.
+// No-op for runtimes without $include layering.
+func (p *RemoteProvider) deployManagedCustomConfig(ctx context.Context, cfg provider.AgentConfig, dataDir string) error {
+	rt, err := runtime.Get(runtime.ResolveRuntime(cfg.Runtime, ""))
+	if err != nil || rt.CustomConfigFileName() == "" {
+		return nil
+	}
+	srcs := common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), cfg)
+	layers := []struct {
+		name    string
+		content []byte
+	}{
+		{openclaw.FleetCustomConfigFile, srcs.Fleet},
+		{openclaw.AgentManagedCustomConfigFile, srcs.PerAgent},
+	}
+	for _, l := range layers {
+		content := l.content
+		if content == nil {
+			content = []byte("{}\n")
+		}
+		if err := p.ssh.Upload(posixpath.Join(dataDir, l.name), content, 0644); err != nil {
+			return fmt.Errorf("deploy %s: %w", l.name, err)
+		}
+	}
+	return nil
+}
+
 func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConfig) error {
 	// 1. Save agent config
 	if err := p.saveAgentConfig(&cfg); err != nil {
@@ -300,6 +331,9 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 		return err
 	}
 	if err := p.ensureAgentCustomConfig(ctx, cfg, dataDir); err != nil {
+		return err
+	}
+	if err := p.deployManagedCustomConfig(ctx, cfg, dataDir); err != nil {
 		return err
 	}
 
@@ -713,6 +747,9 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		return err
 	}
 	if err := p.ensureAgentCustomConfig(ctx, *cfg, dataDir); err != nil {
+		return err
+	}
+	if err := p.deployManagedCustomConfig(ctx, *cfg, dataDir); err != nil {
 		return err
 	}
 

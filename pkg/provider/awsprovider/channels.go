@@ -524,6 +524,28 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return fmt.Errorf("failed to ensure agent-custom.json: %w", err)
 	}
 
+	// Deploy the Conga-managed declarative custom-config layers (#31) from their
+	// committed sources (or "{}" if absent): fleet-custom.json (all agents) +
+	// agent-managed-custom.json (per-agent). These re-sync every refresh, so
+	// fleet/per-agent changes propagate. Re-protected root:root 0444 below.
+	srcs := common.ResolveCustomConfigSources(behaviorDir, cfg)
+	managedLayers := []struct {
+		path    string
+		content []byte
+	}{
+		{dataDir + "/fleet-custom.json", srcs.Fleet},
+		{dataDir + "/agent-managed-custom.json", srcs.PerAgent},
+	}
+	for _, l := range managedLayers {
+		content := l.content
+		if content == nil {
+			content = []byte("{}\n")
+		}
+		if err := p.uploadFile(ctx, instanceID, l.path, content, "0444"); err != nil {
+			return fmt.Errorf("failed to upload %s: %w", l.path, err)
+		}
+	}
+
 	// Upload .env
 	envPath := fmt.Sprintf("/opt/conga/config/%s.env", cfg.Name)
 	if err := p.uploadFile(ctx, instanceID, envPath, envContent, "0400"); err != nil {
@@ -541,9 +563,13 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 	// (the allowlist is a security boundary). Admins edit it via SSM as root.
 	// Defense-in-depth — the effective-allowlist integrity check is the
 	// load-bearing control. uid 1000 still reads it (0444), so $include resolves.
+	// Re-protect all managed include files (admin-drift + the two #31 managed
+	// layers) root:root 0444 after the recursive chown — read-only to the agent,
+	// still readable for $include resolution.
 	if _, err := p.runOnInstance(ctx, instanceID,
-		fmt.Sprintf("chown root:root '%s' && chmod 0444 '%s'", customPath, customPath), 30*time.Second); err != nil {
-		return fmt.Errorf("failed to protect agent-custom.json: %w", err)
+		fmt.Sprintf("chown root:root '%s' '%s/fleet-custom.json' '%s/agent-managed-custom.json' && chmod 0444 '%s' '%s/fleet-custom.json' '%s/agent-managed-custom.json'",
+			customPath, dataDir, dataDir, customPath, dataDir, dataDir), 30*time.Second); err != nil {
+		return fmt.Errorf("failed to protect managed include files: %w", err)
 	}
 
 	// Refresh the integrity baseline so check-config-integrity.sh doesn't
