@@ -44,6 +44,30 @@ answer), with fleet + per-agent levels — not just a single fleet file.
 ## Files
 - [requirements.md](./requirements.md)
 - [plan.md](./plan.md)
+- [spec.md](./spec.md) — detailed spec (4-layer model, verified precedence, de-embed, deploy/integrity)
+
+- **2026-06-10** — `/glados:spec-feature` started. **Live-verified the `$include`-array precedence** on `aaron`/`2026.5.26` (isolated copy via `OPENCLAW_CONFIG_PATH`, driven through `aws ssm`/`docker exec` because the MCP server held stale SSO creds): **later-in-array wins** (per-agent over fleet), **includes union** (distinct keys from all layers compose), and the **managed root still wins over all includes** (`gateway.port` stayed 18789). The 4-layer model is viable as planned: root > admin-drift > per-agent > fleet. Drafted `spec.md`.
+
+## Spec Review & Standards Gate (pre-implementation)
+
+### Persona Review
+- **Architect** — APPROVE. Reuses #30's verified `$include` + the now-verified array precedence; fits the config taxonomy as a new declarative layer; de-embed-with-embedded-fallback is sound; parity covered (all 3 providers + AWS tftpl + provision scripts). Concern: 4 layers is a lot of cognitive load → recommends the **effective-config view (§3.5) ship *in* this feature**, not deferred.
+- **Product Manager** — APPROVE. Serves both use cases (fleet baseline + "MCP in code"); criteria testable; scope bounded (free-form, no typed schema). Note: operator mental model needs the `config-taxonomy.md` update.
+- **QA** — APPROVE with required tests (in §9): **fleet blast-radius** (bad fleet file rejected pre-deploy), **fleet propagation** (one file → all agents), **per-agent overrides fleet / admin overrides per-agent**, and the **de-embed fallback** (absent file → embedded).
+
+### Standards Gate (pre-implementation)
+| Standard | Severity | Verdict |
+|---|---|---|
+| security.md — reserved-key guard on every layer (channel allowlist boundary) | must | ✅ PASS (§3.4; root-wins verified) |
+| security.md — **fleet blast radius** (one file → all agents) | must | ✅ PASS *given* pre-deploy validation (fail closed) + staged rollout (§3.3/§11) |
+| security.md — de-embed defaults integrity + safe fallback | must | ✅ PASS (embedded fallback retained; synced file integrity-covered, §11) |
+| security.md — secrets via env, egress additive | must | ✅ PASS (§11) |
+| architecture.md — Agent Data Safety | must | ✅ PASS (§10) |
+| architecture.md — Interface Parity | must | ⚠️ CONDITIONAL — *if* `conga agent show-config` ships, it must be CLI+JSON+MCP (§3.5). No new command otherwise. |
+| architecture.md — Provider contract (all 3) | must | ✅ PASS (§7) |
+| config-taxonomy.md — document the new layers | should | ⚠️ WARNING — taxonomy doc update required during implement (new fleet/per-agent layers). |
+
+**Gate decision: PASS.** No blocking `must` violations. Two items to honor during implementation: the config-taxonomy doc update (should), and Interface Parity *if* the effective-config view ships. Re-audit the fleet blast-radius + reserved-key controls at the post-implementation gate.
 
 ## Next step
-`/glados:spec-feature` — resolve the layering precedence (esp. `$include`-array order, live-verified), the file/deploy model, and integrity treatment.
+`/glados:implement-feature` — generator `$include` array, de-embed `openclaw-defaults.json` with embedded fallback, source resolver + per-provider deploy (all 3 #30 write paths incl. AWS tftpl + provision scripts), integrity extension to all layers, tests per spec §9. Then `/glados:verify-feature` + security re-audit. `pkg/` change → provider release.

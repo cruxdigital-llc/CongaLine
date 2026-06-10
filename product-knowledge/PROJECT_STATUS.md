@@ -348,7 +348,7 @@ No new Conga data-model concept.
   See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
 - See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
 
-### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — Planning
+### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — Specified, Ready for Implementation
 - **Goal**: make custom OpenClaw config (MCP servers, skills, tools) **declarative + version-controlled
   in the repo** at two levels — a **fleet baseline** (all agents) and **per-agent** (`agents/<name>/`)
   — deployed by Conga via `$include` layering, composing with #30's on-host admin-drift `agent-custom.json`.
@@ -362,8 +362,12 @@ No new Conga data-model concept.
   a binary release).
 - **Load-bearing unknown**: `$include`-**array** precedence (which include wins) — live-verify on the
   pinned image, like #30's root-wins check.
-- **Status**: `/glados:plan-feature` complete — `requirements.md` + `plan.md` drafted (all-persona).
-  Builds on #30. See `specs/2026-06-10_feature_fleet-baseline-configuration/`.
+- **Status**: `/glados:spec-feature` complete — `spec.md` drafted; **`$include`-array precedence
+  live-verified** (later-wins, includes union, root-wins-over-all); persona review APPROVE; standards
+  gate **PASS** (no blocking; config-taxonomy doc-sync + Interface-Parity-if-show-config to honor in
+  impl). 4-layer model: defaults → fleet → per-agent → admin-drift via
+  `$include:[fleet-custom, agent-managed-custom, agent-custom]`; de-embed keeps an embedded fallback.
+  Builds on #30. See `specs/2026-06-10_feature_fleet-baseline-configuration/spec.md`.
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
