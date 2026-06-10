@@ -307,7 +307,7 @@ No new Conga data-model concept.
   fix worktree-vs-parent CWD silent-wrong in
   `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()`
 
-### 30. Infrastructure-Only Simplification — Planning
+### 30. Infrastructure-Only Simplification — Specified, Ready for Implementation
 - **Goal**: narrow Conga to infra + a one-time baseline config; let administrators customize each
   agent's `openclaw.json` (e.g. add the Linear MCP server) with edits that **survive restarts/refresh**.
 - **Problem**: config generation is stateless full-file regeneration on every
@@ -329,10 +329,14 @@ No new Conga data-model concept.
   ownership.
 - **Security-relevant**: changes the config-integrity monitor's whole-file-hash contract →
   `security.md` review gating implementation.
-- **Status**: `/glados:plan-feature` complete — `requirements.md` + `plan.md` drafted. Key decisions
-  (owned-key set, collection merge semantics, integrity re-scope, re-baseline UX, migration) deferred
-  to `/glados:spec-feature`.
-- See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
+- **Status**: `/glados:spec-feature` complete — `spec.md` drafted, persona-reviewed (architect/PM/QA
+  APPROVE post-amendment), standards gate **PASSED** (all `must` resolved). Decisions locked: Conga
+  owns root + `$include` admin file; root wins on scalar conflicts but objects union (so an include
+  can ADD `channels.*` → security finding) → integrity hashes root **+ validates the effective
+  channel allowlist**; `conga agent rebaseline` (CLI+JSON+MCP); regenerate-fresh migration;
+  `agent-custom.json` read-only to the agent uid. The effective-allowlist control is re-audited at
+  the post-implementation security gate. `pkg/` change → provider release.
+- See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)

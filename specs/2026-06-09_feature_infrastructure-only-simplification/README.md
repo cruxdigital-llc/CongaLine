@@ -35,6 +35,31 @@ standard `openclaw.json` once at provision time, then let administrators customi
 - **2026-06-09** — Live-validated `$include` on the `aaron` production agent (image `2026.5.26`), isolated-copy first then live with byte-exact backup/restore. Confirmed: merges + validates; resolves top-level keys AND `mcp.servers`; survives restart + hot-reload; OpenClaw **fails closed (never flattens)** on owned-writes when root has `$include`; gateway does not owned-write at startup. aaron restored byte-identical (integrity sha256 re-matched baseline). Promoted **Approach C to recommended** (Conga owns root + admin-include); recorded the in-container `config set` trade-off. Findings in `research-openclaw-config.md` §5b; open questions #1/#3/#5 resolved or narrowed.
 - **2026-06-09** — Operator asked whether to use the `openclaw` CLI instead of writing config directly. Evaluated **Approach D (Conga drives `openclaw config patch`)** live on `aaron` (isolated copy): `patch` does a validated, version-correct recursive merge with `null`-deletes and runs standalone — but **strips admin JSON5 comments** and needs per-change in-container execution. Verdict: **use the CLI for read-only validation (`config validate`/`schema`), not mutation; keep Approach C for ownership.** Captured in `research-openclaw-config.md` §5c; resolves open Q#4. Cleaned up all probe artifacts on aaron.
 
+- **2026-06-09** — `/glados:spec-feature` started (branch `plan/infrastructure-only-simplification`, PR #57). Resolving the deferred decisions (root ownership, re-baseline UX, migration, integrity) before drafting `spec.md`.
+
+- **2026-06-09** — Drafted `spec.md`. Pre-spec, ran two more isolated probes on `aaron` to settle load-bearing assumptions: (probe3) on **conflicting scalar** keys the **root wins** (Conga-owned values can't be overridden); (probe4) on **objects, deep-merge unions** — an include CAN **add** `channels.*` entries / new channel sections. The union result is a security finding (channel allowlist is a declared boundary). All probes isolated via `OPENCLAW_CONFIG_PATH`; aaron untouched, probes cleaned up.
+
+## Spec Review & Standards Gate (pre-implementation)
+
+### Persona Review
+- **Architect** — APPROVE (post-amendment). Caught two `must` gaps now fixed: missing **Data Safety** section (added §11a) and **Interface Parity** for `conga agent rebaseline` (now CLI+JSON+MCP, §5.4). No new external deps; uses OpenClaw's native `$include` + existing CLI; embodies the "Own the box, not the behavior" principle; agent record unchanged.
+- **Product Manager** — APPROVE. Why/Who clear; acceptance criteria testable (add MCP → refresh → survives, §11); scope guarded (typed `mcp:` schema explicitly out). Note (non-blocking): the in-container `config set` fail-closed + edit-the-include workflow is an operator UX change → release notes/docs.
+- **QA** — APPROVE (post-amendment). Edge cases covered (§10: missing include, invalid JSON5, override-attempt, hot-reload race). Reinforced the deep-merge-union channel-injection unhappy path; required a **security regression test** (added §11) asserting the effective-allowlist check fires on an injected channel.
+
+### Standards Gate
+| Standard | Severity | Verdict |
+|---|---|---|
+| security.md — channel allowlist = security boundary (Principle 1/2) | must | ❌→✅ **RESOLVED** — effective-allowlist validation (§5.5) + `agent-custom.json` read-only-to-agent (§12) |
+| security.md — secrets via env, never config (#9627) | must | ✅ PASSES |
+| architecture.md — Agent Data Safety | must | ❌→✅ **RESOLVED** — Data Safety section added (§11a) |
+| architecture.md — Interface Parity | must | ❌→✅ **RESOLVED** — rebaseline CLI+JSON+MCP (§5.4) |
+| architecture.md — Provider contract (all 3 providers) | must | ✅ PASSES (§5.2) |
+| architecture.md — Channel abstraction (platform-agnostic) | must | ✅ PASSES (allowlist check keys off agent record bindings) |
+| egress-controls.md — admin MCP endpoints need allowlisting | must | ✅ PASSES (§12 documents; mirror overlay egress-gap warning) |
+| config-taxonomy.md — per-agent config split | should | ⚠️ WARNING — new locus (`agent-custom.json`) must be added to the taxonomy doc during implement |
+
+**Gate decision**: all `must` items RESOLVED via spec amendments; one `should` warning logged (taxonomy doc sync). **PROCEED** to `/glados:implement-feature`. Note: the live security/effective-allowlist control should be re-audited at the post-implementation gate.
+
 ## Key Decisions (this phase)
 
 1. **Feature framing** — "infrastructure only" = Conga owns infra + a one-time baseline; ongoing runtime-config ownership moves to the administrator. Name kept as given.
@@ -47,8 +72,11 @@ standard `openclaw.json` once at provision time, then let administrators customi
 - [requirements.md](./requirements.md)
 - [plan.md](./plan.md)
 - [research-openclaw-config.md](./research-openclaw-config.md) — full config-surface map + Conga footprint
+- [spec.md](./spec.md) — detailed technical specification (Approach C; security-gated)
 
 ## Next Step
 
-`/glados:spec-feature` — turn the recommended approach into a detailed technical spec
-(resolve the open decisions in `plan.md` §Key Decisions to Resolve).
+`/glados:implement-feature` — implement `spec.md` §5 across `pkg/runtime/openclaw`, the three
+providers, the CLI (`conga agent rebaseline`), and integrity (incl. the §5.5 effective-allowlist
+check). Land tests per §11, then `/glados:verify-feature` + the post-implementation security gate.
+Reminder: `pkg/` change → `terraform-provider-conga` release.
