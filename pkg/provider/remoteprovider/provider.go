@@ -264,6 +264,11 @@ func (p *RemoteProvider) deployManagedCustomConfig(ctx context.Context, cfg prov
 		return nil
 	}
 	srcs := common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), cfg)
+	// Fail closed before uploading anything: a reserved-key violation in the fleet
+	// source would break/compromise every agent (blast radius). #31 T6.1.
+	if err := common.ValidateManagedConfigSources(srcs); err != nil {
+		return err
+	}
 	layers := []struct {
 		name    string
 		content []byte
@@ -369,6 +374,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	// 5b. Pre-flight: warn if the overlay's primary or subagent endpoints
 	// are not in the effective egress allowlist. Non-blocking.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), cfg), policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
 
 	// 6. Create Docker network
 	netName := networkName(cfg.Name)
@@ -784,6 +790,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	// refresh (the common flow) still get the heads-up before runtime
 	// 403s start landing.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), agentName)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), *cfg), policy.EffectiveAllowedDomains(egressPolicy), agentName)
 
 	cName := containerName(agentName)
 	netName := networkName(agentName)

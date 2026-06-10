@@ -529,6 +529,11 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 	// agent-managed-custom.json (per-agent). These re-sync every refresh, so
 	// fleet/per-agent changes propagate. Re-protected root:root 0444 below.
 	srcs := common.ResolveCustomConfigSources(behaviorDir, cfg)
+	// Fail closed before uploading anything: a reserved-key violation in the fleet
+	// source would break/compromise every agent (blast radius). #31 T6.1.
+	if err := common.ValidateManagedConfigSources(srcs); err != nil {
+		return err
+	}
 	managedLayers := []struct {
 		path    string
 		content []byte

@@ -134,6 +134,37 @@ func ValidateCustomConfigKeys(fname string, data []byte) error {
 	return nil
 }
 
+// ValidateManagedConfigSources is the pre-deploy, fail-closed guard on the
+// Conga-deployed declarative layers (feature #31 T6.1). A reserved-key violation
+// in the FLEET file would break or compromise EVERY agent (blast radius), so the
+// deploy path calls this BEFORE writing anything and aborts on violation — the
+// bad file never reaches a host. Both fleet and per-agent sources are checked.
+//
+// An unparseable (JSON5) source is tolerated here (returns nil for that layer):
+// OpenClaw accepts JSON5, our strict-JSON reserved-key check cannot, and the
+// on-host openclaw load + periodic integrity check are the backstop. See spec §6.
+func ValidateManagedConfigSources(srcs CustomConfigSources) error {
+	layers := []struct {
+		name string
+		data []byte
+	}{
+		{FleetCustomSourceName, srcs.Fleet},
+		{PerAgentCustomSourceName, srcs.PerAgent},
+	}
+	for _, l := range layers {
+		if l.data == nil {
+			continue
+		}
+		if err := ValidateCustomConfigKeys(l.name, l.data); err != nil {
+			if errors.Is(err, ErrCustomConfigUnparseable) {
+				continue // JSON5 tolerated; on-host load + integrity check backstop
+			}
+			return fmt.Errorf("pre-deploy validation failed for %s (fix the committed source before deploy): %w", l.name, err)
+		}
+	}
+	return nil
+}
+
 // ClassifyIncludeValidation runs the reserved-key guard on one $include layer and
 // classifies the result for integrity reporting, shared by the local and remote
 // providers' RunIntegrityCheck. A reserved-key violation is a hard error

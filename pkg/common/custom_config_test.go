@@ -93,6 +93,38 @@ func TestResolveCustomConfigSources(t *testing.T) {
 	}
 }
 
+func TestValidateManagedConfigSources(t *testing.T) {
+	// Clean fleet + per-agent → nil.
+	if err := ValidateManagedConfigSources(CustomConfigSources{
+		Fleet:    []byte(`{"mcp":{"servers":{}}}`),
+		PerAgent: []byte(`{"skills":{"allow":["github"]}}`),
+	}); err != nil {
+		t.Fatalf("clean sources should pass: %v", err)
+	}
+
+	// Reserved key in FLEET → fail closed (blast radius), error names the file.
+	err := ValidateManagedConfigSources(CustomConfigSources{Fleet: []byte(`{"channels":{"slack":{}}}`)})
+	if err == nil || !strings.Contains(err.Error(), "fleet-custom.json") {
+		t.Fatalf("reserved key in fleet must fail closed: %v", err)
+	}
+
+	// Reserved key in PER-AGENT → fail closed too.
+	err = ValidateManagedConfigSources(CustomConfigSources{PerAgent: []byte(`{"gateway":{"port":1}}`)})
+	if err == nil || !strings.Contains(err.Error(), "custom.json") {
+		t.Fatalf("reserved key in per-agent must fail closed: %v", err)
+	}
+
+	// JSON5 (unparseable) is tolerated — backstopped by on-host load + integrity.
+	if err := ValidateManagedConfigSources(CustomConfigSources{Fleet: []byte("{\n  // c\n}")}); err != nil {
+		t.Fatalf("JSON5 fleet should be tolerated pre-deploy: %v", err)
+	}
+
+	// nil sources → nil.
+	if err := ValidateManagedConfigSources(CustomConfigSources{}); err != nil {
+		t.Fatalf("nil sources should pass: %v", err)
+	}
+}
+
 func TestValidateCustomConfigKeys_NamesFile(t *testing.T) {
 	// The generic guard names the offending layer (feature #31) instead of the
 	// hardcoded "agent-custom.json".

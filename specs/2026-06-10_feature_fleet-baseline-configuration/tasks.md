@@ -65,10 +65,18 @@
   on-host tamper detected (`checkManagedIncludeIntegrity`); `common` generic validator/classifier;
   deploy-agents baseline-write content test. Green across local/remote/scripts/common.
 
-## Phase 6 — Pre-deploy validation + egress (fleet blast-radius)
-- [ ] **T6.1** Validate the merged result before deploy (operator-side `openclaw config validate` or
-  schema); **fail closed on a bad fleet file** so it never reaches the host.
-- [ ] **T6.2** Emit the #30-style egress-gap warning for endpoints declared in fleet/per-agent custom.
+## Phase 6 — Pre-deploy validation + egress (fleet blast-radius) ✅ DONE
+- [x] **T6.1** `common.ValidateManagedConfigSources` runs the reserved-key guard on the fleet +
+  per-agent sources **before any write**, in all 3 deploy paths (local/remote `deployManagedCustomConfig`,
+  AWS `RegenerateAgent`). A reserved-key violation **fails the deploy closed** (blast radius — the bad
+  fleet file never reaches a host). JSON5/unparseable is tolerated pre-deploy (on-host openclaw load +
+  integrity check backstop, per §6). No openclaw binary needed operator-side.
+- [x] **T6.2** `common.WarnCustomConfigEgressGaps` walks `mcp.servers.*.url` in fleet + per-agent and
+  emits the #30-style egress-gap warning for any host not allowlisted. Wired beside all 6
+  `WarnOverlayEgressGaps` sites (local/remote/AWS × provision+refresh), reusing the resolved allowlist.
+- [x] **T6.3 (tests)** `ValidateManagedConfigSources` (fleet/per-agent reserved-key → fail; JSON5 →
+  tolerated; clean → pass); `CheckCustomConfigEgress` (missing host flagged, wildcard match, cross-layer
+  dedup, no-MCP/unparseable → nil). Green.
 
 ## Phase 7 — Effective-config view (architect-recommended; Interface Parity if shipped)
 - [ ] **T7.1** `conga agent show-config <name>` → render the effective merged config (root + 3 includes).
