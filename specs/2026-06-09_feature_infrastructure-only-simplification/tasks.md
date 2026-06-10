@@ -20,10 +20,9 @@
 - [x] **T2.4** AWS: create-if-absent in `regenerateAgentConfigOnInstance`; **re-protect root:root
   0444** after the recursive chown (read-only to agent uid on the hardened provider).
 - [ ] **T2.5** Tests per provider (deferred to P6).
-- [ ] **T2.6 (NEW)** AWS bootstrap `user-data.sh.tftpl`: the boot-time bash-generated openclaw.json
-  does not yet emit `$include`/create the include. Self-heals on first `conga refresh` (Go path);
-  add `$include` + include creation to the bootstrap bash for fresh-deploy correctness. (tftpl =
-  no provider release.)
+- [x] **T2.6** AWS bootstrap `user-data.sh.tftpl`: after the cp to the data dir, inject `$include`
+  via `jq` and create `agent-custom.json` (root:root 0444); re-baseline the integrity hash from the
+  post-`$include` `openclaw.json`. Fresh AWS deploys now layer correctly (not just post-refresh).
 
 ## Phase 3 — Integrity (security-critical) ✅ Go-side DONE; AWS-bash remaining
 - [x] **T3.1** Root-hash baseline unchanged (target `openclaw.json`); `agent-custom.json` not hashed.
@@ -35,9 +34,11 @@
   refresh-time hash check.
 - [x] **T3.3** Security regression test: `custom_config_test.go` flags injected `channels` (+ gateway,
   plugins, $include) and the JSON5-unparseable case.
-- [ ] **T3.4 (remaining)** AWS: add the same check to the `check-config-integrity.sh` systemd-timer
-  script in `user-data.sh.tftpl` (jq: alert if agent-custom.json has `.channels/.gateway/.plugins`).
-  tftpl edit — no provider release. **Re-audit at the post-implementation security gate.**
+- [x] **T3.4** AWS: `check-config-integrity.sh` now also validates each agent's `agent-custom.json`
+  via jq — CONFIG_INTEGRITY_VIOLATION (systemd-cat warning) if it declares
+  `$include/channels/gateway/plugins`, WARN if it's not valid JSON. jq fragments verified locally
+  (literal `$include` key, no false positives on `{}`/mcp, lists injected keys, WARN on invalid).
+  **Still to re-audit at the post-implementation security gate.**
 - [ ] **T3.5 (hardening, optional)** Authoritative JSON5-aware variant: `openclaw config get channels`
   in-container compared to the agent record, closing the JSON5-evasion gap noted in T3.2.
 

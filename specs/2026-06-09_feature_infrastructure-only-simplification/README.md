@@ -45,6 +45,8 @@ standard `openclaw.json` once at provision time, then let administrators customi
 
 - **2026-06-09** — Impl P3 (security) + P4 (rebaseline) + docs landed (PR #57, commits through `cb9cd23`). P3: `common.ValidateAgentCustomConfig` forbids the include from declaring Conga-owned keys (`$include`/`channels`/`gateway`/`plugins`) — the load-bearing channel-allowlist control — wired into local+remote `RunIntegrityCheck` (JSON5-safe: surfaces `ErrCustomConfigUnparseable`, no unsafe comment-stripping). P4: `Provider.ResetAgentCustomConfig` (3 impls) + `conga agent rebaseline` (CLI+JSON+MCP). Docs: `config-taxonomy.md` gains the `agent-custom.json` locus (resolves gate `should` warning). **Remaining**: T3.4 AWS `check-config-integrity.sh` (tftpl jq), T2.6 AWS bootstrap `$include`+include creation (tftpl), T5.2 first-refresh advisory, T6.1/6.2 integration tests, T6.3 live verify (→ `/glados:verify-feature` + post-impl security gate). Full Go suite + vet clean.
 
+- **2026-06-09** — AWS portion landed (T2.6 + T3.4, `user-data.sh.tftpl`). Bootstrap now injects `$include` via `jq` into the data-dir `openclaw.json`, creates `agent-custom.json` (root:root 0444), and re-baselines the integrity hash from the post-`$include` file. `check-config-integrity.sh` gained the reserved-key guard (jq: ALERT on `$include/channels/gateway/plugins`, WARN on invalid JSON). jq fragments verified locally. No `${}` interpolation hazards introduced; bare `$VAR` per tftpl convention. tftpl change → no provider release. **All providers now at parity.** Remaining: T5.2 advisory, T6.1/6.2 integration tests, T6.3 live verify (→ `/glados:verify-feature` + security re-audit).
+
 ## Spec Review & Standards Gate (pre-implementation)
 
 ### Persona Review
