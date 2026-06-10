@@ -47,6 +47,36 @@ standard `openclaw.json` once at provision time, then let administrators customi
 
 - **2026-06-09** — AWS portion landed (T2.6 + T3.4, `user-data.sh.tftpl`). Bootstrap now injects `$include` via `jq` into the data-dir `openclaw.json`, creates `agent-custom.json` (root:root 0444), and re-baselines the integrity hash from the post-`$include` file. `check-config-integrity.sh` gained the reserved-key guard (jq: ALERT on `$include/channels/gateway/plugins`, WARN on invalid JSON). jq fragments verified locally. No `${}` interpolation hazards introduced; bare `$VAR` per tftpl convention. tftpl change → no provider release. **All providers now at parity.** Remaining: T5.2 advisory, T6.1/6.2 integration tests, T6.3 live verify (→ `/glados:verify-feature` + security re-audit).
 
+- **2026-06-09** — `/glados:verify-feature` complete. Automated (suite+lint green), live acceptance (MCP-in-include survives restart on `aaron`) + integrity-guard verified on host jq, persona APPROVE, **post-impl standards gate PASS** (one documented residual). Spec retrospection recorded divergences in `spec.md` §14a. Added MCP-tool test `TestRebaselineAgent_Success` (sibling-parity gap). `PROJECT_STATUS` #30 + Recent Changes + ROADMAP updated. **Status: Implemented + Verified; pending merge of PR #57, provider release, deployed-path verification, and the T5.2 first-refresh advisory.**
+
+## Verification (`/glados:verify-feature`, 2026-06-09)
+
+### Automated
+- `gofmt -l` clean; `go vet ./...` clean (only pre-existing modernize hints in untouched code).
+- Full suite: **all 20 packages pass**. New tests: `$include` generation, `ValidateAgentCustomConfig` (incl. JSON5-unparseable), local `ensureAgentCustomConfig` + `ResetAgentCustomConfig`.
+
+### Live acceptance (on `aaron`, image `2026.5.26`; backed up + byte-exact restored, integrity baseline re-MATCH)
+- **MCP-in-include survives restart** ✅ — wrote `agent-custom.json` = `{mcp.servers.linear}` + `$include` into the managed root, `systemctl restart conga-aaron`, then `openclaw config get mcp.servers.linear.url` still resolved and the agent reached `ready`. This is the feature's acceptance criterion.
+- **Integrity guard works on the host's actual `jq`** ✅ — the clean mcp include passes (empty match, no false positive); a simulated `{"channels":{...}}` include is flagged (`channels`). Confirms the T3.4 bootstrap-script logic on AL2023.
+- _Scope caveat_: PR #57 is not yet deployed to the host, so this verifies the **end-state the feature produces** + the guard logic, not the deployed Go/bootstrap code path. Full deployed-path verification happens after the provider release + host cycle.
+
+### Persona verification
+- **Architect** — APPROVE. Fits the provider contract (all 3), `Own the box, not the behavior` principle realized; new `Runtime.CustomConfigFileName()` is a clean seam; no new external deps.
+- **QA** — APPROVE with noted gaps: remote/AWS `ensureAgentCustomConfig`/`ResetAgentCustomConfig` are integration-level (not unit-tested), consistent with sibling lifecycle ops (PauseAgent etc.). The security regression (injected-channel detection) is covered for the Go validator + verified live for the AWS jq path.
+- **PM** — APPROVE. Acceptance criterion met live; operator UX change (edit the include / `config set` fails closed) documented in config-taxonomy.
+
+### Standards Gate (post-implementation) — security re-audit
+| Standard | Verdict |
+|---|---|
+| security.md — channel allowlist boundary | ✅ PASS — include forbidden from declaring `channels` (Go validator local/remote + AWS jq, **verified live**); AWS re-protects `agent-custom.json` root:root 0444 so uid 1000 can't inject. **Residual**: an attacker writing JSON5 evades the key-name check (surfaced as WARN, not blocked) — compensated by AWS perms; the optional in-container `openclaw config get` variant (T3.5) would close it. Acceptable, documented. |
+| security.md — secrets via env not config (#9627) | ✅ PASS (unchanged; include is mode 0444, not a secret store — documented) |
+| architecture.md — Agent Data Safety | ✅ PASS — config-only; verified no data-dir mutation; `rebaseline` backs up only the include |
+| architecture.md — Interface Parity | ✅ PASS — `rebaseline` CLI+JSON+MCP |
+| architecture.md — Provider contract / Channel abstraction | ✅ PASS — all 3 providers; allowlist check keys off platform-agnostic bindings/keys |
+| config-taxonomy.md doc sync | ✅ RESOLVED (new locus + Example 6) |
+
+**Gate decision: PASS.** One documented residual (JSON5 key-name evasion) tracked as optional hardening T3.5; not blocking given the AWS perm control + WARN surfacing.
+
 ## Spec Review & Standards Gate (pre-implementation)
 
 ### Persona Review

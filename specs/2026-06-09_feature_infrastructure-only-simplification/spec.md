@@ -276,6 +276,31 @@ implementation but no change planned).
    `channels` cheaply in each (local/remote: in-container `openclaw config get`; AWS: SSM exec or
    compare merged file). Define the alert path (reuse the integrity-violation log/journal).
 
+## 14a. Implementation notes (verify-feature retrospection, 2026-06-09)
+
+Divergences from this spec, all intentional and verified:
+
+- **§5.5 integrity — stricter than specified.** Spec called for "validate the effective merged
+  channel allowlist against the agent record." Implemented instead as
+  `common.ValidateAgentCustomConfig`: the include must not declare ANY Conga-owned top-level key
+  (`$include`/`channels`/`gateway`/`plugins`). This is simpler and stronger (forbids the whole
+  security-boundary surface, not just channel diffs) and avoids resolving merges in Go. Wired into
+  local + remote `RunIntegrityCheck` and the AWS `check-config-integrity.sh` (jq).
+- **New seam:** `Runtime.CustomConfigFileName()` (openclaw→`agent-custom.json`, hermes→`""`) gates
+  all include behavior cleanly per runtime (not in the original §5 plan).
+- **Self-healing on every root write** (not just provision) — driven by the verified C1 finding
+  that a missing `$include` target invalidates the whole config. Each provider's
+  `ensureAgentCustomConfig` runs after provision/refresh/bind.
+- **Perms reality:** AWS re-protects `agent-custom.json` root:root 0444 (verified). Local creates
+  0644 (operator-owned); remote ends up uid-1000-owned after its recursive chown — so the §5.5
+  detection control is load-bearing there, as anticipated.
+- **JSON5 limitation (documented residual):** the key-name check strict-parses and surfaces
+  `ErrCustomConfigUnparseable` / a WARN rather than risk unsafe comment-stripping (URLs contain
+  `//`). An attacker writing JSON5 evades the key-name check (WARN, not blocked); compensated by
+  AWS perms. Optional hardening: in-container `openclaw config get channels` (tasks T3.5).
+- **Verified live** on `aaron`/`2026.5.26`: MCP-in-include survives restart; the integrity jq guard
+  flags an injected `channels` and passes a clean mcp include.
+
 ## 15. Handoff
 
 `/glados:implement-feature` — implement §5 across `pkg/runtime/openclaw`, the three providers, the

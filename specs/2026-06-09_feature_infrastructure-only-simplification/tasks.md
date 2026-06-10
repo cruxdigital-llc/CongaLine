@@ -63,6 +63,8 @@
   warn-only by default, `--strict-validate` makes it fatal. (May defer per open checkpoint #4.)
 
 ## Phase 6 — Integration / live / docs
+> Verify-feature (2026-06-09): T6.3 live acceptance + integrity guard verified on `aaron`;
+> T6.4 docs done; T6.1/6.2 formal integration tests still to write; MCP-tool test added.
 - [ ] **T6.1** Integration (acceptance): add `mcp.servers.linear` to include → `conga refresh` →
   persists AND a channel bind still applies to root.
 - [ ] **T6.2** Migration integration: pre-existing agent → first refresh → root gains `$include`,
