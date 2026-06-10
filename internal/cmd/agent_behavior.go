@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
+	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -69,6 +71,23 @@ will fall back to the shared default for that file.`,
 		RunE:  agentBehaviorDiffRun,
 	}
 
+	showConfigCmd := &cobra.Command{
+		Use:   "show-config <agent>",
+		Short: "Show the agent's layered OpenClaw config ($include precedence)",
+		Long: `Display the agent's effective OpenClaw config as its precedence-ordered
+$include layers (feature #31), read live from the running container:
+
+  1. openclaw.json            managed root      (Conga)    — wins over all
+  2. agent-custom.json        admin drift       (admin)
+  3. agent-managed-custom.json per-agent        (operator)
+  4. fleet-custom.json        fleet baseline    (operator) — lowest
+
+OpenClaw deep-merges the includes under the root (later in the array wins, the
+root wins over every include). Use --output json for the structured view.`,
+		Args: cobra.ExactArgs(1),
+		RunE: agentShowConfigRun,
+	}
+
 	rebaselineCmd := &cobra.Command{
 		Use:   "rebaseline <agent>",
 		Short: "Reset an agent's customization file to the generated baseline",
@@ -83,8 +102,75 @@ This discards admin config drift (e.g. an added MCP server). Agent data
 	}
 	rebaselineCmd.Flags().BoolVar(&rebaselineYes, "yes", false, "Skip the confirmation prompt")
 
-	agentBehaviorCmd.AddCommand(listCmd, addCmd, rmCmd, showCmd, diffCmd, rebaselineCmd)
+	agentBehaviorCmd.AddCommand(listCmd, addCmd, rmCmd, showCmd, diffCmd, showConfigCmd, rebaselineCmd)
 	rootCmd.AddCommand(agentBehaviorCmd)
+}
+
+// agentConfigReader returns a content reader for an agent's deployed config
+// layer files, reading them live from the running container via ContainerExec.
+// A `cat` failure (missing file) reports the layer as absent.
+func agentConfigReader(ctx context.Context, agentName string, rt runtime.Runtime) func(string) ([]byte, bool) {
+	return func(file string) ([]byte, bool) {
+		out, err := prov.ContainerExec(ctx, agentName, []string{"cat", filepath.Join(rt.ContainerDataPath(), file)})
+		if err != nil {
+			return nil, false
+		}
+		return []byte(out), true
+	}
+}
+
+func agentShowConfigRun(cmd *cobra.Command, args []string) error {
+	ctx, cancel := commandContext()
+	defer cancel()
+
+	agentName := args[0]
+	if err := validateAgentName(agentName); err != nil {
+		return err
+	}
+	agentCfg, err := prov.GetAgent(ctx, agentName)
+	if err != nil {
+		return fmt.Errorf("agent %q not found: %w", agentName, err)
+	}
+	rt, err := runtime.Get(runtime.ResolveRuntime(agentCfg.Runtime, ""))
+	if err != nil {
+		return fmt.Errorf("unknown runtime: %w", err)
+	}
+
+	specs := common.EffectiveConfigSpecs(rt)
+	layers := common.BuildConfigLayers(specs, agentConfigReader(ctx, agentName, rt))
+
+	if ui.OutputJSON {
+		ui.EmitJSON(struct {
+			Agent   string               `json:"agent"`
+			Runtime string               `json:"runtime"`
+			Layers  []common.ConfigLayer `json:"layers"`
+		}{Agent: agentName, Runtime: string(rt.Name()), Layers: layers})
+		return nil
+	}
+
+	fmt.Printf("Effective config layers for %s (%s) — precedence high → low:\n\n", agentName, rt.Name())
+	for _, l := range layers {
+		status := "absent"
+		if l.Present {
+			status = "present"
+		}
+		fmt.Printf("[%d] %-26s %-14s owner=%s (%s)\n", l.Precedence, l.File, l.Role, l.Owner, status)
+		if l.Present {
+			if len(l.Content) > 0 {
+				pretty, perr := json.MarshalIndent(json.RawMessage(l.Content), "      ", "  ")
+				if perr == nil {
+					fmt.Printf("      %s\n", string(pretty))
+				} else {
+					fmt.Printf("      (unparseable JSON; manual review)\n")
+				}
+			} else {
+				fmt.Printf("      (present but not strict JSON; manual review)\n")
+			}
+		}
+		fmt.Println()
+	}
+	fmt.Println("OpenClaw merges includes under the root (later in the array wins; root wins over all).")
+	return nil
 }
 
 // agentBehaviorDir returns the directory that holds per-agent overlay

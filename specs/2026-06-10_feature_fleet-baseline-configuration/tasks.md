@@ -78,9 +78,15 @@
   tolerated; clean → pass); `CheckCustomConfigEgress` (missing host flagged, wildcard match, cross-layer
   dedup, no-MCP/unparseable → nil). Green.
 
-## Phase 7 — Effective-config view (architect-recommended; Interface Parity if shipped)
-- [ ] **T7.1** `conga agent show-config <name>` → render the effective merged config (root + 3 includes).
-  CLI + JSON schema + MCP tool. (May fast-follow if scope is tight — decide in review.)
+## Phase 7 — Effective-config view ✅ DONE (layered view; operator-chosen approach)
+- [x] **T7.1** `conga agent show-config <agent>` renders the **layered view** (operator decision
+  2026-06-10): the 4 deployed layers read live from the container via `ContainerExec`, each labeled
+  with precedence rank + role + owner — NOT a synthesized merge (no risk of diverging from OpenClaw).
+  Interface Parity: **CLI** (`agent show-config`) + **JSON** (`--output json`) + **MCP**
+  (`conga_agent_show_config`, ReadOnlyHint). Shared pure builder `common.EffectiveConfigSpecs` +
+  `common.BuildConfigLayers` (decoupled from openclaw; string-keyed role map). Tests:
+  spec ordering (openclaw 4 layers, hermes root-only), layer build (precedence/present/content
+  classification), MCP tool registered + callable. Green.
 
 ## Phase 8 — Migration + docs
 - [ ] **T8.1** First refresh under this feature rewrites `$include` from #30's 1-element to the

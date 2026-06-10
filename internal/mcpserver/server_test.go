@@ -553,6 +553,7 @@ func TestToolsErrorPropagation(t *testing.T) {
 		{"conga_whoami", nil},
 		{"conga_list_agents", nil},
 		{"conga_get_agent", map[string]any{"agent_name": "x"}},
+		{"conga_agent_show_config", map[string]any{"agent_name": "x"}},
 		{"conga_get_status", map[string]any{"agent_name": "x"}},
 		{"conga_get_logs", map[string]any{"agent_name": "x"}},
 		{"conga_get_proxy_logs", map[string]any{"agent_name": "x"}},
