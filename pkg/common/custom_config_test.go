@@ -2,8 +2,12 @@ package common
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 )
 
 func TestValidateAgentCustomConfig(t *testing.T) {
@@ -49,5 +53,42 @@ func TestValidateAgentCustomConfig_JSON5Unparseable(t *testing.T) {
 	err := ValidateAgentCustomConfig([]byte(in))
 	if !errors.Is(err, ErrCustomConfigUnparseable) {
 		t.Fatalf("want ErrCustomConfigUnparseable, got %v", err)
+	}
+}
+
+func TestResolveCustomConfigSources(t *testing.T) {
+	dir := t.TempDir()
+	// fleet source for openclaw runtime
+	fleetDir := filepath.Join(dir, "_defaults", "openclaw")
+	if err := os.MkdirAll(fleetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fleetDir, "fleet-custom.json"), []byte(`{"skills":{"allow":["github"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// per-agent source
+	agDir := filepath.Join(dir, "a1")
+	if err := os.MkdirAll(agDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agDir, "custom.json"), []byte(`{"mcp":{"servers":{"x":{}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ResolveCustomConfigSources(dir, provider.AgentConfig{Name: "a1", Runtime: "openclaw"})
+	if string(got.Fleet) != `{"skills":{"allow":["github"]}}` {
+		t.Errorf("fleet = %q", got.Fleet)
+	}
+	if string(got.PerAgent) != `{"mcp":{"servers":{"x":{}}}}` {
+		t.Errorf("perAgent = %q", got.PerAgent)
+	}
+
+	// agent with no per-agent source, different name → fleet still resolves, perAgent nil
+	got2 := ResolveCustomConfigSources(dir, provider.AgentConfig{Name: "nope", Runtime: "openclaw"})
+	if got2.Fleet == nil {
+		t.Error("fleet should resolve for any agent of the runtime")
+	}
+	if got2.PerAgent != nil {
+		t.Errorf("perAgent should be nil when absent, got %q", got2.PerAgent)
 	}
 }

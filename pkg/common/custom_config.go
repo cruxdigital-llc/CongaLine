@@ -4,9 +4,49 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
+
+// CustomConfigSources holds the committed declarative custom-config layers for an
+// agent (feature #31): the fleet baseline (applies to all agents) and the
+// per-agent file. Each field is the raw source content, or nil if the source is
+// absent — in which case the provider deploys "{}" (the $include target must
+// exist or the whole config is invalid). These are deployed beside openclaw.json
+// as fleet-custom.json / agent-managed-custom.json and merged via $include.
+type CustomConfigSources struct {
+	Fleet    []byte // agents/_defaults/<runtime>/fleet-custom.json (all agents)
+	PerAgent []byte // agents/<name>/custom.json (one agent)
+}
+
+// FleetCustomSourceName / PerAgentCustomSourceName are the committed source file
+// names (distinct from the deployed names in pkg/runtime/openclaw).
+const (
+	FleetCustomSourceName    = "fleet-custom.json"
+	PerAgentCustomSourceName = "custom.json"
+)
+
+// ResolveCustomConfigSources reads the committed declarative custom-config
+// sources for an agent from behaviorDir (the operator's agents/ tree — resolve
+// with ResolveOperatorBehaviorDir). Missing sources yield nil (deploy "{}").
+// Fleet config is per-runtime and NOT type-specific (applies to every agent of
+// that runtime).
+func ResolveCustomConfigSources(behaviorDir string, agent provider.AgentConfig) CustomConfigSources {
+	rtName := string(runtime.ResolveRuntime(agent.Runtime, ""))
+	var s CustomConfigSources
+	if data, err := os.ReadFile(filepath.Join(behaviorDir, defaultsSubdir, rtName, FleetCustomSourceName)); err == nil {
+		s.Fleet = data
+	}
+	if data, err := os.ReadFile(filepath.Join(behaviorDir, agent.Name, PerAgentCustomSourceName)); err == nil {
+		s.PerAgent = data
+	}
+	return s
+}
 
 // ReservedCustomConfigKeys are the top-level openclaw.json keys Conga owns and
 // that the admin-owned customization file (agent-custom.json, the "$include"
