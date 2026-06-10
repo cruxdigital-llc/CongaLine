@@ -68,8 +68,9 @@
   empty include created, healthy.
 - [ ] **T6.3** Live verify (AWS, in verify-feature): MCP-server-in-include survives `systemctl
   restart` (mechanics already proven on `aaron`).
-- [ ] **T6.4** Docs: update `product-knowledge/standards/config-taxonomy.md` (new `agent-custom.json`
-  locus — resolves the gate's `should` warning); operator note on the `config set` fail-closed UX.
+- [x] **T6.4** Docs: `config-taxonomy.md` updated — new "Runtime customization (admin)" row +
+  Example 6 (add Linear MCP) + the `config set` fail-closed operator note. Resolves the gate's
+  `should` warning.
 
 ## Open checkpoints to resolve during impl (from spec §14)
 - [ ] **C1** OpenClaw behavior when `$include` target is **absent** (drives "always create `{}`").

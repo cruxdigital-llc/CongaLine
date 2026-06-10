@@ -19,6 +19,7 @@ create a new config file/format without consulting the decision rule below.
 | **Infrastructure** | Agent existence, gateway port, egress allowlist (incl. private IPs), channel bindings, secret values, host resources | `terraform/environments/<env>/terraform.tfvars` `agents = {}` map | HCL (Terraform) | AWS (declarative). Local/remote use CLI flags (`conga admin add-user`). | Operator. Gitignored — only `.example` is committed. |
 | **Cluster policy** | Egress allow/deny lists, routing rules, posture (enforce/validate), drift detection | `~/.conga/conga-policy.yaml` with per-agent overrides under `agents.<name>.*` | YAML | All providers | Operator. Lifecycle via `conga policy {validate,deploy,drift}`. Egress overrides are **additive** with the global lists (see `standards/egress-controls.md` — *Global + agent policies are additive*); routing and posture overrides still replace. |
 | **Runtime overlay** | Model (provider, name, base_url), **subagents** (in-runtime delegation — secondary model + behavior knobs), prompts (SOUL/AGENTS/USER), future: memory, tools, limits, multi-modal model refs, fallback chains | `agents/<name>/agent.yaml` + `agents/<name>/*.md` | YAML + Markdown | All providers (provider-agnostic; same files produce same runtime config on local/remote/AWS) | Operator. Gitignored at the per-agent dir level — only `agents/_example/` and `agents/_defaults/` (role packages + runtime/type defaults) are committed. |
+| **Runtime customization (admin)** | Any OpenClaw config Conga does **not** manage — `mcp.servers`, `skills`, `tools.allow/deny`, `agents.defaults.sandbox`, `memorySearch`, `ui`, `cron`, etc. | `agent-custom.json` in the agent **data dir** (`~/.conga/data/<name>/` local, `/opt/conga/data/<name>/` remote/AWS), referenced from the managed `openclaw.json` via `$include` | JSON (JSON5 tolerated by OpenClaw) | All providers (OpenClaw deep-merges; the managed root wins on Conga-owned scalar keys) | **Provider materializes it empty (`{}`); the administrator edits it in place.** Conga never overwrites it except `conga agent rebaseline`. Must **not** declare Conga-owned keys (`$include`/`channels`/`gateway`/`plugins`) — enforced by the integrity check. See `specs/2026-06-09_feature_infrastructure-only-simplification/`. |
 | **Runtime persistence** | Identity (name, type, runtime choice, allocated port, channel binding state) | `~/.conga/agents/<name>.json` (local) / `/opt/conga/agents/<name>.json` (remote) / SSM `/conga/agents/<name>` (AWS) | JSON | Per-provider | **Materialized by the provider** at provision time, not hand-edited. |
 | **Secrets** | API keys, OAuth tokens, channel bot tokens | Files mode 0400 (`~/.conga/secrets/agents/<name>/<key>` on local/remote) or AWS Secrets Manager (`conga/agents/<name>/<key>` on AWS) | Native | Per-provider | Operator. Authored via tfvars (AWS) or `conga secrets set` (local/remote). Never in git. |
 
@@ -86,6 +87,16 @@ Walk the rule:
    ```
    The five-role catalog at `agents/_defaults/<runtime>/role-*/` ships exactly this shape — the operator can copy one of the canonical roles by running `conga admin add-user --role role-code-dev <name>` (or `--role role-writing`). The CLI copies the role's `agent.yaml`, `SOUL.md`, `AGENTS.md`, and `USER.md.tmpl` into `agents/<name>/`, preserving any pre-existing customization.
 4. Credential? The orchestrator's Anthropic API key flows through the existing `anthropic-api-key` secret. If the subagent's provider is `openai`, its key flows through the existing `openai-api-key` secret. **No new secret names are introduced for subagents** — the secret-name → env-var mapping is unchanged.
+
+### Example 6: "I want to add the Linear MCP server to agent X"
+Walk the rule:
+1. Affects AWS infra? Only the endpoint's **reachability** — the MCP host must be in the egress allowlist (tfvars/policy), same as any new endpoint.
+2. Policy decision? No.
+3. Runtime-consumed, operator-authored, provider-agnostic, **and modeled by Conga**? No — Conga deliberately does **not** model `mcp.servers` (it would be endless to model every OpenClaw config concern). This is **Runtime customization (admin)** → edit **`agent-custom.json`** in the agent data dir directly:
+   ```json
+   { "mcp": { "servers": { "linear": { "url": "https://mcp.linear.app/sse", "transport": "sse" } } } }
+   ```
+   OpenClaw `$include`-merges it under the managed `openclaw.json`; the edit survives restarts and `conga refresh` (Conga never overwrites the include). To discard it and return to baseline: `conga agent rebaseline <name>`. Do **not** put `channels`/`gateway`/`plugins` here — those are Conga-owned and the integrity check flags them. Note: with a root `$include`, in-container `openclaw config set` fails closed — edit `agent-custom.json` directly or use the Conga CLI.
 
 ## Why three layers (overlay vs policy vs infra) instead of one?
 

@@ -307,7 +307,7 @@ No new Conga data-model concept.
   fix worktree-vs-parent CWD silent-wrong in
   `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()`
 
-### 30. Infrastructure-Only Simplification — Specified, Ready for Implementation
+### 30. Infrastructure-Only Simplification — Implementation In Progress (P1–P4 + P3 Go landed)
 - **Goal**: narrow Conga to infra + a one-time baseline config; let administrators customize each
   agent's `openclaw.json` (e.g. add the Linear MCP server) with edits that **survive restarts/refresh**.
 - **Problem**: config generation is stateless full-file regeneration on every
