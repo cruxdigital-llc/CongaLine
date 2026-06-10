@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 
 	// Register the openclaw runtime so runtime.Get / runtimeForAgent resolve.
@@ -141,6 +142,82 @@ func TestCheckManagedIncludeIntegrity_DetectsTamper(t *testing.T) {
 	err := p.checkManagedIncludeIntegrity(context.Background(), "a1")
 	if err == nil || !strings.Contains(err.Error(), "fleet-custom.json") {
 		t.Fatalf("on-host tamper not detected: %v", err)
+	}
+}
+
+// TestDeployManagedCustomConfig covers feature #31 T4.5/T9.1: the deploy writes
+// the fleet + per-agent layers from committed sources (or "{}"), re-syncs them on
+// each call (propagation), never touches the admin-drift agent-custom.json, and
+// fails closed on a reserved-key fleet source (blast radius).
+func TestDeployManagedCustomConfig(t *testing.T) {
+	p := &LocalProvider{dataDir: t.TempDir()}
+	rt, err := runtime.Get(runtime.RuntimeOpenClaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := provider.AgentConfig{Name: "a1", Runtime: "openclaw", Type: provider.AgentTypeUser}
+	dataDir := p.dataSubDir("a1")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fleetDir := filepath.Join(p.behaviorDir(), "_defaults", "openclaw")
+	if err := os.MkdirAll(fleetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	perAgentDir := filepath.Join(p.behaviorDir(), "a1")
+	if err := os.MkdirAll(perAgentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fleetSrc := filepath.Join(fleetDir, "fleet-custom.json")
+	perAgentSrc := filepath.Join(perAgentDir, "custom.json")
+
+	// 1. No sources → both managed files deployed as "{}".
+	if err := p.deployManagedCustomConfig(rt, cfg, dataDir); err != nil {
+		t.Fatalf("deploy (empty): %v", err)
+	}
+	for _, f := range []string{"fleet-custom.json", "agent-managed-custom.json"} {
+		b, _ := os.ReadFile(filepath.Join(dataDir, f))
+		if strings.TrimSpace(string(b)) != "{}" {
+			t.Fatalf("%s should be {} when no source, got %q", f, b)
+		}
+	}
+
+	// 2. With sources → deployed from source; re-sync overwrites prior content.
+	if err := os.WriteFile(fleetSrc, []byte(`{"skills":{"allow":["github"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(perAgentSrc, []byte(`{"mcp":{"servers":{"x":{}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Admin drift present — must survive the managed deploy untouched.
+	adminPath := filepath.Join(dataDir, "agent-custom.json")
+	admin := []byte(`{"tools":{"allow":["bash"]}}`)
+	if err := os.WriteFile(adminPath, admin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.deployManagedCustomConfig(rt, cfg, dataDir); err != nil {
+		t.Fatalf("deploy (sources): %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dataDir, "fleet-custom.json")); !strings.Contains(string(b), "github") {
+		t.Errorf("fleet not synced from source: %s", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dataDir, "agent-managed-custom.json")); !strings.Contains(string(b), "mcp") {
+		t.Errorf("per-agent not synced from source: %s", b)
+	}
+	if b, _ := os.ReadFile(adminPath); string(b) != string(admin) {
+		t.Errorf("admin-drift agent-custom.json was modified by managed deploy: %s", b)
+	}
+
+	// 3. Reserved-key fleet source → fail closed (deploy aborts before writing).
+	if err := os.WriteFile(fleetSrc, []byte(`{"channels":{"slack":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.deployManagedCustomConfig(rt, cfg, dataDir); err == nil {
+		t.Fatal("reserved-key fleet source should fail the deploy closed")
+	}
+	// The prior good fleet content must remain (no partial write of the bad file).
+	if b, _ := os.ReadFile(filepath.Join(dataDir, "fleet-custom.json")); !strings.Contains(string(b), "github") {
+		t.Errorf("failed deploy should not have overwritten fleet-custom.json: %s", b)
 	}
 }
 

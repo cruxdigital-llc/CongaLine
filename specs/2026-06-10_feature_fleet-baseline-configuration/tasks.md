@@ -100,10 +100,16 @@
   Example 6 (Linear MCP) to present the layer choice. Header date bumped.
 
 ## Phase 9 — Integration / live / release
-- [ ] **T9.1** Integration: fleet file → lands on all agents on refresh; per-agent overrides fleet;
-  admin overrides per-agent; bad fleet file rejected pre-deploy.
-- [ ] **T9.2** Live (in `/glados:verify-feature`): fleet propagation + override precedence on the fleet.
-- [ ] **R1** `terraform-provider-conga` release after merge.
+- [x] **T9.1 (Go-testable parts)** Provider deploy test (`TestDeployManagedCustomConfig`): fleet +
+  per-agent deployed from sources (or `{}`), re-synced each call (propagation), admin-drift
+  agent-custom.json untouched, **bad fleet source fails closed** (no partial write). The override
+  *precedence* itself (per-agent over fleet, admin over per-agent) is the OpenClaw runtime merge —
+  live-verified in the foundation probe and re-checked in T9.2. Generator array order tested in
+  `config_test.go`.
+- [ ] **T9.2 (verify-feature)** Live: fleet file lands on all agents on `refresh-all`; per-agent
+  `custom.json` overrides the fleet entry; admin drift still wins; integrity flags a reserved key in
+  each layer; `show-config` renders the 4 layers. Run in `/glados:verify-feature`.
+- [ ] **R1 (post-merge)** `terraform-provider-conga` release (this PR touches `pkg/`).
 
 ## Open checkpoints (spec §12)
 - [ ] **C1** Final file names (avoid `custom.json` / `agent-custom.json` / `agent-managed-custom.json`
