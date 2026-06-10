@@ -307,6 +307,33 @@ No new Conga data-model concept.
   fix worktree-vs-parent CWD silent-wrong in
   `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()`
 
+### 30. Infrastructure-Only Simplification — Planning
+- **Goal**: narrow Conga to infra + a one-time baseline config; let administrators customize each
+  agent's `openclaw.json` (e.g. add the Linear MCP server) with edits that **survive restarts/refresh**.
+- **Problem**: config generation is stateless full-file regeneration on every
+  provision/refresh/restart/bind, so admin edits are wiped. No custom-config injection path exists.
+- **Approach C (recommended, live-validated on `aaron`/`2026.5.26`)**: layered config via OpenClaw's
+  native `$include`. Conga owns the root `openclaw.json` (regenerated wholesale) with `$include` →
+  an admin-owned file edited directly; OpenClaw deep-merges. Confirmed: merges + validates, survives
+  restart + hot-reload, **fails closed (never flattens)** on owned-writes, gateway doesn't owned-write
+  at startup. Trade-off: in-container `openclaw config set`/`configure` refuses root writes while
+  `$include` present (edit the include / use Conga CLI). Beats Approach B (read-merge-write), which
+  would strip admin JSON5 comments. Conga's owned footprint is small: `gateway.*`, bound `channels.*`,
+  `plugins.entries.*`, `agents.defaults.{model,models,subagents}`, team-discipline keys. ~20 of
+  OpenClaw's ~26 sections (mcp, skills, tools.allow/deny, sandbox, memorySearch, cron, hooks, ui,
+  browser, …) are fully admin territory.
+- **`openclaw` CLI considered (Approach D)**: live-tested `openclaw config patch` — validated,
+  version-correct recursive merge with `null`-deletes, runs standalone, but **strips admin JSON5
+  comments** and needs in-container exec per change. Verdict: use the CLI for **read-only validation**
+  (`config validate`/`schema`) against the exact image, **not mutation**; keep file-templating (C) for
+  ownership.
+- **Security-relevant**: changes the config-integrity monitor's whole-file-hash contract →
+  `security.md` review gating implementation.
+- **Status**: `/glados:plan-feature` complete — `requirements.md` + `plan.md` drafted. Key decisions
+  (owned-key set, collection merge semantics, integrity re-scope, re-baseline UX, migration) deferred
+  to `/glados:spec-feature`.
+- See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
