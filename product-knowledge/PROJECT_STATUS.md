@@ -307,7 +307,7 @@ No new Conga data-model concept.
   fix worktree-vs-parent CWD silent-wrong in
   `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()`
 
-### 30. Infrastructure-Only Simplification — ✅ Merged + Released (congaline v0.0.28 / provider v0.1.6); pending deployed-path verification
+### 30. Infrastructure-Only Simplification — ✅ Verified Complete (deployed + live-verified on the AWS fleet)
 - **Goal**: narrow Conga to infra + a one-time baseline config; let administrators customize each
   agent's `openclaw.json` (e.g. add the Linear MCP server) with edits that **survive restarts/refresh**.
 - **Problem**: config generation is stateless full-file regeneration on every
@@ -338,11 +338,14 @@ No new Conga data-model concept.
   the post-implementation security gate. `pkg/` change → provider release.
 - **Shipped (2026-06-09)**: implemented across all three providers + boot tftpl + provision scripts;
   full suite + two clean code reviews; **PR #57 merged → congaline v0.0.28 → provider v0.1.6
-  (on the Terraform Registry) → terraform pinned to 0.1.6 (PR #58)**. Live-verified the mechanism on
-  `aaron` (MCP-in-include survives restart; integrity guard flags an injected channel). **Remaining**:
-  deployed-path verification (cycle the AWS host so v0.1.6 + the new bootstrap actually run), the
-  T5.2 first-refresh operator advisory, and optional hardening (T3.5 in-container allowlist check,
-  T6.1/6.2 integration tests). See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
+  (on the Terraform Registry) → terraform pinned to 0.1.6 (PR #58)**. **Deployed + verified on the
+  AWS fleet (2026-06-10)**: refreshed all 5 agents (aaron, nvidia-team, nathan, zach,
+  nextgen-delivery) through the real `regenerateAgentConfigOnInstance` code path — each got
+  `$include` + a `root:root 0444 agent-custom.json`, model overlays + channel bindings preserved,
+  integrity baselines re-MATCH, the deployed `check-config-integrity.sh` reports OK for all, and all
+  containers came up healthy. **Optional follow-ups** (non-blocking, tracked in `tasks.md`): T5.2
+  first-refresh operator advisory, T3.5 in-container allowlist hardening, T6.1/6.2 integration tests.
+  See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
 - See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
 
 ### Backlog / Upcoming
