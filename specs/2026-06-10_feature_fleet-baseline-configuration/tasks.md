@@ -88,11 +88,16 @@
   spec ordering (openclaw 4 layers, hermes root-only), layer build (precedence/present/content
   classification), MCP tool registered + callable. Green.
 
-## Phase 8 — Migration + docs
-- [ ] **T8.1** First refresh under this feature rewrites `$include` from #30's 1-element to the
-  3-element array; deploy empty managed files; `agent-custom.json` untouched.
-- [ ] **T8.2** `product-knowledge/standards/config-taxonomy.md`: add the fleet + per-agent layers
-  (resolves the gate's `should` warning).
+## Phase 8 — Migration + docs ✅ DONE
+- [x] **T8.1** Migration is **automatic, no code**: the generator unconditionally emits the 3-element
+  `$include` array (tested in `config_test.go`) and the deploy paths always create the empty managed
+  files, so the first refresh under this feature rewrites #30's 1-element form wholesale;
+  `agent-custom.json` is never touched. Backward-compatible by construction.
+- [x] **T8.2** `config-taxonomy.md` updated (resolves the gate's `should` warning): split the
+  customization row into declarative (fleet + per-agent) vs admin-drift; added a "custom-config layers
+  + precedence" subsection (root > admin-drift > per-agent > fleet, `show-config` pointer, which-layer
+  guidance, fail-closed/hash notes); documented the de-embedded `openclaw-defaults.json`; rewrote
+  Example 6 (Linear MCP) to present the layer choice. Header date bumped.
 
 ## Phase 9 — Integration / live / release
 - [ ] **T9.1** Integration: fleet file → lands on all agents on refresh; per-agent overrides fleet;
