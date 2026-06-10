@@ -252,4 +252,43 @@ func (s *Server) toolUnpauseAgent() server.ServerTool {
 	}
 }
 
+func (s *Server) toolRebaselineAgent() server.ServerTool {
+	return server.ServerTool{
+		Tool: mcp.Tool{
+			Name:        "conga_rebaseline_agent",
+			Description: "Reset an agent's admin-owned customization file (agent-custom.json) back to the generated baseline. Backs up the current file to a timestamped .bak, empties it to {}, and refreshes the agent. Discards admin config drift (e.g. added MCP servers). Agent data is preserved.",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"agent_name": map[string]any{
+						"type":        "string",
+						"description": "Agent name to rebaseline",
+					},
+				},
+				Required: []string{"agent_name"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				DestructiveHint: boolPtr(true),
+			},
+		},
+		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			agentName, err := req.RequireString("agent_name")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+
+			ctx, cancel := toolCtx(ctx)
+			defer cancel()
+
+			if err := s.prov.ResetAgentCustomConfig(ctx, agentName); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if err := s.prov.RefreshAgent(ctx, agentName); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return okResult(fmt.Sprintf("Agent %q reset to baseline (agent-custom.json backed up and emptied) and refreshed.", agentName)), nil
+		},
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }

@@ -104,9 +104,22 @@ OCCONFIG
 mkdir -p /opt/conga/data/$AGENT_NAME/data/{workspace,memory,logs,agents,canvas,cron,devices,identity,media}
 chown -R 1000:1000 /opt/conga/data/$AGENT_NAME
 cp /opt/conga/config/$AGENT_NAME-config.json /opt/conga/data/$AGENT_NAME/openclaw.json
+# Reference the admin-owned customization include ($include). OpenClaw merges
+# agent-custom.json under this managed root; a missing $include target invalidates
+# the whole config, so always create an empty one. root:root 0444 keeps it
+# read-only to the agent (uid 1000) — which still reads it for $include resolution
+# — so a prompt-injected agent can't inject a channel binding; admins edit it via
+# SSM as root. Never clobber existing admin content.
+jq '. + {"$include": ["agent-custom.json"]}' /opt/conga/data/$AGENT_NAME/openclaw.json > /opt/conga/data/$AGENT_NAME/openclaw.json.tmp \
+  && mv /opt/conga/data/$AGENT_NAME/openclaw.json.tmp /opt/conga/data/$AGENT_NAME/openclaw.json
 chown 1000:1000 /opt/conga/data/$AGENT_NAME/openclaw.json
+[ -e /opt/conga/data/$AGENT_NAME/agent-custom.json ] || printf '{}\n' > /opt/conga/data/$AGENT_NAME/agent-custom.json
+chown root:root /opt/conga/data/$AGENT_NAME/agent-custom.json
+chmod 0444 /opt/conga/data/$AGENT_NAME/agent-custom.json
 
-sha256sum /opt/conga/config/$AGENT_NAME-config.json | cut -d' ' -f1 > /opt/conga/config/$AGENT_NAME-config.json.sha256
+# Config hash baseline — hash the deployed openclaw.json (post-$include) so the
+# periodic integrity check matches what the agent actually loads.
+sha256sum /opt/conga/data/$AGENT_NAME/openclaw.json | cut -d' ' -f1 > /opt/conga/config/$AGENT_NAME-config.json.sha256
 chmod 0444 /opt/conga/config/$AGENT_NAME-config.json.sha256
 
 # Store agent metadata for behavior deployment

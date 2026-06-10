@@ -371,3 +371,30 @@ func (m *refreshAllWarningProvider) RefreshAll(ctx context.Context) error {
 	}
 	return m.mockProvider.RefreshAll(ctx)
 }
+
+// TestRebaselineAgent_Success guards the conga_rebaseline_agent tool wiring:
+// it resets the admin include and refreshes. Mirrors the pause/unpause tool
+// tests (sibling lifecycle ops).
+func TestRebaselineAgent_Success(t *testing.T) {
+	mock := &mockProvider{name: "mock"}
+
+	srv := mcpserver.NewServer(mock, "test")
+	testSrv, err := mcptest.NewServer(t, srv.Tools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer testSrv.Close()
+
+	result := callTool(t, testSrv.Client(), "conga_rebaseline_agent", map[string]any{
+		"agent_name": "agent1",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", textContent(t, result))
+	}
+	if mock.lastAgentName != "agent1" {
+		t.Errorf("expected ResetAgentCustomConfig/RefreshAgent to receive agent1, got %q", mock.lastAgentName)
+	}
+	if text := textContent(t, result); !strings.Contains(text, "baseline") {
+		t.Errorf("rebaseline result should mention baseline, got %q", text)
+	}
+}

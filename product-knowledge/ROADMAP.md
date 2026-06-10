@@ -105,6 +105,7 @@ Fallback chains, cost limits, and cross-provider request-time routing (Bifrost) 
 ## Backlog (Unscheduled)
 
 ### Operational
+- [ ] Admin-customizable agent config — `agent-custom.json` `$include` layering so operators can add MCP servers / skills / tools that survive restarts. **Implemented on PR #57** (verified live on the pinned image); pending merge + `terraform-provider-conga` release + deployed-path verification. See [specs/2026-06-09_feature_infrastructure-only-simplification/](../specs/2026-06-09_feature_infrastructure-only-simplification/).
 - [ ] Per-user SSO permission sets (CongaUser vs CongaAdmin)
 - [ ] Per-user custom SSM documents (each user can only use their own port)
 - [ ] Rewrite Slack router in Go (replace Node.js `router/slack/src/index.js`, land in `channels/slack/`)

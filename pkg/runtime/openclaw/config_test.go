@@ -760,3 +760,61 @@ func TestGenerateConfig_UserAgent_NoChannelDiscipline(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateConfig_IncludesAdminCustomFile(t *testing.T) {
+	// Every generated managed root must reference the admin-owned include via a
+	// relative "$include" so OpenClaw deep-merges agent-custom.json. Verified
+	// across agent types and overlay presence; the directive is purely additive
+	// (the rest of the suite guards the unchanged structure).
+	r := &Runtime{}
+
+	team := baseParams()
+	team.Agent.Type = provider.AgentTypeTeam
+	team.Agent.Channels = []channels.ChannelBinding{{Platform: "slack", ID: "C0123456789"}}
+	team.Secrets.Values = map[string]string{
+		"slack-bot-token":      "xoxb-test",
+		"slack-signing-secret": "secret",
+	}
+
+	overlay := baseParams()
+	overlay.Overlay = &runtime.AgentOverlay{
+		Version: 1,
+		Model: &runtime.ModelOverlay{
+			Provider: runtime.ProviderOllama,
+			Name:     "qwen3:6b",
+			BaseURL:  "http://192.168.181.97:11434",
+		},
+	}
+
+	cases := map[string]runtime.ConfigParams{
+		"user-no-overlay":   baseParams(),
+		"team-with-channel": team,
+		"user-with-overlay": overlay,
+	}
+
+	for name, params := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := r.GenerateConfig(params)
+			if err != nil {
+				t.Fatalf("generate: %v", err)
+			}
+			cfg := decodeJSON(t, out)
+
+			inc, ok := cfg["$include"].([]any)
+			if !ok {
+				t.Fatalf("missing $include array; got %T %+v", cfg["$include"], cfg["$include"])
+			}
+			if len(inc) != 1 || inc[0] != AgentCustomConfigFile {
+				t.Fatalf("$include = %+v, want [%q]", inc, AgentCustomConfigFile)
+			}
+
+			// Purely additive: core managed sections still present alongside it.
+			if _, ok := cfg["gateway"]; !ok {
+				t.Fatalf("gateway section missing after $include injection")
+			}
+			if _, ok := cfg["agents"]; !ok {
+				t.Fatalf("agents section missing after $include injection")
+			}
+		})
+	}
+}

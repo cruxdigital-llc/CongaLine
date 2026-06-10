@@ -307,6 +307,37 @@ No new Conga data-model concept.
   fix worktree-vs-parent CWD silent-wrong in
   `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()`
 
+### 30. Infrastructure-Only Simplification — Implemented + Verified (PR #57); pending merge + provider release
+- **Goal**: narrow Conga to infra + a one-time baseline config; let administrators customize each
+  agent's `openclaw.json` (e.g. add the Linear MCP server) with edits that **survive restarts/refresh**.
+- **Problem**: config generation is stateless full-file regeneration on every
+  provision/refresh/restart/bind, so admin edits are wiped. No custom-config injection path exists.
+- **Approach C (recommended, live-validated on `aaron`/`2026.5.26`)**: layered config via OpenClaw's
+  native `$include`. Conga owns the root `openclaw.json` (regenerated wholesale) with `$include` →
+  an admin-owned file edited directly; OpenClaw deep-merges. Confirmed: merges + validates, survives
+  restart + hot-reload, **fails closed (never flattens)** on owned-writes, gateway doesn't owned-write
+  at startup. Trade-off: in-container `openclaw config set`/`configure` refuses root writes while
+  `$include` present (edit the include / use Conga CLI). Beats Approach B (read-merge-write), which
+  would strip admin JSON5 comments. Conga's owned footprint is small: `gateway.*`, bound `channels.*`,
+  `plugins.entries.*`, `agents.defaults.{model,models,subagents}`, team-discipline keys. ~20 of
+  OpenClaw's ~26 sections (mcp, skills, tools.allow/deny, sandbox, memorySearch, cron, hooks, ui,
+  browser, …) are fully admin territory.
+- **`openclaw` CLI considered (Approach D)**: live-tested `openclaw config patch` — validated,
+  version-correct recursive merge with `null`-deletes, runs standalone, but **strips admin JSON5
+  comments** and needs in-container exec per change. Verdict: use the CLI for **read-only validation**
+  (`config validate`/`schema`) against the exact image, **not mutation**; keep file-templating (C) for
+  ownership.
+- **Security-relevant**: changes the config-integrity monitor's whole-file-hash contract →
+  `security.md` review gating implementation.
+- **Status**: `/glados:spec-feature` complete — `spec.md` drafted, persona-reviewed (architect/PM/QA
+  APPROVE post-amendment), standards gate **PASSED** (all `must` resolved). Decisions locked: Conga
+  owns root + `$include` admin file; root wins on scalar conflicts but objects union (so an include
+  can ADD `channels.*` → security finding) → integrity hashes root **+ validates the effective
+  channel allowlist**; `conga agent rebaseline` (CLI+JSON+MCP); regenerate-fresh migration;
+  `agent-custom.json` read-only to the agent uid. The effective-allowlist control is re-audited at
+  the post-implementation security gate. `pkg/` change → provider release.
+- See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)
@@ -320,6 +351,7 @@ No new Conga data-model concept.
 - Agent defaults (`agents/_defaults/<runtime>/<type>/SOUL.md`, `AGENTS.md`) are manually maintained — will drift on OpenClaw image upgrades and need periodic reconciliation
 
 ## Recent Changes
+- 2026-06-09: Infrastructure-Only Simplification (PR #57, **implemented + verified, pending merge/release**) — Conga now generates a managed `openclaw.json` that `$include`s an admin-owned `agent-custom.json`; OpenClaw deep-merges it (managed root wins on conflicting Conga-owned scalars), so admin customizations (e.g. an `mcp.servers` entry) **survive restarts and `conga refresh`**. New `Runtime.CustomConfigFileName()`; all three providers self-heal the include (`{}` if absent) on every config write — a missing `$include` target invalidates the config (verified live). New `conga agent rebaseline` (CLI+JSON+MCP) backs up + resets the include. Security: `common.ValidateAgentCustomConfig` forbids the include from declaring Conga-owned keys (`$include`/`channels`/`gateway`/`plugins`) — the channel-allowlist boundary — wired into local+remote `RunIntegrityCheck` and the AWS `check-config-integrity.sh` (jq); AWS re-protects the include root:root 0444. **Live-verified on `aaron`/`2026.5.26`**: MCP-in-include survives restart; integrity guard flags an injected channel. Post-impl standards gate PASS (one documented residual: JSON5 key-name evasion → optional in-container `openclaw config get` hardening, tasks T3.5). Whole feature was empirically driven — `$include` semantics, root-wins, fail-closed-on-owned-writes, and object-union all verified on the live image before/during build. Docs: new `config-taxonomy.md` locus + Example 6. **Remaining before "complete": merge PR #57 → `terraform-provider-conga` release → deployed-path live verification + first-refresh operator advisory (T5.2).** See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
 - 2026-05-22: Delegation Routing — two-tier delegation model. **Tier 1 (subagents, ephemeral, in-runtime)**: `agent.yaml` schema bumped to v2 with a new top-level `subagents:` block. OpenClaw generator emits `agents.defaults.subagents.{model, delegationMode, maxConcurrent}` + merges subagent into the models allowlist + extends `models.providers`; Hermes generator emits the `delegation:` block with `max_concurrent_children` / `max_spawn_depth` (Hermes-only knob) + degraded-mode warning for openai endpoints not matching its native provider adapters. Runtime owns the spawn decision via OpenClaw's `sessions_spawn` tool / Hermes' `delegate_task` tool. **Tier 2 (role agents, persistent)**: 5 role packages (`role-ops`/`role-data`/`role-research` Qwen-backed `type: user`; `role-code-dev`/`role-writing` Opus-backed with Qwen subagent, `type: team`) shipped under `agents/_defaults/<runtime>/role-*/`, provisioned via new `conga admin add-user|add-team --role <slug>` (CLI + JSON + MCP parity). **Mid-session bonus**: bumped runtime default Anthropic Opus 4-6 → 4-7. **Live-tested on AWS**: all 5 fleet overlays migrated to v2; aaron deployed on Opus 4.7 + Qwen subagent on Spark LiteLLM; deployed openclaw.json shape verified. **Architectural debt logged** for follow-up: (a) lift `openclaw-defaults.json` out of `//go:embed` so model bumps don't require a binary rebuild + MCP restart; (b) `resolveAWSBehaviorDir()` / `ResolveOperatorBehaviorDir()` silently pick up the wrong `agents/` dir when running from a git worktree. New packages: `pkg/common/egress_check.go` (auto-derive + warn at provision), `pkg/common/role_package.go` (`ApplyRolePackage` + `ResolveOperatorBehaviorDir`). New tests: ~76 across overlay, both generators, CLI, MCP, role-package machinery, role-defaults integrity. 21 packages pass, go vet / gofmt clean. Naming choice documented: matches OpenClaw upstream's "subagent" terminology to avoid colliding with their "delegate" (= org-identity agent) concept. See `specs/2026-05-22_feature_delegation-routing/`.
 - 2026-05-20: Local Model Routing — per-agent LLM override via a new `agents/<name>/agent.yaml` overlay (schema v1, strict-key parsing). Supports `ollama` (native; no `/v1`) and `openai` (OpenAI-compatible; `/v1`) providers. Allowlist is additive — runtime default stays available for `/model` switching, `fallbacks: []` prevents silent auto-failover. New: `pkg/runtime/overlay.go` (types + validation), `pkg/common/overlay_agent.go` (loader), `applyModelOverlay` in `pkg/runtime/openclaw/config.go`. All three providers (local, remote, aws) load the overlay before `GenerateConfig`. New `product-knowledge/standards/config-taxonomy.md` documents the canonical per-agent config split (infra → tfvars, policy → `conga-policy.yaml`, runtime overlay → `agent.yaml`, persistence → JSON/SSM, secrets → secrets store). Live-tested on AWS — a production user agent now defaults to a self-hosted LLM via LiteLLM. Two bugs caught during live testing: missing `models[]` array (OpenClaw schema), clobbering-vs-additive allowlist. 22 packages pass, go vet/gofmt clean. Observation logged for `/glados:recombobulate`: runtime config generators need integration tests against actual runtime schema, not just internal-shape assertions. See `specs/2026-05-19_feature_local-model-routing/`.
 - 2026-04-07: Per-Agent Behavior Configuration — replaced the base + team/user composition model with a simpler two-layer approach: shared defaults at `behavior/default/` and per-agent overrides at `behavior/agents/<name>/`. Agent files fully replace defaults (no concatenation). New CLI: `conga agent {list,add,rm,show,diff}`. Manifest-tracked deployments with deletion reconciliation. Terraform auto-refresh trigger restarts agents when behavior files change. ExecStartPre now syncs deploy-behavior.sh from S3. OpenClaw-only files supported (SOUL.md, AGENTS.md, USER.md) — arbitrary filenames not loaded by OpenClaw. Tested end-to-end on local and AWS. See `specs/2026-04-04_feature_per-agent-config-overlay/`.

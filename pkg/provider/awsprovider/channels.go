@@ -515,6 +515,15 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return fmt.Errorf("failed to upload openclaw.json: %w", err)
 	}
 
+	// Ensure the admin-owned include exists (the "$include" target). A missing
+	// target invalidates the whole OpenClaw config. Create "{}" only if absent —
+	// never clobber admin customization. (Filename = openclaw.AgentCustomConfigFile.)
+	customPath := dataDir + "/agent-custom.json"
+	if _, err := p.runOnInstance(ctx, instanceID,
+		fmt.Sprintf("test -e '%s' || printf '{}\\n' > '%s'", customPath, customPath), 30*time.Second); err != nil {
+		return fmt.Errorf("failed to ensure agent-custom.json: %w", err)
+	}
+
 	// Upload .env
 	envPath := fmt.Sprintf("/opt/conga/config/%s.env", cfg.Name)
 	if err := p.uploadFile(ctx, instanceID, envPath, envContent, "0400"); err != nil {
@@ -524,6 +533,17 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 	// Fix ownership for container user (SFTP uploads create root-owned files)
 	if _, err := p.runOnInstance(ctx, instanceID, fmt.Sprintf("chown -R 1000:1000 '%s'", dataDir), 30*time.Second); err != nil {
 		return fmt.Errorf("failed to fix ownership on %s: %w", dataDir, err)
+	}
+
+	// Re-protect the admin include as read-only to the agent uid. The recursive
+	// chown above made it 1000-owned; root:root 0444 means a prompt-injected
+	// agent (uid 1000) cannot edit agent-custom.json to inject a channel binding
+	// (the allowlist is a security boundary). Admins edit it via SSM as root.
+	// Defense-in-depth — the effective-allowlist integrity check is the
+	// load-bearing control. uid 1000 still reads it (0444), so $include resolves.
+	if _, err := p.runOnInstance(ctx, instanceID,
+		fmt.Sprintf("chown root:root '%s' && chmod 0444 '%s'", customPath, customPath), 30*time.Second); err != nil {
+		return fmt.Errorf("failed to protect agent-custom.json: %w", err)
 	}
 
 	// Refresh the integrity baseline so check-config-integrity.sh doesn't
@@ -647,6 +667,36 @@ mv "$tmp" "$target"`, path, encoded, mode)
 // runOnInstance runs a command on the EC2 instance via SSM.
 func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script string, timeout time.Duration) (*awsutil.RunCommandResult, error) {
 	return awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, timeout)
+}
+
+// ResetAgentCustomConfig backs up the admin-owned customization file on the
+// instance and resets it to "{}" (re-protected root:root 0444). Discards admin
+// drift; the caller refreshes to reload the gateway.
+func (p *AWSProvider) ResetAgentCustomConfig(ctx context.Context, name string) error {
+	cfg, err := p.GetAgent(ctx, name)
+	if err != nil {
+		return err
+	}
+	rt, err := runtime.Get(runtime.ResolveRuntime(cfg.Runtime, ""))
+	if err != nil {
+		return err
+	}
+	fname := rt.CustomConfigFileName()
+	if fname == "" {
+		return fmt.Errorf("runtime %s has no customization file to reset", rt.Name())
+	}
+	instanceID, err := p.findInstance(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/opt/conga/data/%s/%s", name, fname)
+	cmd := fmt.Sprintf("if [ -e '%s' ]; then cp -p '%s' '%s.bak.'$(date +%%s); fi; "+
+		"printf '{}\\n' > '%s' && chown root:root '%s' && chmod 0444 '%s'",
+		path, path, path, path, path, path)
+	if _, err := p.runOnInstance(ctx, instanceID, cmd, 30*time.Second); err != nil {
+		return fmt.Errorf("reset %s: %w", fname, err)
+	}
+	return nil
 }
 
 // readExistingGatewayTokenOnInstance reads the gateway auth token out of an

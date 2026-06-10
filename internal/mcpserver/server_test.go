@@ -79,6 +79,10 @@ func (m *mockProvider) UnpauseAgent(ctx context.Context, name string) error {
 	m.lastAgentName = name
 	return m.err
 }
+func (m *mockProvider) ResetAgentCustomConfig(ctx context.Context, name string) error {
+	m.lastAgentName = name
+	return m.err
+}
 func (m *mockProvider) GetStatus(ctx context.Context, agentName string) (*provider.AgentStatus, error) {
 	m.lastAgentName = agentName
 	return m.status, m.err

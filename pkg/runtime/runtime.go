@@ -31,6 +31,12 @@ type Runtime interface {
 	// ConfigFileName returns the config file name written to the data directory.
 	ConfigFileName() string
 
+	// CustomConfigFileName returns the admin-owned customization file that the
+	// generated config references (e.g. via "$include"), or "" if the runtime
+	// has no such file. Providers must ensure this file exists (as "{}") next to
+	// the config on every write — a missing target can invalidate the config.
+	CustomConfigFileName() string
+
 	// GenerateEnvFile produces the .env file content for the agent container.
 	GenerateEnvFile(params EnvParams) []byte
 
