@@ -1166,7 +1166,10 @@ for HASHFILE in /opt/conga/config/*-config.json.sha256; do
   # the channel allowlist (a security boundary) undetected by the root hash above.
   CUSTOM="/opt/conga/data/$AGENT_NAME/agent-custom.json"
   if [ -f "$CUSTOM" ]; then
-    if RESERVED=$(jq -r 'keys[] | select(. == "$include" or . == "channels" or . == "gateway" or . == "plugins")' "$CUSTOM" 2>/dev/null | paste -sd, -); then
+    # Capture jq's exit status directly (not through a pipe — `paste` would mask a
+    # parse failure and the invalid-JSON branch would be dead code).
+    if KEYS=$(jq -r 'keys[]' "$CUSTOM" 2>/dev/null); then
+      RESERVED=$(printf '%s\n' "$KEYS" | grep -Ex '\$include|channels|gateway|plugins' | paste -sd, -)
       if [ -n "$RESERVED" ]; then
         CMSG="$TIMESTAMP CONFIG_INTEGRITY_VIOLATION agent=$AGENT_NAME agent-custom.json declares Conga-owned key(s)=$RESERVED"
         echo "$CMSG" >> "$LOGFILE"
