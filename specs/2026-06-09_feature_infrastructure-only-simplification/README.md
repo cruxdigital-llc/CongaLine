@@ -51,6 +51,8 @@ standard `openclaw.json` once at provision time, then let administrators customi
 
 - **2026-06-09** — PR #57 code review (code-reviewer agent). Two valid findings fixed: **(CRIT)** the AWS *first-provision* path (`scripts/add-user.sh.tmpl` + `add-team.sh.tmpl`, run via SSM by `ProvisionAgent` — separate from the boot tftpl and the Go refresh path) didn't inject `$include`/create `agent-custom.json` → added the same self-heal block (jq `$include`, create-if-absent, root:root 0444, re-baseline). **(IMP)** the AWS integrity-check jq's invalid-JSON WARN branch was dead code (`paste` masked `jq`'s exit) → rewrote to capture `jq` status independently (`KEYS=$(jq 'keys[]') ... grep -Ex`), verified all 5 cases incl. the now-reachable WARN. Finding #3 (provider release for the `pkg/` interface change) already tracked. Build + scripts/awsprovider tests pass.
 
+- **2026-06-09** — Second-pass code review (fresh agent) on fix commit `84e5920`: both prior findings confirmed **correctly and completely fixed**, no new issues, broader diff clean — "ship it" (no findings ≥80 confidence). Verified idempotency on re-provision (jq `+` adds exactly one `$include`), `jq` availability, Go-template safety (single-brace), heredoc/`${}` safety, and cross-provider consistency (local 0644 vs AWS/remote root:root 0444 is the intentional documented difference).
+
 ## Verification (`/glados:verify-feature`, 2026-06-09)
 
 ### Automated
