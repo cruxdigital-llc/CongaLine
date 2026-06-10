@@ -24,6 +24,15 @@ configuration in the `agents/{agent}/` folders."* So this is really about a
 **declarative custom-config layer in the repo** (the "configure MCP in code"
 answer), with fleet + per-agent levels — not just a single fleet file.
 
+## ⏸️ RESUME HERE (next session)
+
+Implementation is **partially complete on branch `plan/fleet-baseline-configuration` (PR #61, NOT merged)**. Re-run `/glados:implement-feature` and continue from `tasks.md`.
+
+- **Done + committed + green**: P1 (generator 3-layer `$include`), P3 (`ResolveCustomConfigSources`), **P4 Go paths** (local/remote/AWS-regenerate deploy `fleet-custom.json` + `agent-managed-custom.json`). The feature works via `conga refresh` today; `$include`-array precedence is live-verified (root > admin-drift > per-agent > fleet).
+- **Remaining (in order)**: **P2** de-embed `openclaw-defaults.json` (loader+embedded fallback; touches terraform + every boot path; embed is at `pkg/runtime/openclaw/config.go:14`) → **T4.4** AWS boot tftpl + `add-user.sh.tmpl`/`add-team.sh.tmpl` deploy the layers from S3-synced sources → **P5** extend reserved-key guard + hashing to all managed layers (local/remote Go + AWS `check-config-integrity.sh`) → **P6** pre-deploy validation (fleet blast-radius fail-closed) + egress-gap warnings → **P7** `conga agent show-config` (CLI+JSON+MCP) → **P8** `config-taxonomy.md` docs → **P9** tests + live verify. Then review + verify gates → merge → `terraform-provider-conga` release → deployed-path verification.
+- **Do NOT merge PR #61 until P5+P6 land** — the new layers are deployed but their security guard (P5) + blast-radius validation (P6) aren't in yet.
+- **Gotchas**: `git checkout plan/fleet-baseline-configuration` first (work is not on main). For live AWS work, the conga MCP server holds stale SSO creds → restart it (or use a freshly-built `bin/conga` + `aws ssm` directly); re-`aws sso login --profile openclaw` when the token expires.
+
 ## Active Personas
 - **Architect** — config-layering model, `$include`-array precedence, where each layer is sourced/synced/deployed, embed→file, three-provider parity.
 - **Product Manager** — scope vs. the existing config taxonomy, operator value, success criteria.
@@ -47,6 +56,8 @@ answer), with fleet + per-agent levels — not just a single fleet file.
 - [spec.md](./spec.md) — detailed spec (4-layer model, verified precedence, de-embed, deploy/integrity)
 
 - **2026-06-10** — `/glados:spec-feature` started. **Live-verified the `$include`-array precedence** on `aaron`/`2026.5.26` (isolated copy via `OPENCLAW_CONFIG_PATH`, driven through `aws ssm`/`docker exec` because the MCP server held stale SSO creds): **later-in-array wins** (per-agent over fleet), **includes union** (distinct keys from all layers compose), and the **managed root still wins over all includes** (`gateway.port` stayed 18789). The 4-layer model is viable as planned: root > admin-drift > per-agent > fleet. Drafted `spec.md`.
+
+- **2026-06-10** — `/glados:implement-feature` started. Capabilities: in-container `openclaw config validate/get`, conga MCP (needs restart to clear stale SSO from earlier — use freshly-built `bin/conga` + `aws ssm` directly meanwhile), AWS SSM for live verify. Created `tasks.md` (9 phases) for review before coding.
 
 ## Spec Review & Standards Gate (pre-implementation)
 
