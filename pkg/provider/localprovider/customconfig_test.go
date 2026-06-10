@@ -51,6 +51,99 @@ func TestEnsureAgentCustomConfig(t *testing.T) {
 	}
 }
 
+// writeOpenClawAgent persists a minimal openclaw agent record so GetAgent /
+// runtimeForAgent resolve in integrity tests.
+func writeOpenClawAgent(t *testing.T, p *LocalProvider, name string) {
+	t.Helper()
+	if err := os.MkdirAll(p.agentsDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.agentsDir(), name+".json"),
+		[]byte(`{"type":"user","runtime":"openclaw","gateway_port":18789}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCheckIncludeReservedKeys_AllLayers covers feature #31 T5.1/T5.3: the
+// reserved-key guard fires for a Conga-owned key declared in ANY $include layer
+// (fleet, per-agent managed, or admin-drift), and the error names the offender.
+func TestCheckIncludeReservedKeys_AllLayers(t *testing.T) {
+	p := &LocalProvider{dataDir: t.TempDir()}
+	writeOpenClawAgent(t, p, "a1")
+	dataDir := p.dataSubDir("a1")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	layers := []string{"fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"}
+	writeAll := func(content map[string]string) {
+		for _, f := range layers {
+			c := "{}"
+			if v, ok := content[f]; ok {
+				c = v
+			}
+			if err := os.WriteFile(filepath.Join(dataDir, f), []byte(c), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// All clean → no warns, no error.
+	writeAll(nil)
+	if warns, err := p.checkIncludeReservedKeys(context.Background(), "a1"); err != nil || len(warns) != 0 {
+		t.Fatalf("clean layers: warns=%v err=%v", warns, err)
+	}
+
+	// A reserved key in each layer is independently flagged, naming the file.
+	for _, f := range layers {
+		writeAll(map[string]string{f: `{"channels":{"slack":{}}}`})
+		_, err := p.checkIncludeReservedKeys(context.Background(), "a1")
+		if err == nil {
+			t.Fatalf("reserved key in %s not flagged", f)
+		}
+		if !strings.Contains(err.Error(), f) || !strings.Contains(err.Error(), "channels") {
+			t.Fatalf("error for %s should name file + key: %v", f, err)
+		}
+	}
+}
+
+// TestCheckManagedIncludeIntegrity_DetectsTamper covers feature #31 T5.2: the
+// managed layers are hash-verified against their deployed baseline; the
+// admin-owned agent-custom.json is not.
+func TestCheckManagedIncludeIntegrity_DetectsTamper(t *testing.T) {
+	p := &LocalProvider{dataDir: t.TempDir()}
+	writeOpenClawAgent(t, p, "a1")
+	dataDir := p.dataSubDir("a1")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(p.configDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "fleet-custom.json"), []byte(`{"a":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "agent-managed-custom.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.saveManagedIncludeBaselines(context.Background(), "a1"); err != nil {
+		t.Fatalf("save baselines: %v", err)
+	}
+
+	// Unchanged → OK.
+	if err := p.checkManagedIncludeIntegrity(context.Background(), "a1"); err != nil {
+		t.Fatalf("clean managed includes flagged: %v", err)
+	}
+
+	// Tamper the fleet layer on-host → violation that names the file.
+	if err := os.WriteFile(filepath.Join(dataDir, "fleet-custom.json"), []byte(`{"a":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := p.checkManagedIncludeIntegrity(context.Background(), "a1")
+	if err == nil || !strings.Contains(err.Error(), "fleet-custom.json") {
+		t.Fatalf("on-host tamper not detected: %v", err)
+	}
+}
+
 func TestResetAgentCustomConfig_BacksUpAndEmpties(t *testing.T) {
 	p := &LocalProvider{dataDir: t.TempDir()}
 

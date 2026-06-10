@@ -83,6 +83,12 @@ if [ "$AGENT_RUNTIME" = "openclaw" ]; then
   fi
   chown root:root "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"
   chmod 0444 "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"
+  # Record deployed-baseline hashes (feature #31 T5.2) so the periodic integrity
+  # check detects on-host tampering of these Conga-owned layers. Distinct from the
+  # root *-config.json.sha256 baseline; agent-custom.json is intentionally un-hashed.
+  sha256sum "$DATADIR/fleet-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-fleet-custom.json.sha256"
+  sha256sum "$DATADIR/agent-managed-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-agent-managed-custom.json.sha256"
+  chmod 0444 "/opt/conga/config/$AGENT_NAME-fleet-custom.json.sha256" "/opt/conga/config/$AGENT_NAME-agent-managed-custom.json.sha256"
 fi
 
 echo "Overlay files deployed for $AGENT_NAME ($AGENT_TYPE, $AGENT_RUNTIME) from $STAGING"

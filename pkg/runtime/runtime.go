@@ -37,6 +37,14 @@ type Runtime interface {
 	// the config on every write — a missing target can invalidate the config.
 	CustomConfigFileName() string
 
+	// ManagedCustomConfigFiles returns the Conga-DEPLOYED declarative custom-config
+	// layers referenced from the generated config (feature #31): the fleet baseline
+	// and the per-agent file. Conga owns these (re-synced from committed sources on
+	// every write), so unlike CustomConfigFileName (admin drift) they are both
+	// reserved-key-guarded AND hash-verified against their deployed baseline.
+	// Returns nil for runtimes without $include layering.
+	ManagedCustomConfigFiles() []string
+
 	// GenerateEnvFile produces the .env file content for the agent container.
 	GenerateEnvFile(params EnvParams) []byte
 

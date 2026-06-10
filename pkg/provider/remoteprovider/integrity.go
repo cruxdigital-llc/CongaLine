@@ -3,7 +3,6 @@ package remoteprovider
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	posixpath "path"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/common"
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
 // checkConfigIntegrity verifies openclaw.json hasn't been tampered with on the remote host.
@@ -39,7 +40,8 @@ func (p *RemoteProvider) checkConfigIntegrity(agentName string) error {
 	return nil
 }
 
-// saveConfigBaseline stores the SHA256 hash of the current openclaw.json on the remote host.
+// saveConfigBaseline stores the SHA256 hash of the current openclaw.json on the
+// remote host, plus baselines for the Conga-managed include layers (feature #31).
 func (p *RemoteProvider) saveConfigBaseline(agentName string) error {
 	configPath := posixpath.Join(p.remoteDataSubDir(agentName), "openclaw.json")
 	data, err := p.ssh.Download(configPath)
@@ -49,26 +51,103 @@ func (p *RemoteProvider) saveConfigBaseline(agentName string) error {
 
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
 	baselinePath := posixpath.Join(p.remoteConfigDir(), agentName+".sha256")
-	return p.ssh.Upload(baselinePath, []byte(hash), 0600)
+	if err := p.ssh.Upload(baselinePath, []byte(hash), 0600); err != nil {
+		return err
+	}
+	if a, gerr := p.GetAgent(context.Background(), agentName); gerr == nil {
+		return p.saveManagedIncludeBaselines(*a)
+	}
+	return nil
 }
 
-// checkAgentCustomConfig validates the admin-owned include (agent-custom.json)
-// on the remote host does not declare Conga-owned keys (esp. the channel
-// allowlist — a security boundary the integrity hash of the managed root cannot
-// cover, since OpenClaw unions include objects). See spec §5.5.
-func (p *RemoteProvider) checkAgentCustomConfig(agentName string) (warn string, err error) {
-	path := posixpath.Join(p.remoteDataSubDir(agentName), "agent-custom.json")
-	data, derr := p.ssh.Download(path)
-	if derr != nil {
-		return "", nil // absence is self-healed on next write
+// managedIncludeFiles / includeFilesForGuard resolve the $include layers for an
+// agent's runtime: the Conga-managed layers (hash-verified) and, for the guard,
+// the admin-owned layer too (reserved-key guarded only). nil for runtimes
+// without $include layering (Hermes).
+func managedIncludeFiles(a provider.AgentConfig) []string {
+	rt, err := runtime.Get(runtime.ResolveRuntime(a.Runtime, ""))
+	if err != nil {
+		return nil
 	}
-	if verr := common.ValidateAgentCustomConfig(data); verr != nil {
-		if errors.Is(verr, common.ErrCustomConfigUnparseable) {
-			return "agent-custom.json could not be validated (not strict JSON); manual review advised", nil
+	return rt.ManagedCustomConfigFiles()
+}
+
+func includeFilesForGuard(a provider.AgentConfig) []string {
+	rt, err := runtime.Get(runtime.ResolveRuntime(a.Runtime, ""))
+	if err != nil {
+		return nil
+	}
+	files := append([]string{}, rt.ManagedCustomConfigFiles()...)
+	if admin := rt.CustomConfigFileName(); admin != "" {
+		files = append(files, admin)
+	}
+	return files
+}
+
+func (p *RemoteProvider) managedIncludeBaselinePath(agentName, fname string) string {
+	return posixpath.Join(p.remoteConfigDir(), agentName+"."+fname+".sha256")
+}
+
+// saveManagedIncludeBaselines records the deployed-baseline hashes of the managed
+// include layers on the remote host.
+func (p *RemoteProvider) saveManagedIncludeBaselines(a provider.AgentConfig) error {
+	for _, fname := range managedIncludeFiles(a) {
+		data, err := p.ssh.Download(posixpath.Join(p.remoteDataSubDir(a.Name), fname))
+		if err != nil {
+			continue // absence self-heals on next write
 		}
-		return "", fmt.Errorf("CONFIG INTEGRITY VIOLATION (agent-custom.json): %w", verr)
+		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if err := p.ssh.Upload(p.managedIncludeBaselinePath(a.Name, fname), []byte(hash), 0600); err != nil {
+			return err
+		}
 	}
-	return "", nil
+	return nil
+}
+
+// checkManagedIncludeIntegrity verifies the Conga-managed include layers match
+// their deployed baseline on the remote host. Missing baseline self-heals.
+func (p *RemoteProvider) checkManagedIncludeIntegrity(a provider.AgentConfig) error {
+	for _, fname := range managedIncludeFiles(a) {
+		data, err := p.ssh.Download(posixpath.Join(p.remoteDataSubDir(a.Name), fname))
+		if err != nil {
+			continue // absence self-heals on next write
+		}
+		current := fmt.Sprintf("%x", sha256.Sum256(data))
+		bp := p.managedIncludeBaselinePath(a.Name, fname)
+		baseline, derr := p.ssh.Download(bp)
+		if derr != nil {
+			if uerr := p.ssh.Upload(bp, []byte(current), 0600); uerr != nil {
+				return uerr
+			}
+			continue
+		}
+		if string(baseline) != current {
+			return fmt.Errorf("CONFIG INTEGRITY VIOLATION: %s/%s has been modified (expected %s, got %s)",
+				a.Name, fname, string(baseline), current)
+		}
+	}
+	return nil
+}
+
+// checkIncludeReservedKeys validates that NO $include layer on the remote host
+// declares Conga-owned keys (esp. the channel allowlist — a security boundary the
+// integrity hash of the managed root cannot cover, since OpenClaw unions include
+// objects). Covers admin + managed layers (feature #31). See spec §5.5.
+func (p *RemoteProvider) checkIncludeReservedKeys(a provider.AgentConfig) (warns []string, err error) {
+	for _, fname := range includeFilesForGuard(a) {
+		data, derr := p.ssh.Download(posixpath.Join(p.remoteDataSubDir(a.Name), fname))
+		if derr != nil {
+			continue // absence is self-healed on next write
+		}
+		warn, verr := common.ClassifyIncludeValidation(fname, data)
+		if verr != nil {
+			return warns, verr
+		}
+		if warn != "" {
+			warns = append(warns, warn)
+		}
+	}
+	return warns, nil
 }
 
 // RunIntegrityCheck checks all agent configs on the remote host and logs results.
@@ -88,12 +167,22 @@ func (p *RemoteProvider) RunIntegrityCheck() error {
 			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
 			continue
 		}
-		if warn, err := p.checkAgentCustomConfig(a.Name); err != nil {
+		// Verify the Conga-managed include layers against their deployed baseline.
+		if err := p.checkManagedIncludeIntegrity(a); err != nil {
 			logLines = append(logLines, fmt.Sprintf("%s ALERT %s: %v", now, a.Name, err))
 			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
-		} else if warn != "" {
-			logLines = append(logLines, fmt.Sprintf("%s WARN %s: %s", now, a.Name, warn))
-			fmt.Fprintf(os.Stderr, "WARN: %s: %s\n", a.Name, warn)
+			continue
+		}
+		// Guard every include layer (admin + managed) against reserved keys.
+		warns, err := p.checkIncludeReservedKeys(a)
+		if err != nil {
+			logLines = append(logLines, fmt.Sprintf("%s ALERT %s: %v", now, a.Name, err))
+			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
+		} else if len(warns) > 0 {
+			for _, warn := range warns {
+				logLines = append(logLines, fmt.Sprintf("%s WARN %s: %s", now, a.Name, warn))
+				fmt.Fprintf(os.Stderr, "WARN: %s: %s\n", a.Name, warn)
+			}
 		} else {
 			logLines = append(logLines, fmt.Sprintf("%s OK %s: config integrity verified", now, a.Name))
 		}

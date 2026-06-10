@@ -93,6 +93,39 @@ func TestResolveCustomConfigSources(t *testing.T) {
 	}
 }
 
+func TestValidateCustomConfigKeys_NamesFile(t *testing.T) {
+	// The generic guard names the offending layer (feature #31) instead of the
+	// hardcoded "agent-custom.json".
+	err := ValidateCustomConfigKeys("fleet-custom.json", []byte(`{"gateway":{"port":1}}`))
+	if err == nil {
+		t.Fatal("expected reserved-key error")
+	}
+	if !strings.Contains(err.Error(), "fleet-custom.json") || !strings.Contains(err.Error(), "gateway") {
+		t.Fatalf("error should name file + key: %v", err)
+	}
+}
+
+func TestClassifyIncludeValidation(t *testing.T) {
+	// Reserved key → hard violation, no warn.
+	warn, err := ClassifyIncludeValidation("fleet-custom.json", []byte(`{"plugins":{"entries":{}}}`))
+	if err == nil || warn != "" {
+		t.Fatalf("reserved key: want err only, got warn=%q err=%v", warn, err)
+	}
+	if !strings.Contains(err.Error(), "CONFIG INTEGRITY VIOLATION") || !strings.Contains(err.Error(), "fleet-custom.json") {
+		t.Fatalf("violation message shape: %v", err)
+	}
+	// JSON5 (unparseable) → warn, no hard error.
+	warn, err = ClassifyIncludeValidation("agent-managed-custom.json", []byte("{\n  // comment\n}"))
+	if err != nil || warn == "" {
+		t.Fatalf("json5: want warn only, got warn=%q err=%v", warn, err)
+	}
+	// Clean → neither.
+	warn, err = ClassifyIncludeValidation("fleet-custom.json", []byte(`{"mcp":{"servers":{}}}`))
+	if err != nil || warn != "" {
+		t.Fatalf("clean: want neither, got warn=%q err=%v", warn, err)
+	}
+}
+
 func TestResolveRuntimeDefaults(t *testing.T) {
 	dir := t.TempDir()
 	ocDir := filepath.Join(dir, "_defaults", "openclaw")

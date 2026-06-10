@@ -27,6 +27,9 @@ func TestDeployAgentsManagedIncludes(t *testing.T) {
 		"empty fleet fallback":  `printf '{}\n' > "$DATADIR/fleet-custom.json"`,
 		"managed includes 0444": `chmod 0444 "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"`,
 		"managed includes root": `chown root:root "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"`,
+		// Feature #31 T5.2: deployed-baseline hashes for the managed layers.
+		"fleet baseline hash":    `sha256sum "$DATADIR/fleet-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-fleet-custom.json.sha256"`,
+		"agent-managed baseline": `sha256sum "$DATADIR/agent-managed-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-agent-managed-custom.json.sha256"`,
 	}
 	for desc, want := range checks {
 		if !strings.Contains(s, want) {

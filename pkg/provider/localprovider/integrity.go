@@ -3,7 +3,6 @@ package localprovider
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,7 +65,8 @@ func (p *LocalProvider) checkConfigIntegrity(ctx context.Context, agentName stri
 	return nil
 }
 
-// saveConfigBaseline stores the SHA256 hash of the current agent config file.
+// saveConfigBaseline stores the SHA256 hash of the current agent config file,
+// plus baselines for the Conga-managed include layers (feature #31).
 func (p *LocalProvider) saveConfigBaseline(ctx context.Context, agentName string) error {
 	configPath := p.configFileForAgent(ctx, agentName)
 	data, err := os.ReadFile(configPath)
@@ -76,40 +76,113 @@ func (p *LocalProvider) saveConfigBaseline(ctx context.Context, agentName string
 
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
 	baselinePath := filepath.Join(p.configDir(), agentName+".sha256")
-	return os.WriteFile(baselinePath, []byte(hash), 0600)
+	if err := os.WriteFile(baselinePath, []byte(hash), 0600); err != nil {
+		return err
+	}
+	return p.saveManagedIncludeBaselines(ctx, agentName)
 }
 
-// checkAgentCustomConfig validates the admin-owned include (agent-custom.json)
-// does not declare Conga-owned keys. The integrity hash covers only the managed
-// root, so this is the control that keeps the channel allowlist (a security
-// boundary) from being extended via the include's deep-merge union. Reserved-key
-// violations are reported; an unparseable (JSON5) include is left to the
-// authoritative in-container check (warn-only here) to avoid false alarms on
-// legit commented config — see spec §5.5 / §14.
-func (p *LocalProvider) checkAgentCustomConfig(ctx context.Context, agentName string) (warn string, err error) {
-	cfg, gerr := p.GetAgent(ctx, agentName)
-	if gerr != nil {
-		return "", nil
+// managedIncludeFiles returns the Conga-deployed managed include layers for an
+// agent's runtime (fleet-custom.json, agent-managed-custom.json), or nil if the
+// runtime has no $include layering. These are hash-verified; the admin-owned
+// agent-custom.json deliberately is not.
+func (p *LocalProvider) managedIncludeFiles(ctx context.Context, agentName string) []string {
+	cfg, err := p.GetAgent(ctx, agentName)
+	if err != nil {
+		return nil
 	}
-	rt, rerr := p.runtimeForAgent(*cfg)
-	if rerr != nil {
-		return "", nil
+	rt, err := p.runtimeForAgent(*cfg)
+	if err != nil {
+		return nil
 	}
-	fname := rt.CustomConfigFileName()
-	if fname == "" {
-		return "", nil
-	}
-	data, rerr := os.ReadFile(filepath.Join(p.dataSubDir(agentName), fname))
-	if rerr != nil {
-		return "", nil // absence is self-healed on next write
-	}
-	if verr := common.ValidateAgentCustomConfig(data); verr != nil {
-		if errors.Is(verr, common.ErrCustomConfigUnparseable) {
-			return fmt.Sprintf("%s could not be validated (not strict JSON); manual review advised", fname), nil
+	return rt.ManagedCustomConfigFiles()
+}
+
+// includeFilesForGuard returns every $include layer that gets the reserved-key
+// guard: the admin-owned file plus the Conga-managed layers.
+func (p *LocalProvider) includeFilesForGuard(ctx context.Context, agentName string) []string {
+	files := p.managedIncludeFiles(ctx, agentName)
+	if cfg, err := p.GetAgent(ctx, agentName); err == nil {
+		if rt, err := p.runtimeForAgent(*cfg); err == nil {
+			if admin := rt.CustomConfigFileName(); admin != "" {
+				files = append(files, admin)
+			}
 		}
-		return "", fmt.Errorf("CONFIG INTEGRITY VIOLATION (%s): %w", fname, verr)
 	}
-	return "", nil
+	return files
+}
+
+// managedIncludeBaselinePath is the per-file hash baseline for a managed include.
+func (p *LocalProvider) managedIncludeBaselinePath(agentName, fname string) string {
+	return filepath.Join(p.configDir(), agentName+"."+fname+".sha256")
+}
+
+// saveManagedIncludeBaselines records the deployed-baseline hashes of the managed
+// include layers so checkManagedIncludeIntegrity can detect on-host tampering.
+func (p *LocalProvider) saveManagedIncludeBaselines(ctx context.Context, agentName string) error {
+	for _, fname := range p.managedIncludeFiles(ctx, agentName) {
+		data, err := os.ReadFile(filepath.Join(p.dataSubDir(agentName), fname))
+		if err != nil {
+			continue // absence self-heals on next write
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256(data))
+		if err := os.WriteFile(p.managedIncludeBaselinePath(agentName, fname), []byte(hash), 0600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkManagedIncludeIntegrity verifies the Conga-managed include layers match
+// their deployed baseline (detecting on-host tampering of Conga-owned config).
+// A missing baseline self-heals. The admin-owned agent-custom.json is excluded —
+// admin drift is expected there and guarded only by the reserved-key check.
+func (p *LocalProvider) checkManagedIncludeIntegrity(ctx context.Context, agentName string) error {
+	for _, fname := range p.managedIncludeFiles(ctx, agentName) {
+		data, err := os.ReadFile(filepath.Join(p.dataSubDir(agentName), fname))
+		if err != nil {
+			continue // absence self-heals on next write
+		}
+		current := fmt.Sprintf("%x", sha256.Sum256(data))
+		bp := p.managedIncludeBaselinePath(agentName, fname)
+		baseline, err := os.ReadFile(bp)
+		if err != nil {
+			if werr := os.WriteFile(bp, []byte(current), 0600); werr != nil {
+				return werr
+			}
+			continue
+		}
+		if string(baseline) != current {
+			return fmt.Errorf("CONFIG INTEGRITY VIOLATION: %s/%s has been modified (expected %s, got %s)",
+				agentName, fname, string(baseline), current)
+		}
+	}
+	return nil
+}
+
+// checkIncludeReservedKeys validates that NO $include layer declares Conga-owned
+// keys — the admin-owned agent-custom.json plus the Conga-managed fleet-custom /
+// agent-managed-custom layers (feature #31). The integrity hash covers only the
+// managed root, so this is the control that keeps the channel allowlist (a
+// security boundary) from being extended via an include's deep-merge union, in
+// any layer. Reserved-key violations are hard errors; an unparseable (JSON5)
+// include is left to the authoritative in-container check (warn-only here) to
+// avoid false alarms on legit commented config — see spec §5.5 / §14.
+func (p *LocalProvider) checkIncludeReservedKeys(ctx context.Context, agentName string) (warns []string, err error) {
+	for _, fname := range p.includeFilesForGuard(ctx, agentName) {
+		data, rerr := os.ReadFile(filepath.Join(p.dataSubDir(agentName), fname))
+		if rerr != nil {
+			continue // absence is self-healed on next write
+		}
+		warn, verr := common.ClassifyIncludeValidation(fname, data)
+		if verr != nil {
+			return warns, verr
+		}
+		if warn != "" {
+			warns = append(warns, warn)
+		}
+	}
+	return warns, nil
 }
 
 // RunIntegrityCheck checks all agent configs and logs results.
@@ -134,13 +207,23 @@ func (p *LocalProvider) RunIntegrityCheck() error {
 			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
 			continue
 		}
-		// Managed root is intact; now guard the admin-owned include.
-		if warn, err := p.checkAgentCustomConfig(ctx, a.Name); err != nil {
+		// Managed root is intact; verify the Conga-managed include layers
+		// against their deployed baseline (tamper detection).
+		if err := p.checkManagedIncludeIntegrity(ctx, a.Name); err != nil {
 			fmt.Fprintf(f, "%s ALERT %s: %v\n", now, a.Name, err)
 			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
-		} else if warn != "" {
-			fmt.Fprintf(f, "%s WARN %s: %s\n", now, a.Name, warn)
-			fmt.Fprintf(os.Stderr, "WARN: %s: %s\n", a.Name, warn)
+			continue
+		}
+		// Guard every include layer (admin + managed) against reserved keys.
+		warns, err := p.checkIncludeReservedKeys(ctx, a.Name)
+		if err != nil {
+			fmt.Fprintf(f, "%s ALERT %s: %v\n", now, a.Name, err)
+			fmt.Fprintf(os.Stderr, "ALERT: %v\n", err)
+		} else if len(warns) > 0 {
+			for _, warn := range warns {
+				fmt.Fprintf(f, "%s WARN %s: %s\n", now, a.Name, warn)
+				fmt.Fprintf(os.Stderr, "WARN: %s: %s\n", a.Name, warn)
+			}
 		} else {
 			fmt.Fprintf(f, "%s OK %s: config integrity verified\n", now, a.Name)
 		}

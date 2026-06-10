@@ -50,12 +50,20 @@
   so a fresh AWS boot also reflects operator edits without waiting for a `conga refresh`. Large bash
   refactor; re-verifies the fresh-boot config. Closes the long-standing bash/Go defaults divergence.
 
-## Phase 5 — Integrity: guard + hash all managed layers
-- [ ] **T5.1** Run `common.ValidateAgentCustomConfig` (reserved-key guard) on **all three** include
-  files in local/remote `RunIntegrityCheck` + AWS `check-config-integrity.sh`.
-- [ ] **T5.2** Hash the managed include files (fleet-custom, agent-managed-custom) vs deployed baseline;
-  `agent-custom.json` stays un-hashed.
-- [ ] **T5.3** Tests: reserved key in each layer flagged.
+## Phase 5 — Integrity: guard + hash all managed layers ✅ DONE
+- [x] **T5.1** Reserved-key guard on **all three** include files. Refactored `common` to a
+  filename-generic `ValidateCustomConfigKeys(fname, data)` + `ClassifyIncludeValidation(fname, data)`
+  (shared warn/err classification); added runtime method `ManagedCustomConfigFiles()`
+  (openclaw → [fleet-custom, agent-managed-custom]; hermes → nil). local/remote `RunIntegrityCheck`
+  now iterate admin + managed layers; AWS `check-config-integrity.sh` loops the jq reserved-key check
+  over all three.
+- [x] **T5.2** Hash the managed include files vs deployed baseline (`<agent>.<fname>.sha256` local/remote,
+  `<agent>-<fname>.sha256` AWS), written at every baseline-save point (local/remote `saveConfigBaseline`
+  → `saveManagedIncludeBaselines`; AWS `deploy-agents.sh`). `agent-custom.json` stays un-hashed.
+  Missing baseline self-heals.
+- [x] **T5.3** Tests: reserved key flagged in each layer (local `checkIncludeReservedKeys`); managed-include
+  on-host tamper detected (`checkManagedIncludeIntegrity`); `common` generic validator/classifier;
+  deploy-agents baseline-write content test. Green across local/remote/scripts/common.
 
 ## Phase 6 — Pre-deploy validation + egress (fleet blast-radius)
 - [ ] **T6.1** Validate the merged result before deploy (operator-side `openclaw config validate` or

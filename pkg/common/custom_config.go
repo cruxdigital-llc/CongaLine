@@ -100,7 +100,20 @@ var ErrCustomConfigUnparseable = errors.New("agent-custom.json is not strict JSO
 // if it cannot be parsed as strict JSON. This is the load-bearing control behind
 // the "Conga owns the channel allowlist" invariant: it detects an include that
 // tries to inject or extend channel bindings.
+//
+// Equivalent to ValidateCustomConfigKeys("agent-custom.json", data); prefer the
+// generic form for the fleet / per-agent managed layers (feature #31) so the
+// error message names the offending file.
 func ValidateAgentCustomConfig(data []byte) error {
+	return ValidateCustomConfigKeys("agent-custom.json", data)
+}
+
+// ValidateCustomConfigKeys is the filename-generic reserved-key guard applied to
+// EVERY $include layer (feature #31): the admin-owned agent-custom.json plus the
+// Conga-deployed fleet-custom.json / agent-managed-custom.json. fname is used in
+// the error message so operators see which layer is offending. Returns
+// ErrCustomConfigUnparseable for non-strict-JSON (JSON5) input.
+func ValidateCustomConfigKeys(fname string, data []byte) error {
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return nil
 	}
@@ -116,7 +129,22 @@ func ValidateAgentCustomConfig(data []byte) error {
 	}
 	if len(found) > 0 {
 		sort.Strings(found)
-		return fmt.Errorf("agent-custom.json declares Conga-owned key(s) %v; these are managed by Conga (channels via `conga channels bind`) and must not appear in the include", found)
+		return fmt.Errorf("%s declares Conga-owned key(s) %v; these are managed by Conga (channels via `conga channels bind`) and must not appear in the include", fname, found)
 	}
 	return nil
+}
+
+// ClassifyIncludeValidation runs the reserved-key guard on one $include layer and
+// classifies the result for integrity reporting, shared by the local and remote
+// providers' RunIntegrityCheck. A reserved-key violation is a hard error
+// ("CONFIG INTEGRITY VIOLATION (<fname>): ..."); an unparseable (JSON5) file is a
+// non-fatal warn left to the authoritative in-container check; OK returns ("","").
+func ClassifyIncludeValidation(fname string, data []byte) (warn string, err error) {
+	if verr := ValidateCustomConfigKeys(fname, data); verr != nil {
+		if errors.Is(verr, ErrCustomConfigUnparseable) {
+			return fmt.Sprintf("%s could not be validated (not strict JSON); manual review advised", fname), nil
+		}
+		return "", fmt.Errorf("CONFIG INTEGRITY VIOLATION (%s): %w", fname, verr)
+	}
+	return "", nil
 }

@@ -358,6 +358,15 @@ func (r *Runtime) ConfigFileName() string { return "openclaw.json" }
 // every config write; a missing $include target invalidates the whole config.
 func (r *Runtime) CustomConfigFileName() string { return AgentCustomConfigFile }
 
+// ManagedCustomConfigFiles returns the Conga-deployed declarative layers
+// (feature #31): fleet-custom.json (all agents) and agent-managed-custom.json
+// (per-agent). Conga re-syncs these from committed sources on every write, so
+// they are hash-verified against their deployed baseline in addition to the
+// reserved-key guard.
+func (r *Runtime) ManagedCustomConfigFiles() []string {
+	return []string{FleetCustomConfigFile, AgentManagedCustomConfigFile}
+}
+
 // buildGatewayConfig produces the gateway section of openclaw.json.
 func buildGatewayConfig(containerPort, hostPort int, token string) map[string]any {
 	origins := []string{
