@@ -317,11 +317,12 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to generate gateway token: %w", err)
 	}
 	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
-		Agent:        cfg,
-		Secrets:      shared,
-		GatewayToken: gatewayToken,
-		Model:        p.getConfigValue("model"),
-		Overlay:      overlay,
+		Agent:           cfg,
+		Secrets:         shared,
+		GatewayToken:    gatewayToken,
+		Model:           p.getConfigValue("model"),
+		Overlay:         overlay,
+		RuntimeDefaults: common.ResolveRuntimeDefaults(p.behaviorDir(), cfg),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
@@ -838,11 +839,12 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	}
 	// Regenerate config with current config format
 	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
-		Agent:        *cfg,
-		Secrets:      shared,
-		GatewayToken: existingToken,
-		Model:        p.getConfigValue("model"),
-		Overlay:      overlay,
+		Agent:           *cfg,
+		Secrets:         shared,
+		GatewayToken:    existingToken,
+		Model:           p.getConfigValue("model"),
+		Overlay:         overlay,
+		RuntimeDefaults: common.ResolveRuntimeDefaults(p.behaviorDir(), *cfg),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)

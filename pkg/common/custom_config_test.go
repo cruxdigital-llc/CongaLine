@@ -92,3 +92,32 @@ func TestResolveCustomConfigSources(t *testing.T) {
 		t.Errorf("perAgent should be nil when absent, got %q", got2.PerAgent)
 	}
 }
+
+func TestResolveRuntimeDefaults(t *testing.T) {
+	dir := t.TempDir()
+	ocDir := filepath.Join(dir, "_defaults", "openclaw")
+	if err := os.MkdirAll(ocDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte(`{"agents":{"defaults":{"model":{"primary":"x"}}}}`)
+	if err := os.WriteFile(filepath.Join(ocDir, RuntimeDefaultsSourceName), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// openclaw agent → reads the on-disk file (runtime-level, not per-agent/type).
+	got := ResolveRuntimeDefaults(dir, provider.AgentConfig{Name: "a1", Runtime: "openclaw"})
+	if string(got) != string(want) {
+		t.Errorf("openclaw defaults = %q, want %q", got, want)
+	}
+
+	// hermes agent → nil (only openclaw ships a de-embedded baseline).
+	if got := ResolveRuntimeDefaults(dir, provider.AgentConfig{Name: "h1", Runtime: "hermes"}); got != nil {
+		t.Errorf("hermes should yield nil, got %q", got)
+	}
+
+	// openclaw with no on-disk file → nil (generator uses its embedded fallback).
+	empty := t.TempDir()
+	if got := ResolveRuntimeDefaults(empty, provider.AgentConfig{Name: "a1", Runtime: "openclaw"}); got != nil {
+		t.Errorf("absent file should yield nil, got %q", got)
+	}
+}

@@ -821,3 +821,70 @@ func TestGenerateConfig_IncludesAdminCustomFile(t *testing.T) {
 		})
 	}
 }
+
+// TestGenerateConfig_RuntimeDefaults covers the feature #31 de-embed: when
+// ConfigParams.RuntimeDefaults carries an on-disk baseline it replaces the
+// embedded copy as the generation base; absent or malformed bytes fall back to
+// the embed (first-boot / air-gap / tamper-safe).
+func TestGenerateConfig_RuntimeDefaults(t *testing.T) {
+	r := &Runtime{}
+
+	const sentinel = "anthropic/claude-sentinel-on-disk"
+	onDisk := []byte(`{"agents":{"defaults":{"model":{"primary":"` + sentinel + `","fallbacks":[]}}}}`)
+
+	t.Run("file present and valid is used as base", func(t *testing.T) {
+		p := baseParams()
+		p.RuntimeDefaults = onDisk
+		out, err := r.GenerateConfig(p)
+		if err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+		if got := modelPrimary(t, out); got != sentinel {
+			t.Fatalf("on-disk defaults not used: model.primary = %q, want %q", got, sentinel)
+		}
+	})
+
+	t.Run("absent falls back to embedded", func(t *testing.T) {
+		p := baseParams() // RuntimeDefaults nil
+		out, err := r.GenerateConfig(p)
+		if err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+		// Embedded baseline's model.primary (see openclaw-defaults.json).
+		if got := modelPrimary(t, out); got != "anthropic/claude-opus-4-7" {
+			t.Fatalf("embedded fallback not used: model.primary = %q", got)
+		}
+	})
+
+	t.Run("malformed falls back to embedded", func(t *testing.T) {
+		p := baseParams()
+		p.RuntimeDefaults = []byte(`{"agents": this is not json`)
+		out, err := r.GenerateConfig(p)
+		if err != nil {
+			t.Fatalf("generate should fall back, not error: %v", err)
+		}
+		if got := modelPrimary(t, out); got != "anthropic/claude-opus-4-7" {
+			t.Fatalf("malformed input should fall back to embedded: model.primary = %q", got)
+		}
+	})
+}
+
+// modelPrimary extracts agents.defaults.model.primary from generated config.
+func modelPrimary(t *testing.T, b []byte) string {
+	t.Helper()
+	cfg := decodeJSON(t, b)
+	agents, ok := cfg["agents"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing agents section")
+	}
+	defaults, ok := agents["defaults"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing agents.defaults")
+	}
+	model, ok := defaults["model"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing agents.defaults.model")
+	}
+	s, _ := model["primary"].(string)
+	return s
+}

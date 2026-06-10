@@ -146,6 +146,15 @@ type ConfigParams struct {
 	// loaded from agents/<name>/agent.yaml. Runtime config generators
 	// translate it into their native config shape. nil = no overlay applied.
 	Overlay *AgentOverlay
+
+	// RuntimeDefaults is the optional, operator-editable runtime baseline
+	// config read from disk (agents/_defaults/<runtime>/openclaw-defaults.json,
+	// feature #31's de-embed). When set and valid it replaces the binary's
+	// embedded defaults as the generation base, letting operators edit the
+	// fleet runtime baseline without a binary/provider release. nil or invalid
+	// bytes fall back to the embedded copy (first-boot / air-gap / tamper-safe).
+	// Resolve with common.ResolveRuntimeDefaults.
+	RuntimeDefaults []byte
 }
 
 // EnvParams holds all inputs needed to generate an env file.

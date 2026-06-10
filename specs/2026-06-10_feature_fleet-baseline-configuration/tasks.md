@@ -18,11 +18,30 @@
   managed include files from the S3-synced `/opt/conga/agents/` sources (fresh-deploy path).
 - [ ] **T4.5 (remaining)** Per-provider deploy tests (provision deploys layers; refresh re-syncs 2–3 not 4).
 
-## Phase 2 — De-embed `openclaw-defaults.json` (with embedded fallback) — REMAINING
-- [ ] **T2.1** Keep `//go:embed openclaw-defaults.json` as a **fallback**; add a loader that prefers
-  an on-disk `<config-dir>/openclaw-defaults.json` and falls back to the embed if absent/unreadable.
-- [ ] **T2.2** Sync the editable file: S3 on AWS bootstrap; local/remote write it from the repo source.
-- [ ] **T2.3** Tests: file present → file used; absent → embedded fallback; malformed → fallback + warn.
+## Phase 2 — De-embed `openclaw-defaults.json` (with embedded fallback) ✅ DONE (Go scope)
+> **Scope decision (operator, 2026-06-10):** Go de-embed now; the AWS **bash boot/provision**
+> path unification is a tracked follow-up (T2.4), not in this pass. The conga Go binary never runs
+> on the AWS host (`user-data.sh.tftpl:1367`), so the embed is read only by the Go paths
+> (operator-side `conga refresh` on AWS, + local/remote). The AWS fresh-boot + add-user/add-team
+> bash scripts still hardcode the defaults inline; a fresh boot uses those until the first
+> `conga refresh` regenerates from the file.
+>
+> **File location (resolves C2):** `agents/_defaults/openclaw/openclaw-defaults.json` — runtime-level
+> (NOT type-specific), beside `fleet-custom.json`. Rides the existing `aws s3 sync conga/agents/`
+> to `/opt/conga/agents/` on AWS and the local/remote behavior-dir snapshot — **no new terraform/S3
+> wiring**. Repo `pkg/runtime/openclaw/openclaw-defaults.json` stays the canonical seed + embed.
+- [x] **T2.1** Embed retained as fallback; `GenerateConfig` prefers `ConfigParams.RuntimeDefaults`
+  (valid JSON) else embed; malformed → warn + embed. (`pkg/runtime/openclaw/config.go`.)
+- [x] **T2.2** Sync: `common.ResolveRuntimeDefaults(behaviorDir, agent)` reads the on-disk file,
+  threaded at all 3 Go gen sites (local provision+regenerate; `RuntimeGenerateAgentFilesWithOverlay`
+  covering remote+AWS). Reuses fleet-custom's sync — file is present wherever fleet-custom is.
+- [x] **T2.3** Tests: file present → file used; absent → embedded fallback; malformed → fallback
+  (no error). (`config_test.go`, `custom_config_test.go`.) Build + tests green.
+- [ ] **T2.4 (tracked follow-up — do NOT lose)** Unify the AWS **bash boot/provision** path:
+  refactor `user-data.sh.tftpl` (×2 heredocs) + `add-user.sh.tmpl` + `add-team.sh.tmpl` to layer
+  gateway/channels over the S3-synced `openclaw-defaults.json` (jq) with a minimal inline fallback,
+  so a fresh AWS boot also reflects operator edits without waiting for a `conga refresh`. Large bash
+  refactor; re-verifies the fresh-boot config. Closes the long-standing bash/Go defaults divergence.
 
 ## Phase 5 — Integrity: guard + hash all managed layers
 - [ ] **T5.1** Run `common.ValidateAgentCustomConfig` (reserved-key guard) on **all three** include

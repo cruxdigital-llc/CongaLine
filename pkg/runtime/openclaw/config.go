@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
@@ -11,12 +12,30 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
+// openclawDefaults is the embedded runtime baseline. As of feature #31 it is a
+// FALLBACK: operators may ship an editable copy at
+// agents/_defaults/openclaw/openclaw-defaults.json (resolved by
+// common.ResolveRuntimeDefaults into ConfigParams.RuntimeDefaults). The embed is
+// retained for first-boot / air-gap / tamper-safe operation — a missing or
+// malformed on-disk file fails safe to this known-good baseline.
+//
 //go:embed openclaw-defaults.json
 var openclawDefaults []byte
 
 func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
+	// Prefer the operator-editable on-disk defaults (feature #31 de-embed);
+	// fall back to the embedded baseline if absent or not valid JSON.
+	base := openclawDefaults
+	if len(params.RuntimeDefaults) > 0 {
+		if json.Valid(params.RuntimeDefaults) {
+			base = params.RuntimeDefaults
+		} else {
+			fmt.Fprintln(os.Stderr, "warning: on-disk openclaw-defaults.json is not valid JSON; using embedded runtime defaults")
+		}
+	}
+
 	var config map[string]any
-	if err := json.Unmarshal(openclawDefaults, &config); err != nil {
+	if err := json.Unmarshal(base, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse openclaw-defaults.json: %w", err)
 	}
 

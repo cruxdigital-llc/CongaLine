@@ -31,6 +31,34 @@ const (
 	PerAgentCustomSourceName = "custom.json"
 )
 
+// RuntimeDefaultsSourceName is the committed, operator-editable OpenClaw runtime
+// baseline (feature #31's de-embed). It lives at
+// agents/_defaults/openclaw/openclaw-defaults.json — runtime-level, NOT
+// type-specific — beside the fleet-custom.json source, and is synced to the AWS
+// host via the existing `aws s3 sync conga/agents/` path. The repo file
+// pkg/runtime/openclaw/openclaw-defaults.json remains the canonical seed and the
+// binary's embedded fallback.
+const RuntimeDefaultsSourceName = "openclaw-defaults.json"
+
+// ResolveRuntimeDefaults reads the operator-editable runtime baseline for an
+// agent's runtime from behaviorDir (the operator's agents/ tree — resolve with
+// ResolveOperatorBehaviorDir). It returns the raw bytes to thread into
+// runtime.ConfigParams.RuntimeDefaults, or nil if no on-disk file exists (the
+// generator then uses its embedded fallback). The bytes are returned unvalidated;
+// the generator validates and falls back on malformed input (tamper-safe).
+//
+// Only OpenClaw ships a de-embedded baseline today; other runtimes yield nil.
+func ResolveRuntimeDefaults(behaviorDir string, agent provider.AgentConfig) []byte {
+	rtName := runtime.ResolveRuntime(agent.Runtime, "")
+	if rtName != runtime.RuntimeOpenClaw {
+		return nil
+	}
+	if data, err := os.ReadFile(filepath.Join(behaviorDir, defaultsSubdir, string(rtName), RuntimeDefaultsSourceName)); err == nil {
+		return data
+	}
+	return nil
+}
+
 // ResolveCustomConfigSources reads the committed declarative custom-config
 // sources for an agent from behaviorDir (the operator's agents/ tree — resolve
 // with ResolveOperatorBehaviorDir). Missing sources yield nil (deploy "{}").
