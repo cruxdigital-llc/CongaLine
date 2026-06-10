@@ -8,7 +8,7 @@ terraform {
     }
     conga = {
       source  = "registry.terraform.io/cruxdigital-llc/conga"
-      version = "0.1.4"
+      version = "0.1.5"
     }
   }
 
