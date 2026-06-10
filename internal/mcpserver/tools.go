@@ -19,6 +19,7 @@ func (s *Server) registerTools() {
 		s.toolRemoveAgent(),
 		s.toolPauseAgent(),
 		s.toolUnpauseAgent(),
+		s.toolRebaselineAgent(),
 
 		// Container Operations
 		s.toolGetStatus(),

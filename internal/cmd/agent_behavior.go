@@ -69,7 +69,21 @@ will fall back to the shared default for that file.`,
 		RunE:  agentBehaviorDiffRun,
 	}
 
-	agentBehaviorCmd.AddCommand(listCmd, addCmd, rmCmd, showCmd, diffCmd)
+	rebaselineCmd := &cobra.Command{
+		Use:   "rebaseline <agent>",
+		Short: "Reset an agent's customization file to the generated baseline",
+		Long: `Reset the admin-owned agent-custom.json (the "$include" target) back to the
+generated baseline. The current file is backed up to a timestamped .bak, then
+emptied to {} and the agent is refreshed so the gateway reloads.
+
+This discards admin config drift (e.g. an added MCP server). Agent data
+(memory, workspace, sessions) is never touched.`,
+		Args: cobra.ExactArgs(1),
+		RunE: agentRebaselineRun,
+	}
+	rebaselineCmd.Flags().BoolVar(&rebaselineYes, "yes", false, "Skip the confirmation prompt")
+
+	agentBehaviorCmd.AddCommand(listCmd, addCmd, rmCmd, showCmd, diffCmd, rebaselineCmd)
 	rootCmd.AddCommand(agentBehaviorCmd)
 }
 

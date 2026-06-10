@@ -228,6 +228,30 @@ func (p *RemoteProvider) ensureAgentCustomConfig(ctx context.Context, cfg provid
 	return nil
 }
 
+// ResetAgentCustomConfig backs up the admin-owned customization file on the
+// remote host and resets it to "{}". Discards admin drift; caller refreshes.
+func (p *RemoteProvider) ResetAgentCustomConfig(ctx context.Context, name string) error {
+	cfg, err := p.GetAgent(ctx, name)
+	if err != nil {
+		return err
+	}
+	rt, err := runtime.Get(runtime.ResolveRuntime(cfg.Runtime, ""))
+	if err != nil {
+		return err
+	}
+	fname := rt.CustomConfigFileName()
+	if fname == "" {
+		return fmt.Errorf("runtime %s has no customization file to reset", rt.Name())
+	}
+	path := posixpath.Join(p.remoteDataSubDir(name), fname)
+	q := shellQuote(path)
+	cmd := fmt.Sprintf("if [ -e %s ]; then cp -p %s %s.bak.$(date +%%s); fi; printf '{}\\n' > %s", q, q, q, q)
+	if _, err := p.ssh.Run(ctx, cmd); err != nil {
+		return fmt.Errorf("reset %s: %w", fname, err)
+	}
+	return nil
+}
+
 func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConfig) error {
 	// 1. Save agent config
 	if err := p.saveAgentConfig(&cfg); err != nil {

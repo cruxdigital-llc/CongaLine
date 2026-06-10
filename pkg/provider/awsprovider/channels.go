@@ -669,6 +669,36 @@ func (p *AWSProvider) runOnInstance(ctx context.Context, instanceID, script stri
 	return awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, timeout)
 }
 
+// ResetAgentCustomConfig backs up the admin-owned customization file on the
+// instance and resets it to "{}" (re-protected root:root 0444). Discards admin
+// drift; the caller refreshes to reload the gateway.
+func (p *AWSProvider) ResetAgentCustomConfig(ctx context.Context, name string) error {
+	cfg, err := p.GetAgent(ctx, name)
+	if err != nil {
+		return err
+	}
+	rt, err := runtime.Get(runtime.ResolveRuntime(cfg.Runtime, ""))
+	if err != nil {
+		return err
+	}
+	fname := rt.CustomConfigFileName()
+	if fname == "" {
+		return fmt.Errorf("runtime %s has no customization file to reset", rt.Name())
+	}
+	instanceID, err := p.findInstance(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/opt/conga/data/%s/%s", name, fname)
+	cmd := fmt.Sprintf("if [ -e '%s' ]; then cp -p '%s' '%s.bak.'$(date +%%s); fi; "+
+		"printf '{}\\n' > '%s' && chown root:root '%s' && chmod 0444 '%s'",
+		path, path, path, path, path, path)
+	if _, err := p.runOnInstance(ctx, instanceID, cmd, 30*time.Second); err != nil {
+		return fmt.Errorf("reset %s: %w", fname, err)
+	}
+	return nil
+}
+
 // readExistingGatewayTokenOnInstance reads the gateway auth token out of an
 // agent's openclaw.json on the EC2 instance via SSM. Returns "" when the
 // file is missing or the token is unset (the agent is fresh and a new token

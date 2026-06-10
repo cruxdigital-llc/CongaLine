@@ -35,16 +35,14 @@
   + `user-data.sh.tftpl`). Reuse the existing violation log/journal path.
 - [ ] **T3.3** Security regression test: an include injecting `channels.<id>` is flagged by T3.2.
 
-## Phase 4 — `conga agent rebaseline` (Interface Parity: CLI + JSON + MCP)
-- [ ] **T4.1** Provider interface (`pkg/provider/provider.go`): add
-  `ResetAgentCustomConfig(ctx, name) error`; implement in all three providers (backup
-  `agent-custom.json.bak.<unixtime>`, rewrite `{}`).
-- [ ] **T4.2** CLI (`internal/cmd/`): `conga agent rebaseline <name>` → reset + `RefreshAgent`;
-  prints backup path; `--yes`/`--force` skips confirm.
-- [ ] **T4.3** JSON schema (`internal/cmd/json_schema.go`) + MCP tool
-  (`internal/mcpserver/tools*.go`: `conga_rebaseline_agent`, `DestructiveHint: true`). Consistent
-  defaults across all three.
-- [ ] **T4.4** Tests: reset backs up + empties; idempotent; refresh reloads.
+## Phase 4 — `conga agent rebaseline` ✅ DONE
+- [x] **T4.1** `provider.Provider.ResetAgentCustomConfig` + impls (local FS, remote SSH, AWS SSM with
+  root:root 0444 re-protect). Backs up `.bak.<unixtime>`, rewrites `{}`.
+- [x] **T4.2** CLI `conga agent rebaseline <name>` (`agent_rebaseline.go`, registered in
+  `agent_behavior.go`) → reset + RefreshAgent; `--yes` skips confirm.
+- [x] **T4.3** JSON schema `agent.rebaseline` + MCP `conga_rebaseline_agent` (DestructiveHint).
+- [x] **T4.4** Tests: `customconfig_test.go` (ensure create/preserve; reset backs up + empties).
+  All provider/mcp/cmd suites pass.
 
 ## Phase 5 — Migration, perms, validation hook
 - [ ] **T5.1** Migration (regenerate-fresh): first refresh/provision for an existing agent adds

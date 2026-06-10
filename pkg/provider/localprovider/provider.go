@@ -115,6 +115,35 @@ func (p *LocalProvider) ensureAgentCustomConfig(rt runtime.Runtime, dataDir stri
 	}
 	return nil
 }
+
+// ResetAgentCustomConfig backs up the admin-owned customization file and resets
+// it to "{}". Discards admin drift; the caller refreshes to reload the gateway.
+func (p *LocalProvider) ResetAgentCustomConfig(ctx context.Context, name string) error {
+	cfg, err := p.GetAgent(ctx, name)
+	if err != nil {
+		return err
+	}
+	rt, err := p.runtimeForAgent(*cfg)
+	if err != nil {
+		return err
+	}
+	fname := rt.CustomConfigFileName()
+	if fname == "" {
+		return fmt.Errorf("runtime %s has no customization file to reset", rt.Name())
+	}
+	path := filepath.Join(p.dataSubDir(name), fname)
+	if data, err := os.ReadFile(path); err == nil {
+		bak := fmt.Sprintf("%s.bak.%d", path, time.Now().Unix())
+		if err := os.WriteFile(bak, data, 0644); err != nil {
+			return fmt.Errorf("backup %s: %w", fname, err)
+		}
+		fmt.Printf("Backed up %s to %s\n", fname, filepath.Base(bak))
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, []byte("{}\n"), 0644)
+}
+
 func (p *LocalProvider) routerDir() string { return filepath.Join(p.dataDir, "router") }
 
 // behaviorDir returns the local snapshot directory that holds per-agent

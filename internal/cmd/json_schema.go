@@ -290,6 +290,14 @@ var commandSchemas = map[string]CommandSchema{
 			"status": {Type: "string", Description: "Result status", Enum: []string{"unpaused"}},
 		}},
 	},
+	"agent.rebaseline": {
+		Command:     "agent rebaseline <name>",
+		Description: "Reset an agent's agent-custom.json to the generated baseline (backs it up, empties it, refreshes). Discards admin customization; preserves agent data.",
+		Output: &SchemaSection{Fields: map[string]FieldSchema{
+			"agent":  {Type: "string", Description: "Agent name"},
+			"status": {Type: "string", Description: "Result status", Enum: []string{"rebaselined"}},
+		}},
+	},
 	"admin.cycle-host": {
 		Command:     "admin cycle-host",
 		Description: "Restart the deployment environment (auto-confirms in JSON mode)",

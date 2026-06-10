@@ -149,6 +149,13 @@ type Provider interface {
 	// UnpauseAgent restarts a paused agent and restores routing.
 	UnpauseAgent(ctx context.Context, name string) error
 
+	// ResetAgentCustomConfig backs up the agent's admin-owned customization file
+	// (the "$include" target, e.g. agent-custom.json) to a timestamped .bak and
+	// rewrites it to "{}", discarding admin drift. The caller typically follows
+	// with RefreshAgent so the gateway reloads. No-op-with-error for runtimes
+	// that have no customization file. Never touches agent data.
+	ResetAgentCustomConfig(ctx context.Context, name string) error
+
 	// --- Container Operations ---
 
 	// GetStatus returns the current container status and health.
