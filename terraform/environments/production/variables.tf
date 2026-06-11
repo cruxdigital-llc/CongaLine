@@ -27,6 +27,12 @@ variable "instance_type" {
   default = "r6g.medium"
 }
 
+variable "ami_id" {
+  description = "Pin the host AMI to a specific ID. Empty string tracks the latest AL2023 ARM64 AMI (changing it forces an instance replacement). Pin to avoid surprise replacements; bump deliberately during a maintenance window to pick up OS patches."
+  type        = string
+  default     = ""
+}
+
 variable "config_check_interval_minutes" {
   type    = number
   default = 5
@@ -55,9 +61,9 @@ variable "egress_ports" {
 # --- CongaLine ---
 
 variable "image" {
-  description = "Docker image for OpenClaw containers"
+  description = "Docker image for OpenClaw containers. Pinned to a specific minor for bisectability — see CLAUDE.md § OpenClaw-Specific. 2026.6.5 adds native remote-MCP OAuth (`openclaw mcp login`) and defers the risky session-metadata SQLite migration."
   type        = string
-  default     = "ghcr.io/openclaw/openclaw:2026.5.26"
+  default     = "ghcr.io/openclaw/openclaw:2026.6.5"
 }
 
 variable "agents" {

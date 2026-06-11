@@ -22,6 +22,12 @@ variable "instance_type" {
   default     = "r6g.medium"
 }
 
+variable "ami_id" {
+  description = "Host AMI ID. Empty string tracks the latest AL2023 ARM64 AMI via SSM (drift forces instance replacement). Set to a specific AMI to pin and avoid surprise replacements."
+  type        = string
+  default     = ""
+}
+
 variable "config_check_interval_minutes" {
   description = "Interval in minutes for config integrity hash checks"
   type        = number
