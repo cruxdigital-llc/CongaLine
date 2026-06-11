@@ -493,10 +493,6 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 
 	p.stopAgentEgressProxy(ctx, name)
 
-	if p.containerExists(ctx, routerContainer) {
-		p.disconnectNetwork(ctx, netName, routerContainer)
-	}
-
 	if p.networkExists(ctx, netName) {
 		p.removeNetwork(ctx, netName)
 	}
@@ -656,10 +652,6 @@ func (p *RemoteProvider) PauseAgent(ctx context.Context, name string) error {
 	}
 
 	p.stopAgentEgressProxy(ctx, name)
-
-	if p.containerExists(ctx, routerContainer) {
-		p.disconnectNetwork(ctx, netName, routerContainer)
-	}
 
 	if err := p.regenerateRouting(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
@@ -835,9 +827,6 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 
 	// Recreate network.
 	if p.networkExists(ctx, netName) {
-		if p.containerExists(ctx, routerContainer) {
-			p.disconnectNetwork(ctx, netName, routerContainer)
-		}
 		if err := p.removeNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
@@ -903,12 +892,6 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 		fmt.Fprintf(os.Stderr, "Warning: iptables egress rules not applied: %v\n", err)
 	} else {
 		fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
-	}
-
-	if p.containerExists(ctx, routerContainer) {
-		if err := p.connectNetwork(ctx, netName, routerContainer); err != nil {
-			return fmt.Errorf("failed to reconnect router to network %s: %w", netName, err)
-		}
 	}
 
 	// Reconcile routing.json from current agent state. Without this,
@@ -1177,15 +1160,9 @@ func (p *RemoteProvider) ensureRouter(ctx context.Context, restart bool) error {
 		return fmt.Errorf("failed to start router: %w", err)
 	}
 
-	agents, err := p.ListAgents(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not list agents for router network connections: %v\n", err)
-	}
-	for _, a := range agents {
-		if err := p.connectNetwork(ctx, networkName(a.Name), routerContainer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to connect router to %s network: %v\n", a.Name, err)
-		}
-	}
+	// No per-agent bridge attach: the router runs --network host and reaches
+	// each agent through its published 127.0.0.1:<hostPort> (routing.json uses
+	// loopback URLs). See common.GenerateRoutingJSON.
 
 	fmt.Println("  Router started.")
 	return nil
@@ -1274,7 +1251,9 @@ func (p *RemoteProvider) regenerateRouting(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	data, err := common.GenerateRoutingJSON(agents, nil)
+	// The router runs with --network host, so events are delivered to each
+	// agent's published 127.0.0.1:<hostPort> rather than a per-agent bridge.
+	data, err := common.GenerateRoutingJSON(agents, common.LoopbackWebhookResolver(""))
 	if err != nil {
 		return err
 	}

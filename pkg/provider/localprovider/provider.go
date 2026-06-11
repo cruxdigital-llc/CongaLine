@@ -65,23 +65,12 @@ func (p *LocalProvider) runtimeForAgent(agent provider.AgentConfig) (runtime.Run
 	return runtime.Get(name)
 }
 
-// webhookTargetResolver returns a function that resolves webhook targets per-runtime.
+// webhookTargetResolver returns a function that resolves webhook targets
+// per-runtime. The router runs with --network host, so delivery is to each
+// agent's published 127.0.0.1:<hostPort> (the loopback topology) rather than
+// the per-agent Docker network — see common.LoopbackWebhookResolver.
 func (p *LocalProvider) webhookTargetResolver() common.WebhookTargetResolver {
-	globalDefault := p.getConfigValue("runtime")
-	return func(agentRuntime, platform string) common.WebhookTarget {
-		name := runtime.ResolveRuntime(agentRuntime, globalDefault)
-		if rt, err := runtime.Get(name); err == nil {
-			return common.WebhookTarget{
-				Port: rt.WebhookPort(),
-				Path: rt.WebhookPath(platform),
-			}
-		}
-		// Fallback to channel's default
-		if ch, ok := channels.Get(platform); ok {
-			return common.WebhookTarget{Path: ch.WebhookPath()}
-		}
-		return common.WebhookTarget{Path: "/" + platform + "/events"}
-	}
+	return common.LoopbackWebhookResolver(p.getConfigValue("runtime"))
 }
 
 func (p *LocalProvider) Name() string { return "local" }
@@ -504,13 +493,13 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
 	}
 
-	// 10. Ensure routers are running and connected (only if any channel has credentials)
+	// 10. Ensure routers are running (only if any channel has credentials).
+	// Routers run --network host, so no per-agent bridge attach is needed.
 	if common.HasAnyChannel(shared) {
 		if err := p.ensureRouter(ctx, false); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: router not started: %v\n", err)
 		}
 		p.ensureTelegramRouter(ctx, false)
-		connectRoutersToNetwork(ctx, netName)
 	}
 
 	// 11. Save config hash baseline
@@ -543,8 +532,6 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 	}
 
 	p.stopAgentEgressProxy(ctx, name)
-
-	disconnectRoutersFromNetwork(ctx, netName)
 
 	if networkExists(ctx, netName) {
 		if err := removeNetwork(ctx, netName); err != nil {
@@ -760,8 +747,6 @@ func (p *LocalProvider) PauseAgent(ctx context.Context, name string) error {
 
 	p.stopAgentEgressProxy(ctx, name)
 
-	disconnectRoutersFromNetwork(ctx, netName)
-
 	// Regenerate routing (excludes paused agents)
 	if err := p.regenerateRouting(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update routing: %v\n", err)
@@ -959,7 +944,6 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	// hasn't changed — currently we always recreate for a clean slate, which
 	// causes brief connectivity loss during refresh.
 	if networkExists(ctx, netName) {
-		disconnectRoutersFromNetwork(ctx, netName)
 		if err := removeNetwork(ctx, netName); err != nil {
 			return fmt.Errorf("failed to remove network %s: %w", netName, err)
 		}
@@ -1034,9 +1018,6 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	} else {
 		fmt.Printf("  Egress iptables: DROP rules applied for %s (%s)\n", cName, agentIP)
 	}
-
-	// Reconnect routers
-	connectRoutersToNetwork(ctx, netName)
 
 	// Reconcile routing.json from current agent state. Without this,
 	// refreshes after a pause/unpause cycle (or any binding change that
@@ -1583,26 +1564,6 @@ func (p *LocalProvider) cleanupDockerByPrefix(ctx context.Context) {
 
 // --- infrastructure helpers ---
 
-// connectRoutersToNetwork connects all running router containers to a network.
-func connectRoutersToNetwork(ctx context.Context, netName string) {
-	for _, rc := range allRouterContainers() {
-		if containerExists(ctx, rc) {
-			if err := connectNetwork(ctx, netName, rc); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to connect %s to %s network: %v\n", rc, netName, err)
-			}
-		}
-	}
-}
-
-// disconnectRoutersFromNetwork disconnects all router containers from a network.
-func disconnectRoutersFromNetwork(ctx context.Context, netName string) {
-	for _, rc := range allRouterContainers() {
-		if containerExists(ctx, rc) {
-			disconnectNetwork(ctx, netName, rc)
-		}
-	}
-}
-
 // ensureRouter starts or restarts the router container.
 // If restart is true and the router is already running, it is replaced to pick up config changes.
 func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
@@ -1638,16 +1599,9 @@ func (p *LocalProvider) ensureRouter(ctx context.Context, restart bool) error {
 		return fmt.Errorf("failed to start router: %w", err)
 	}
 
-	// Connect router to all existing agent networks
-	agents, err := p.ListAgents(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not list agents for router network connections: %v\n", err)
-	}
-	for _, a := range agents {
-		if err := connectNetwork(ctx, networkName(a.Name), routerContainer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to connect router to %s network: %v\n", a.Name, err)
-		}
-	}
+	// No per-agent bridge attach: the router runs --network host and reaches
+	// each agent through its published 127.0.0.1:<hostPort> (routing.json uses
+	// loopback URLs). See common.GenerateRoutingJSON.
 
 	fmt.Println("  Router started.")
 	return nil
@@ -1718,9 +1672,12 @@ func (p *LocalProvider) ensureTelegramRouter(ctx context.Context, restart bool) 
 	routingPath := filepath.Join(p.configDir(), "routing.json")
 
 	fmt.Println("Starting Telegram router...")
+	// --network host: same loopback topology as the slack router — no per-agent
+	// bridge attach. See common.GenerateRoutingJSON.
 	args := []string{
 		"run", "-d",
 		"--name", telegramRouterContainer,
+		"--network", "host",
 		"--env-file", telegramEnvPath,
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
@@ -1737,16 +1694,7 @@ func (p *LocalProvider) ensureTelegramRouter(ctx context.Context, restart bool) 
 		return fmt.Errorf("failed to start telegram router: %w", err)
 	}
 
-	// Connect to all agent networks
-	agents, err = p.ListAgents(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not list agents for telegram router network connections: %v\n", err)
-	}
-	for _, a := range agents {
-		if err := connectNetwork(ctx, networkName(a.Name), telegramRouterContainer); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to connect telegram router to %s network: %v\n", a.Name, err)
-		}
-	}
+	// No per-agent bridge attach — the router runs --network host (see above).
 
 	fmt.Println("  Telegram router started.")
 	return nil

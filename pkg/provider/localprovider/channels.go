@@ -245,11 +245,9 @@ func (p *LocalProvider) BindChannel(ctx context.Context, agentName string, bindi
 		}
 	}
 
-	// Ensure routers are connected to this agent's network
-	connectRoutersToNetwork(ctx, networkName(agentName))
-
 	// Restart routers AFTER agent refresh so they pick up the latest
-	// gateway token and routing config.
+	// gateway token and routing config. Routers run --network host and reach
+	// the agent via its published 127.0.0.1:<hostPort> — no bridge attach.
 	if err := p.ensureRouter(ctx, true); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to restart router: %v\n", err)
 	}

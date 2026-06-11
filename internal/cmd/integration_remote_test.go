@@ -598,8 +598,14 @@ func TestRemoteChannelManagement(t *testing.T) {
 		if !strings.Contains(routing, "U00FAKEUSER") {
 			t.Errorf("routing.json should contain member ID U00FAKEUSER:\n%s", routing)
 		}
-		if !strings.Contains(routing, "conga-"+agentName) {
-			t.Errorf("routing.json should route to agent container:\n%s", routing)
+		// Host-networking router topology (specs/2026-06-11_bugfix_router-host-networking):
+		// the router runs --network host and reaches the agent via its published
+		// 127.0.0.1:<hostPort>, NOT the per-agent bridge name conga-<agent>.
+		if !strings.Contains(routing, "http://127.0.0.1:") || !strings.Contains(routing, "/slack/events") {
+			t.Errorf("routing.json should route to the agent's loopback port (http://127.0.0.1:<hostPort>/slack/events):\n%s", routing)
+		}
+		if strings.Contains(routing, "conga-"+agentName) {
+			t.Errorf("routing.json must NOT use the bridge host conga-%s (router is host-networked, no per-agent bridge attach):\n%s", agentName, routing)
 		}
 	})
 
