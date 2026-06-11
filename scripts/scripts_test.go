@@ -276,6 +276,9 @@ func TestAddUserScriptTemplateRender(t *testing.T) {
 		"egress proxy run":      "conga-egress-proxy",
 		// Feature #31: 3-element $include array (order = precedence).
 		"layered $include": `"$include": ["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]`,
+		// Feature #31: managed $include targets are seeded as {} if deploy-agents.sh
+		// is unavailable, so a missing target never invalidates the config.
+		"managed include fallback": `for MF in fleet-custom.json agent-managed-custom.json; do`,
 	}
 	for desc, want := range checks {
 		if !strings.Contains(output, want) {
@@ -329,6 +332,9 @@ func TestAddTeamScriptTemplateRender(t *testing.T) {
 		"channel routing":  "channels",
 		// Feature #31: 3-element $include array (order = precedence).
 		"layered $include": `"$include": ["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]`,
+		// Feature #31: managed $include targets are seeded as {} if deploy-agents.sh
+		// is unavailable, so a missing target never invalidates the config.
+		"managed include fallback": `for MF in fleet-custom.json agent-managed-custom.json; do`,
 	}
 	for desc, want := range checks {
 		if !strings.Contains(output, want) {

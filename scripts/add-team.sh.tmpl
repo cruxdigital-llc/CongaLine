@@ -133,6 +133,16 @@ echo "$SLACK_CHANNEL" > /opt/conga/config/$AGENT_NAME.slack-id
 aws s3 sync "s3://{{.StateBucket}}/conga/agents/" /opt/conga/agents/ --region "$AWS_REGION" 2>/dev/null || true
 if [ -x /opt/conga/bin/deploy-agents.sh ]; then
   /opt/conga/bin/deploy-agents.sh "$AGENT_NAME" "team"
+else
+  # deploy-agents.sh unavailable: it normally creates the #31 managed $include
+  # targets (fleet-custom.json + agent-managed-custom.json) from synced sources.
+  # A missing $include target invalidates the whole OpenClaw config, so seed them
+  # as "{}" here (root:root 0444) to keep the config loadable.
+  for MF in fleet-custom.json agent-managed-custom.json; do
+    [ -e /opt/conga/data/$AGENT_NAME/$MF ] || printf '{}\n' > /opt/conga/data/$AGENT_NAME/$MF
+    chown root:root /opt/conga/data/$AGENT_NAME/$MF
+    chmod 0444 /opt/conga/data/$AGENT_NAME/$MF
+  done
 fi
 
 docker network create --driver bridge "conga-$AGENT_NAME" || true

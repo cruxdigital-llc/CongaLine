@@ -128,7 +128,7 @@ func (p *LocalProvider) deployManagedCustomConfig(rt runtime.Runtime, cfg provid
 	if rt.CustomConfigFileName() == "" {
 		return nil
 	}
-	srcs := common.ResolveCustomConfigSources(p.behaviorDir(), cfg)
+	srcs := common.ResolveCustomConfigSources(p.overlayBehaviorDir(), cfg)
 	// Fail closed before writing anything: a reserved-key violation in the fleet
 	// source would break/compromise every agent (blast radius). #31 T6.1.
 	if err := common.ValidateManagedConfigSources(srcs); err != nil {
@@ -327,7 +327,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		GatewayToken:    gatewayToken,
 		Model:           p.getConfigValue("model"),
 		Overlay:         overlay,
-		RuntimeDefaults: common.ResolveRuntimeDefaults(p.behaviorDir(), cfg),
+		RuntimeDefaults: common.ResolveRuntimeDefaults(p.overlayBehaviorDir(), cfg),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
@@ -405,7 +405,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	// are not in the effective egress allowlist. Non-blocking; the operator
 	// can fix the policy file before first use.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
-	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(p.behaviorDir(), cfg), policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(p.overlayBehaviorDir(), cfg), policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
 
 	// 7. Create Docker network
 	netName := networkName(cfg.Name)
@@ -850,7 +850,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		GatewayToken:    existingToken,
 		Model:           p.getConfigValue("model"),
 		Overlay:         overlay,
-		RuntimeDefaults: common.ResolveRuntimeDefaults(p.behaviorDir(), *cfg),
+		RuntimeDefaults: common.ResolveRuntimeDefaults(p.overlayBehaviorDir(), *cfg),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
@@ -914,7 +914,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	// typically edit agent.yaml and refresh (not re-provision), so the
 	// provision-time warning misses the most common flow.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), agentName)
-	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(p.behaviorDir(), *cfg), policy.EffectiveAllowedDomains(egressPolicy), agentName)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(p.overlayBehaviorDir(), *cfg), policy.EffectiveAllowedDomains(egressPolicy), agentName)
 
 	cName := containerName(agentName)
 	netName := networkName(agentName)

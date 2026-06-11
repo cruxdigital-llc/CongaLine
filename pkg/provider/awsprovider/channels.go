@@ -535,19 +535,29 @@ func (p *AWSProvider) regenerateAgentConfigOnInstance(ctx context.Context, insta
 		return err
 	}
 	managedLayers := []struct {
-		path    string
+		name    string
 		content []byte
 	}{
-		{dataDir + "/fleet-custom.json", srcs.Fleet},
-		{dataDir + "/agent-managed-custom.json", srcs.PerAgent},
+		{"fleet-custom.json", srcs.Fleet},
+		{"agent-managed-custom.json", srcs.PerAgent},
 	}
 	for _, l := range managedLayers {
 		content := l.content
 		if content == nil {
 			content = []byte("{}\n")
 		}
-		if err := p.uploadFile(ctx, instanceID, l.path, content, "0444"); err != nil {
-			return fmt.Errorf("failed to upload %s: %w", l.path, err)
+		if err := p.uploadFile(ctx, instanceID, dataDir+"/"+l.name, content, "0444"); err != nil {
+			return fmt.Errorf("failed to upload %s: %w", l.name, err)
+		}
+		// Refresh the managed-include integrity baseline so check-config-integrity.sh
+		// doesn't flag this propagated change as tampering. Mirrors deploy-agents.sh
+		// (which seeds it on the bash path) and the local/remote
+		// saveManagedIncludeBaselines. Without this, the first content-changing
+		// `conga refresh` on AWS leaves the baseline stale → false violation. (#31 P5)
+		mh := sha256.Sum256(content)
+		mBaselinePath := fmt.Sprintf("/opt/conga/config/%s-%s.sha256", cfg.Name, l.name)
+		if err := p.uploadFile(ctx, instanceID, mBaselinePath, []byte(hex.EncodeToString(mh[:])+"\n"), "0444"); err != nil {
+			return fmt.Errorf("failed to upload integrity baseline for %s: %w", l.name, err)
 		}
 	}
 
