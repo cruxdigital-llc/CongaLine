@@ -102,6 +102,12 @@ func RuntimeGenerateAgentFilesWithOverlay(
 		Secrets:      shared,
 		GatewayToken: gatewayToken,
 		Overlay:      overlay,
+		// De-embed (feature #31): prefer the operator-editable on-disk runtime
+		// baseline. Covers the remote (SSH) and AWS operator-side regenerate
+		// paths, which both flow through this helper. On AWS the file is the
+		// S3-synced /opt/conga/agents/_defaults/openclaw/openclaw-defaults.json;
+		// locally the repo agents/ tree. nil → generator uses its embedded copy.
+		RuntimeDefaults: ResolveRuntimeDefaults(ResolveOperatorBehaviorDir(), cfg),
 	})
 	if err != nil {
 		return nil, nil, err

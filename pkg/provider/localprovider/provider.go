@@ -26,7 +26,8 @@ import (
 
 	// Import runtime implementations so they register via init().
 	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/hermes"
-	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
+
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 )
 
 const (
@@ -112,6 +113,42 @@ func (p *LocalProvider) ensureAgentCustomConfig(rt runtime.Runtime, dataDir stri
 	}
 	if err := os.WriteFile(path, []byte("{}\n"), 0644); err != nil {
 		return fmt.Errorf("create %s: %w", name, err)
+	}
+	return nil
+}
+
+// deployManagedCustomConfig writes the Conga-managed declarative custom-config
+// layers (#31) — fleet-custom.json (all agents) and agent-managed-custom.json
+// (per-agent) — from their committed sources, or "{}" if a source is absent
+// (the $include target must exist). These re-sync on every write (so fleet/per-
+// agent changes propagate); the admin-drift agent-custom.json is handled
+// separately by ensureAgentCustomConfig and never clobbered. No-op for runtimes
+// without $include layering (Hermes).
+func (p *LocalProvider) deployManagedCustomConfig(rt runtime.Runtime, cfg provider.AgentConfig, dataDir string) error {
+	if rt.CustomConfigFileName() == "" {
+		return nil
+	}
+	srcs := common.ResolveCustomConfigSources(p.overlayBehaviorDir(), cfg)
+	// Fail closed before writing anything: a reserved-key violation in the fleet
+	// source would break/compromise every agent (blast radius). #31 T6.1.
+	if err := common.ValidateManagedConfigSources(srcs); err != nil {
+		return err
+	}
+	layers := []struct {
+		name    string
+		content []byte
+	}{
+		{openclaw.FleetCustomConfigFile, srcs.Fleet},
+		{openclaw.AgentManagedCustomConfigFile, srcs.PerAgent},
+	}
+	for _, l := range layers {
+		content := l.content
+		if content == nil {
+			content = []byte("{}\n")
+		}
+		if err := os.WriteFile(filepath.Join(dataDir, l.name), content, 0644); err != nil {
+			return fmt.Errorf("deploy %s: %w", l.name, err)
+		}
 	}
 	return nil
 }
@@ -285,11 +322,12 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return fmt.Errorf("failed to generate gateway token: %w", err)
 	}
 	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
-		Agent:        cfg,
-		Secrets:      shared,
-		GatewayToken: gatewayToken,
-		Model:        p.getConfigValue("model"),
-		Overlay:      overlay,
+		Agent:           cfg,
+		Secrets:         shared,
+		GatewayToken:    gatewayToken,
+		Model:           p.getConfigValue("model"),
+		Overlay:         overlay,
+		RuntimeDefaults: common.ResolveRuntimeDefaults(p.overlayBehaviorDir(), cfg),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
@@ -303,6 +341,9 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 		return err
 	}
 	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
+		return err
+	}
+	if err := p.deployManagedCustomConfig(rt, cfg, dataDir); err != nil {
 		return err
 	}
 
@@ -364,6 +405,7 @@ func (p *LocalProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentCo
 	// are not in the effective egress allowlist. Non-blocking; the operator
 	// can fix the policy file before first use.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(p.overlayBehaviorDir(), cfg), policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
 
 	// 7. Create Docker network
 	netName := networkName(cfg.Name)
@@ -510,14 +552,20 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 		}
 	}
 
-	for _, f := range []string{
+	filesToRemove := []string{
 		filepath.Join(p.agentsDir(), name+".json"),
 		filepath.Join(p.configDir(), name+".env"),
 		filepath.Join(p.configDir(), name+".sha256"),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", name)),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", name)),
 		filepath.Join(p.configDir(), policy.EgressManifestFileName(name)),
-	} {
+	}
+	// Managed-include integrity baselines (#31). Resolve before the loop removes
+	// the agent record GetAgent reads. No-op for runtimes without managed layers.
+	for _, fname := range p.managedIncludeFiles(ctx, name) {
+		filesToRemove = append(filesToRemove, p.managedIncludeBaselinePath(name, fname))
+	}
+	for _, f := range filesToRemove {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove %s: %v", filepath.Base(f), err))
 		}
@@ -803,11 +851,12 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	}
 	// Regenerate config with current config format
 	configBytes, err := rt.GenerateConfig(runtime.ConfigParams{
-		Agent:        *cfg,
-		Secrets:      shared,
-		GatewayToken: existingToken,
-		Model:        p.getConfigValue("model"),
-		Overlay:      overlay,
+		Agent:           *cfg,
+		Secrets:         shared,
+		GatewayToken:    existingToken,
+		Model:           p.getConfigValue("model"),
+		Overlay:         overlay,
+		RuntimeDefaults: common.ResolveRuntimeDefaults(p.overlayBehaviorDir(), *cfg),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate config: %w", err)
@@ -819,6 +868,9 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 		return err
 	}
 	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
+		return err
+	}
+	if err := p.deployManagedCustomConfig(rt, *cfg, dataDir); err != nil {
 		return err
 	}
 
@@ -868,6 +920,7 @@ func (p *LocalProvider) RefreshAgent(ctx context.Context, agentName string) erro
 	// typically edit agent.yaml and refresh (not re-provision), so the
 	// provision-time warning misses the most common flow.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), agentName)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(p.overlayBehaviorDir(), *cfg), policy.EffectiveAllowedDomains(egressPolicy), agentName)
 
 	cName := containerName(agentName)
 	netName := networkName(agentName)

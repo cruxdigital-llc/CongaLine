@@ -349,6 +349,9 @@ func (p *LocalProvider) regenerateAgentConfig(ctx context.Context, cfg provider.
 	if err := p.ensureAgentCustomConfig(rt, dataDir); err != nil {
 		return err
 	}
+	if err := p.deployManagedCustomConfig(rt, cfg, dataDir); err != nil {
+		return err
+	}
 	envPath := filepath.Join(p.configDir(), cfg.Name+".env")
 	if err := os.Remove(envPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove old env file %s: %w", envPath, err)

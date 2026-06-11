@@ -58,4 +58,37 @@ fi
 # Fix ownership — runtime-aware uid
 chown $OWNER "$WORKSPACE/SOUL.md" "$WORKSPACE/AGENTS.md" "$WORKSPACE/USER.md" 2>/dev/null || true
 
+# --- Conga-managed declarative custom-config layers (feature #31) ---
+# Deploy the two include files the managed openclaw.json "$include" array
+# references, from the S3-synced committed sources:
+#   fleet-custom.json          <- _defaults/<runtime>/fleet-custom.json (all agents)
+#   agent-managed-custom.json  <- <name>/custom.json                    (per-agent)
+# An absent source deploys "{}" — the $include target must exist or the whole
+# config is invalid. root:root 0444 keeps them read-only to the agent (uid 1000),
+# which still reads them for $include resolution, mirroring agent-custom.json.
+# OpenClaw only ($include layering); no-op for hermes.
+if [ "$AGENT_RUNTIME" = "openclaw" ]; then
+  DATADIR="/opt/conga/data/$AGENT_NAME"
+  FLEET_SRC="$DEFAULT_DIR/$AGENT_RUNTIME/fleet-custom.json"
+  PERAGENT_SRC="$AGENT_DIR/custom.json"
+  if [ -f "$FLEET_SRC" ]; then
+    cp "$FLEET_SRC" "$DATADIR/fleet-custom.json"
+  else
+    printf '{}\n' > "$DATADIR/fleet-custom.json"
+  fi
+  if [ -f "$PERAGENT_SRC" ]; then
+    cp "$PERAGENT_SRC" "$DATADIR/agent-managed-custom.json"
+  else
+    printf '{}\n' > "$DATADIR/agent-managed-custom.json"
+  fi
+  chown root:root "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"
+  chmod 0444 "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"
+  # Record deployed-baseline hashes (feature #31 T5.2) so the periodic integrity
+  # check detects on-host tampering of these Conga-owned layers. Distinct from the
+  # root *-config.json.sha256 baseline; agent-custom.json is intentionally un-hashed.
+  sha256sum "$DATADIR/fleet-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-fleet-custom.json.sha256"
+  sha256sum "$DATADIR/agent-managed-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-agent-managed-custom.json.sha256"
+  chmod 0444 "/opt/conga/config/$AGENT_NAME-fleet-custom.json.sha256" "/opt/conga/config/$AGENT_NAME-agent-managed-custom.json.sha256"
+fi
+
 echo "Overlay files deployed for $AGENT_NAME ($AGENT_TYPE, $AGENT_RUNTIME) from $STAGING"

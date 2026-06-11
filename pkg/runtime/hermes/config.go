@@ -182,3 +182,7 @@ func (r *Runtime) ConfigFileName() string { return "config.yaml" }
 // CustomConfigFileName returns "" — the Hermes runtime has no admin-owned
 // include file (the $include layering is OpenClaw-specific).
 func (r *Runtime) CustomConfigFileName() string { return "" }
+
+// ManagedCustomConfigFiles returns nil — Hermes has no $include layering, so the
+// fleet / per-agent declarative layers (feature #31) are a no-op.
+func (r *Runtime) ManagedCustomConfigFiles() []string { return nil }

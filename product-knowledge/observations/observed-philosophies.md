@@ -33,3 +33,12 @@
 - **Suggested Domain**: architecture, security
 - **Confidence**: High
 - **Status**: promoted — reflected in security.md Universal Baseline section and architecture.md principle #4 (no enforcement without policy)
+
+### 2026-06-10 - Show source-of-truth, don't re-implement upstream semantics
+- **Source**: Operator decision during #31 P7 (`conga agent show-config`) — chose a "layered view" (the 4 deployed `$include` files, labeled by precedence) over synthesizing the merged effective config in Go.
+- **Context**: Rendering the "effective merged config" would require replicating OpenClaw's deep-merge (root-wins, array later-wins, object union, array handling). A subtly-wrong synthesized merge would mislead operators — worse than not having it. The authoritative merge lives in OpenClaw; Conga shows the inputs + precedence rules instead.
+- **Proposed Philosophy**: "When a downstream tool (OpenClaw, Envoy, Docker) owns a computation, surface its inputs and our precedence contract rather than re-deriving its output operator-side. A faithful view of the source-of-truth beats a synthesized view that can drift from reality."
+- **Suggested Weight**: preferred
+- **Suggested Domain**: architecture, ux
+- **Confidence**: Medium
+- **Status**: pending

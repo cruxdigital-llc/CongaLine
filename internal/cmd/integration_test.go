@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -279,6 +280,229 @@ func TestTeamAgentWithBehavior(t *testing.T) {
 		}
 		if strings.TrimSpace(out) != "# Memory" {
 			t.Errorf("MEMORY.md was modified: %q", out)
+		}
+	})
+
+	t.Run("teardown", func(t *testing.T) {
+		mustRunCLI(t, append(base, "admin", "teardown", "--force")...)
+	})
+}
+
+// TestFleetAndPerAgentConfig codifies the feature #31 live verification (T9.2):
+// the declarative fleet + per-agent custom-config layers are deployed via the
+// $include array, OpenClaw composes them (union + precedence), changes propagate
+// on refresh with baselines kept fresh, a reserved-key fleet source fails closed,
+// show-config renders the layers, and the managed-include baselines are cleaned
+// up on removal.
+//
+// #31 sources resolve from the LIVE repo (overlayBehaviorDir == repo_path == root),
+// not the dataDir snapshot, so the sources are written into <root>/agents/. The
+// per-agent custom.json is gitignored; the fleet source is not, so it is guarded
+// (skip if one already exists) and removed on cleanup.
+func TestFleetAndPerAgentConfig(t *testing.T) {
+	dataDir, agentName := setupTestEnv(t)
+	base := baseArgs(dataDir)
+	root := repoRoot(t)
+	parent := t
+
+	const containerDataPath = "/home/node/.openclaw"
+	fleetSrc := filepath.Join(root, "agents", "_defaults", "openclaw", "fleet-custom.json")
+	perAgentDir := filepath.Join(root, "agents", agentName)
+	perAgentSrc := filepath.Join(perAgentDir, "custom.json")
+
+	if _, err := os.Stat(fleetSrc); err == nil {
+		t.Skipf("refusing to clobber an existing committed %s", fleetSrc)
+	}
+	t.Cleanup(func() {
+		os.Remove(fleetSrc)
+		os.RemoveAll(perAgentDir)
+	})
+
+	t.Run("setup", func(t *testing.T) {
+		cfg := fmt.Sprintf(`{"image":%q,"repo_path":%q}`, testImage, root)
+		mustRunCLI(t, append(base, "admin", "setup", "--json", cfg)...)
+	})
+
+	t.Run("write-config-sources", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		if err := os.MkdirAll(perAgentDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// Fleet: two servers (one shared key to be overridden). Per-agent: a
+		// distinct server (proves union) + overrides the shared key (proves
+		// per-agent > fleet). Keys live under mcp.* which the root does not own,
+		// so include precedence is observable.
+		if err := os.WriteFile(fleetSrc, []byte(`{"mcp":{"servers":{"fleetmcp":{"url":"https://fleet.example/sse"},"shared":{"url":"https://fleet.example/shared"}}}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(perAgentSrc, []byte(`{"mcp":{"servers":{"agentmcp":{"url":"https://agent.example/sse"},"shared":{"url":"https://agent.example/shared"}}}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("add-user", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		mustRunCLI(t, append(base, "admin", "add-user", agentName)...)
+		assertContainerRunning(t, agentName)
+	})
+
+	t.Run("include-array-deployed-in-precedence-order", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		out, err := dockerExec(t, "conga-"+agentName, "cat", containerDataPath+"/openclaw.json")
+		if err != nil {
+			t.Fatalf("cat openclaw.json: %v\n%s", err, out)
+		}
+		var cfg struct {
+			Include []string `json:"$include"`
+		}
+		if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+			t.Fatalf("parse openclaw.json: %v", err)
+		}
+		want := []string{"fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"}
+		if len(cfg.Include) != len(want) {
+			t.Fatalf("$include = %v, want %v", cfg.Include, want)
+		}
+		for i := range want {
+			if cfg.Include[i] != want[i] {
+				t.Errorf("$include[%d] = %q, want %q", i, cfg.Include[i], want[i])
+			}
+		}
+	})
+
+	t.Run("layers-deployed-from-sources", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		assertFileContent(t, agentName, containerDataPath+"/fleet-custom.json", "fleetmcp")
+		assertFileContent(t, agentName, containerDataPath+"/agent-managed-custom.json", "agentmcp")
+		// agent-custom.json (admin drift) starts empty.
+		assertFileContent(t, agentName, containerDataPath+"/agent-custom.json", "{}")
+	})
+
+	// OpenClaw resolves the $include merge — verify its actual effective config.
+	t.Run("effective-merge-union", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		out, err := dockerExec(t, "conga-"+agentName, "openclaw", "config", "get", "mcp.servers")
+		if err != nil {
+			t.Fatalf("openclaw config get mcp.servers: %v\n%s", err, out)
+		}
+		for _, want := range []string{"fleetmcp", "agentmcp", "shared"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("effective mcp.servers missing %q (union broken)\ngot: %s", want, out)
+			}
+		}
+	})
+
+	t.Run("effective-merge-per-agent-over-fleet", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		out, err := dockerExec(t, "conga-"+agentName, "openclaw", "config", "get", "mcp.servers.shared.url")
+		if err != nil {
+			t.Fatalf("config get shared.url: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "agent.example") {
+			t.Errorf("per-agent must win over fleet on shared.url, got: %s", out)
+		}
+	})
+
+	t.Run("admin-drift-over-per-agent", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		// Admin edits the on-host agent-custom.json (highest-precedence include).
+		adminPath := filepath.Join(dataDir, "data", agentName, "agent-custom.json")
+		if err := os.WriteFile(adminPath, []byte(`{"mcp":{"servers":{"shared":{"url":"https://admin.example/shared"}}}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		mustRunCLI(t, append(base, "refresh", "--agent", agentName)...)
+		assertContainerRunning(t, agentName)
+		out, err := dockerExec(t, "conga-"+agentName, "openclaw", "config", "get", "mcp.servers.shared.url")
+		if err != nil {
+			t.Fatalf("config get shared.url: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "admin.example") {
+			t.Errorf("admin drift must win over per-agent, got: %s", out)
+		}
+	})
+
+	t.Run("fleet-propagation-on-refresh", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		// Edit the fleet source → refresh → the new server lands on the agent.
+		if err := os.WriteFile(fleetSrc, []byte(`{"mcp":{"servers":{"fleetmcp":{"url":"https://fleet.example/sse"},"shared":{"url":"https://fleet.example/shared"},"fleetv2":{"url":"https://fleet.example/v2"}}}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		mustRunCLI(t, append(base, "refresh", "--agent", agentName)...)
+		assertContainerRunning(t, agentName)
+		assertFileContent(t, agentName, containerDataPath+"/fleet-custom.json", "fleetv2")
+		out, err := dockerExec(t, "conga-"+agentName, "openclaw", "config", "get", "mcp.servers")
+		if err != nil {
+			t.Fatalf("config get mcp.servers: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "fleetv2") {
+			t.Errorf("fleet change did not propagate to effective config\ngot: %s", out)
+		}
+	})
+
+	t.Run("show-config-renders-layers", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		stdout := mustRunCLI(t, append(base, "agent", "show-config", agentName, "--output", "json")...)
+		var got struct {
+			Agent  string `json:"agent"`
+			Layers []struct {
+				File       string `json:"file"`
+				Role       string `json:"role"`
+				Precedence int    `json:"precedence"`
+				Present    bool   `json:"present"`
+			} `json:"layers"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+			t.Fatalf("parse show-config json: %v\n%s", err, stdout)
+		}
+		wantFiles := []string{"openclaw.json", "agent-custom.json", "agent-managed-custom.json", "fleet-custom.json"}
+		if len(got.Layers) != len(wantFiles) {
+			t.Fatalf("show-config returned %d layers, want %d: %+v", len(got.Layers), len(wantFiles), got.Layers)
+		}
+		for i, want := range wantFiles {
+			l := got.Layers[i]
+			if l.File != want || l.Precedence != i+1 || !l.Present {
+				t.Errorf("layer %d = {file:%q prec:%d present:%v}, want file:%q prec:%d present:true", i, l.File, l.Precedence, l.Present, want, i+1)
+			}
+		}
+	})
+
+	t.Run("reserved-key-fleet-source-fails-closed", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		// A reserved key in the FLEET source would compromise every agent — the
+		// refresh must abort before deploying, and the bad content must not reach
+		// the host (blast-radius mitigation).
+		if err := os.WriteFile(fleetSrc, []byte(`{"channels":{"slack":{"allowFrom":["U-EVIL"]}}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, stderr, err := runCLI(t, append(base, "refresh", "--agent", agentName)...)
+		if err == nil {
+			t.Fatal("refresh with a reserved-key fleet source should fail closed, but succeeded")
+		}
+		if !containsAny(stderr, "reserved", "conga-owned", "channels", "pre-deploy validation") {
+			t.Errorf("expected a reserved-key/fail-closed error, got stderr: %s", stderr)
+		}
+		// The bad content must not have reached the agent.
+		out, derr := dockerExec(t, "conga-"+agentName, "cat", containerDataPath+"/fleet-custom.json")
+		if derr == nil && strings.Contains(out, "channels") {
+			t.Errorf("reserved-key fleet content leaked to the host: %s", out)
+		}
+		// Restore a clean fleet source so cleanup/refresh paths stay sane.
+		if err := os.WriteFile(fleetSrc, []byte(`{"mcp":{"servers":{"fleetmcp":{"url":"https://fleet.example/sse"}}}}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("remove-cleans-managed-baselines", func(t *testing.T) {
+		skipIfPriorFailed(t, parent)
+		mustRunCLI(t, append(base, "admin", "remove-agent", agentName, "--force")...)
+		assertContainerNotExists(t, agentName)
+		// The two managed-include baselines must be removed alongside the root one.
+		for _, bn := range []string{
+			agentName + ".fleet-custom.json.sha256",
+			agentName + ".agent-managed-custom.json.sha256",
+		} {
+			if _, err := os.Stat(filepath.Join(dataDir, "config", bn)); !os.IsNotExist(err) {
+				t.Errorf("orphaned managed-include baseline %s (err=%v)", bn, err)
+			}
 		}
 	})
 

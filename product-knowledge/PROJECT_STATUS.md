@@ -348,6 +348,37 @@ No new Conga data-model concept.
   See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
 - See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
 
+### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — ✅ Implemented + Verified (code + live T9.2; PR #61, not merged)
+- **Goal**: make custom OpenClaw config (MCP servers, skills, tools) **declarative + version-controlled
+  in the repo** at two levels — a **fleet baseline** (all agents) and **per-agent** (`agents/<name>/`)
+  — deployed by Conga via `$include` layering, composing with #30's on-host admin-drift `agent-custom.json`.
+  Answers both "every agent needs a baseline set" and "configure an MCP server in code" (`agent.yaml` is
+  strict-keyed and rejects `mcp`).
+- **Approach (anchor)**: extend #30's verified `$include` to an **array** —
+  `["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]` — Conga deploys the managed
+  fleet/per-agent files from committed sources (like behavior files); admin drift file unchanged.
+  Layering: defaults → fleet → per-agent-declarative → admin-drift, with the managed root winning on
+  Conga-owned keys. **Folds in de-embedding `openclaw-defaults.json`** (so fleet defaults change without
+  a binary release).
+- **Load-bearing unknown**: `$include`-**array** precedence (which include wins) — live-verify on the
+  pinned image, like #30's root-wins check.
+- **Status**: `/glados:implement-feature` + `/glados:verify-feature` complete on branch
+  `plan/fleet-baseline-configuration` (PR #61, **not merged**). P1–P9 landed: generator `$include`
+  array; de-embed w/ embedded fallback (`agents/_defaults/openclaw/openclaw-defaults.json`, Go paths);
+  per-provider deploy (local/remote/AWS Go + AWS bash boot/provision); integrity reserved-key guard on
+  all 3 layers + hash-verify the 2 managed layers; pre-deploy fail-closed (fleet blast-radius) +
+  egress-gap warnings; `conga agent show-config` (layered view, CLI+JSON+MCP); `config-taxonomy.md`
+  updated. **Two PR-review passes** (1 blocker + 3 should-fix, all fixed: AWS-refresh managed-baseline
+  symmetry, local live-repo resolution, `$include`-target fallback, removal baseline cleanup).
+  **Verify-feature**: full `go test ./...` + `go vet` + `gofmt` green; post-impl standards gate PASS
+  (caught + fixed an Interface-Parity `json_schema.go` gap for show-config); spec reconciled (§14).
+- **T9.2 live-verified** (local Docker, OpenClaw 2026.5.26): union + per-agent>fleet + admin-drift>per-agent>fleet
+  merge precedence on a real container; fleet propagation on refresh with baseline rewritten in lockstep;
+  pre-deploy fail-closed on a reserved-key fleet source; egress-gap warnings; orphan-baseline cleanup on
+  removal; show-config CLI+JSON. Torn down after.
+- **Remaining**: **R1** `terraform-provider-conga` release (post-merge, `pkg/` changed); **T2.4** AWS bash
+  boot-path de-embed unification (tracked follow-up). See `specs/2026-06-10_feature_fleet-baseline-configuration/`.
+
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)
 - [ ] Horizon 3: Advanced hardening (GuardDuty, Config rules)

@@ -306,3 +306,40 @@ func TestWarnOverlayEgressGaps_OneWarningPerGap(t *testing.T) {
 		t.Fatalf("warnings should name both hosts, got %v", got)
 	}
 }
+
+func TestCheckCustomConfigEgress(t *testing.T) {
+	allow := []string{"mcp.linear.app", "*.allowed.io"}
+
+	// Fleet declares an allowlisted MCP host; per-agent declares a missing one.
+	srcs := CustomConfigSources{
+		Fleet:    []byte(`{"mcp":{"servers":{"linear":{"url":"https://mcp.linear.app/sse"}}}}`),
+		PerAgent: []byte(`{"mcp":{"servers":{"internal":{"url":"https://tools.example.com/mcp"}}}}`),
+	}
+	got := CheckCustomConfigEgress(srcs, allow)
+	if !reflect.DeepEqual(got, []string{"tools.example.com"}) {
+		t.Fatalf("want [tools.example.com], got %v", got)
+	}
+
+	// Wildcard covers a subdomain → no gap.
+	srcs2 := CustomConfigSources{Fleet: []byte(`{"mcp":{"servers":{"x":{"url":"https://api.allowed.io/mcp"}}}}`)}
+	if got := CheckCustomConfigEgress(srcs2, allow); got != nil {
+		t.Fatalf("wildcard-covered host should not be flagged, got %v", got)
+	}
+
+	// Same missing host in both layers is reported once (dedup).
+	srcs3 := CustomConfigSources{
+		Fleet:    []byte(`{"mcp":{"servers":{"a":{"url":"https://dup.example.com/x"}}}}`),
+		PerAgent: []byte(`{"mcp":{"servers":{"b":{"url":"https://dup.example.com/y"}}}}`),
+	}
+	if got := CheckCustomConfigEgress(srcs3, allow); !reflect.DeepEqual(got, []string{"dup.example.com"}) {
+		t.Fatalf("want single deduped [dup.example.com], got %v", got)
+	}
+
+	// No MCP servers / empty / unparseable → no gaps.
+	if got := CheckCustomConfigEgress(CustomConfigSources{Fleet: []byte(`{"skills":{"allow":["x"]}}`)}, allow); got != nil {
+		t.Fatalf("no MCP servers should yield nil, got %v", got)
+	}
+	if got := CheckCustomConfigEgress(CustomConfigSources{Fleet: []byte("{ not json")}, allow); got != nil {
+		t.Fatalf("unparseable should yield nil, got %v", got)
+	}
+}

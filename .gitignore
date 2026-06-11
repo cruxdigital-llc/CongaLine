@@ -36,3 +36,6 @@ agents/*/
 
 # Other local files
 demo.*
+
+# Obsidian editor config (product-knowledge vault)
+product-knowledge/.obsidian/

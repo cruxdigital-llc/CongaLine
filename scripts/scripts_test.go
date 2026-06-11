@@ -1,10 +1,42 @@
 package scripts
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"text/template"
 )
+
+// TestDeployAgentsManagedIncludes locks the feature #31 T4.4 bash deploy: the
+// fresh-deploy helper writes fleet-custom.json + agent-managed-custom.json from
+// the S3-synced sources (or "{}"), gated on the openclaw runtime, read-only to
+// the agent. deploy-agents.sh.tmpl is uploaded raw (terraform file()), not a Go
+// template, so we read it from disk.
+func TestDeployAgentsManagedIncludes(t *testing.T) {
+	b, err := os.ReadFile("deploy-agents.sh.tmpl")
+	if err != nil {
+		t.Fatalf("read deploy-agents.sh.tmpl: %v", err)
+	}
+	s := string(b)
+	checks := map[string]string{
+		"openclaw gate":         `if [ "$AGENT_RUNTIME" = "openclaw" ]; then`,
+		"fleet source":          `FLEET_SRC="$DEFAULT_DIR/$AGENT_RUNTIME/fleet-custom.json"`,
+		"per-agent source":      `PERAGENT_SRC="$AGENT_DIR/custom.json"`,
+		"deploy fleet file":     `cp "$FLEET_SRC" "$DATADIR/fleet-custom.json"`,
+		"deploy per-agent file": `cp "$PERAGENT_SRC" "$DATADIR/agent-managed-custom.json"`,
+		"empty fleet fallback":  `printf '{}\n' > "$DATADIR/fleet-custom.json"`,
+		"managed includes 0444": `chmod 0444 "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"`,
+		"managed includes root": `chown root:root "$DATADIR/fleet-custom.json" "$DATADIR/agent-managed-custom.json"`,
+		// Feature #31 T5.2: deployed-baseline hashes for the managed layers.
+		"fleet baseline hash":    `sha256sum "$DATADIR/fleet-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-fleet-custom.json.sha256"`,
+		"agent-managed baseline": `sha256sum "$DATADIR/agent-managed-custom.json" | cut -d' ' -f1 > "/opt/conga/config/$AGENT_NAME-agent-managed-custom.json.sha256"`,
+	}
+	for desc, want := range checks {
+		if !strings.Contains(s, want) {
+			t.Errorf("deploy-agents.sh.tmpl missing %s: want %q", desc, want)
+		}
+	}
+}
 
 func TestDeployEgressScriptTemplateRender(t *testing.T) {
 	tmpl, err := template.New("deploy-egress").Parse(DeployEgressScript)
@@ -242,6 +274,11 @@ func TestAddUserScriptTemplateRender(t *testing.T) {
 		"proxy bootstrap mount": "$BOOTSTRAP_PATH:/opt/proxy-bootstrap.js",
 		"iptables rules":        "iptables -I DOCKER-USER",
 		"egress proxy run":      "conga-egress-proxy",
+		// Feature #31: 3-element $include array (order = precedence).
+		"layered $include": `"$include": ["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]`,
+		// Feature #31: managed $include targets are seeded as {} if deploy-agents.sh
+		// is unavailable, so a missing target never invalidates the config.
+		"managed include fallback": `for MF in fleet-custom.json agent-managed-custom.json; do`,
 	}
 	for desc, want := range checks {
 		if !strings.Contains(output, want) {
@@ -293,6 +330,11 @@ func TestAddTeamScriptTemplateRender(t *testing.T) {
 		"iptables rules":   "iptables -I DOCKER-USER",
 		"egress proxy run": "conga-egress-proxy",
 		"channel routing":  "channels",
+		// Feature #31: 3-element $include array (order = precedence).
+		"layered $include": `"$include": ["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]`,
+		// Feature #31: managed $include targets are seeded as {} if deploy-agents.sh
+		// is unavailable, so a missing target never invalidates the config.
+		"managed include fallback": `for MF in fleet-custom.json agent-managed-custom.json; do`,
 	}
 	for desc, want := range checks {
 		if !strings.Contains(output, want) {

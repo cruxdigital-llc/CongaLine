@@ -16,6 +16,7 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/policy"
 	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
+	"github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 	"github.com/cruxdigital-llc/conga-line/pkg/ui"
 )
 
@@ -252,6 +253,41 @@ func (p *RemoteProvider) ResetAgentCustomConfig(ctx context.Context, name string
 	return nil
 }
 
+// deployManagedCustomConfig uploads the Conga-managed declarative custom-config
+// layers (#31) to the remote host — fleet-custom.json + agent-managed-custom.json
+// from their committed sources (operator's local agents/ dir), or "{}" if absent.
+// Re-synced on every write; admin-drift agent-custom.json handled separately.
+// No-op for runtimes without $include layering.
+func (p *RemoteProvider) deployManagedCustomConfig(ctx context.Context, cfg provider.AgentConfig, dataDir string) error {
+	rt, err := runtime.Get(runtime.ResolveRuntime(cfg.Runtime, ""))
+	if err != nil || rt.CustomConfigFileName() == "" {
+		return nil
+	}
+	srcs := common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), cfg)
+	// Fail closed before uploading anything: a reserved-key violation in the fleet
+	// source would break/compromise every agent (blast radius). #31 T6.1.
+	if err := common.ValidateManagedConfigSources(srcs); err != nil {
+		return err
+	}
+	layers := []struct {
+		name    string
+		content []byte
+	}{
+		{openclaw.FleetCustomConfigFile, srcs.Fleet},
+		{openclaw.AgentManagedCustomConfigFile, srcs.PerAgent},
+	}
+	for _, l := range layers {
+		content := l.content
+		if content == nil {
+			content = []byte("{}\n")
+		}
+		if err := p.ssh.Upload(posixpath.Join(dataDir, l.name), content, 0644); err != nil {
+			return fmt.Errorf("deploy %s: %w", l.name, err)
+		}
+	}
+	return nil
+}
+
 func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConfig) error {
 	// 1. Save agent config
 	if err := p.saveAgentConfig(&cfg); err != nil {
@@ -302,6 +338,9 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	if err := p.ensureAgentCustomConfig(ctx, cfg, dataDir); err != nil {
 		return err
 	}
+	if err := p.deployManagedCustomConfig(ctx, cfg, dataDir); err != nil {
+		return err
+	}
 
 	envContent := common.GenerateEnvFile(cfg, shared, perAgent)
 	p.ssh.MkdirAll(p.remoteConfigDir(), 0700)
@@ -335,6 +374,7 @@ func (p *RemoteProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentC
 	// 5b. Pre-flight: warn if the overlay's primary or subagent endpoints
 	// are not in the effective egress allowlist. Non-blocking.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), cfg), policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
 
 	// 6. Create Docker network
 	netName := networkName(cfg.Name)
@@ -462,13 +502,26 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 
 	// Remove remote config files
-	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s %s %s %s %s",
-		shellQuote(posixpath.Join(p.remoteAgentsDir(), name+".json")),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".env")),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".sha256")),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.yaml", name))),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), policy.EgressManifestFileName(name))),
-	))
+	removePaths := []string{
+		posixpath.Join(p.remoteAgentsDir(), name+".json"),
+		posixpath.Join(p.remoteConfigDir(), name+".env"),
+		posixpath.Join(p.remoteConfigDir(), name+".sha256"),
+		posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.yaml", name)),
+		posixpath.Join(p.remoteConfigDir(), policy.EgressManifestFileName(name)),
+	}
+	// Managed-include integrity baselines (#31). Best-effort: resolve the runtime's
+	// managed layers before the rm removes the agent record. No-op when the agent
+	// is already gone or its runtime has no managed layers.
+	if a, gerr := p.GetAgent(ctx, name); gerr == nil {
+		for _, fname := range managedIncludeFiles(*a) {
+			removePaths = append(removePaths, p.managedIncludeBaselinePath(name, fname))
+		}
+	}
+	quoted := make([]string, len(removePaths))
+	for i, pth := range removePaths {
+		quoted[i] = shellQuote(pth)
+	}
+	p.ssh.Run(ctx, "rm -f "+strings.Join(quoted, " "))
 
 	if deleteSecrets {
 		p.ssh.Run(ctx, fmt.Sprintf("rm -rf %s", shellQuote(p.agentSecretsDir(name))))
@@ -715,6 +768,9 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	if err := p.ensureAgentCustomConfig(ctx, *cfg, dataDir); err != nil {
 		return err
 	}
+	if err := p.deployManagedCustomConfig(ctx, *cfg, dataDir); err != nil {
+		return err
+	}
 
 	p.saveConfigBaseline(agentName)
 
@@ -747,6 +803,7 @@ func (p *RemoteProvider) RefreshAgent(ctx context.Context, agentName string) err
 	// refresh (the common flow) still get the heads-up before runtime
 	// 403s start landing.
 	common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), agentName)
+	common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(common.ResolveOperatorBehaviorDir(), *cfg), policy.EffectiveAllowedDomains(egressPolicy), agentName)
 
 	cName := containerName(agentName)
 	netName := networkName(agentName)

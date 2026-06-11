@@ -13,6 +13,7 @@ func (s *Server) registerTools() {
 		s.toolWhoAmI(),
 		s.toolListAgents(),
 		s.toolGetAgent(),
+		s.toolAgentShowConfig(),
 
 		// Agent Lifecycle
 		s.toolProvisionAgent(),

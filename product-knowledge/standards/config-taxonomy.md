@@ -1,6 +1,6 @@
 <!--
 GLaDOS-MANAGED DOCUMENT
-Last Updated: 2026-05-22
+Last Updated: 2026-06-10
 To modify: Edit directly. This is the single source of truth for where per-agent
 configuration lives. Update when introducing a new per-agent concern; do NOT
 create a new config file/format without consulting the decision rule below.
@@ -19,9 +19,50 @@ create a new config file/format without consulting the decision rule below.
 | **Infrastructure** | Agent existence, gateway port, egress allowlist (incl. private IPs), channel bindings, secret values, host resources | `terraform/environments/<env>/terraform.tfvars` `agents = {}` map | HCL (Terraform) | AWS (declarative). Local/remote use CLI flags (`conga admin add-user`). | Operator. Gitignored — only `.example` is committed. |
 | **Cluster policy** | Egress allow/deny lists, routing rules, posture (enforce/validate), drift detection | `~/.conga/conga-policy.yaml` with per-agent overrides under `agents.<name>.*` | YAML | All providers | Operator. Lifecycle via `conga policy {validate,deploy,drift}`. Egress overrides are **additive** with the global lists (see `standards/egress-controls.md` — *Global + agent policies are additive*); routing and posture overrides still replace. |
 | **Runtime overlay** | Model (provider, name, base_url), **subagents** (in-runtime delegation — secondary model + behavior knobs), prompts (SOUL/AGENTS/USER), future: memory, tools, limits, multi-modal model refs, fallback chains | `agents/<name>/agent.yaml` + `agents/<name>/*.md` | YAML + Markdown | All providers (provider-agnostic; same files produce same runtime config on local/remote/AWS) | Operator. Gitignored at the per-agent dir level — only `agents/_example/` and `agents/_defaults/` (role packages + runtime/type defaults) are committed. |
-| **Runtime customization (admin)** | Any OpenClaw config Conga does **not** manage — `mcp.servers`, `skills`, `tools.allow/deny`, `agents.defaults.sandbox`, `memorySearch`, `ui`, `cron`, etc. | `agent-custom.json` in the agent **data dir** (`~/.conga/data/<name>/` local, `/opt/conga/data/<name>/` remote/AWS), referenced from the managed `openclaw.json` via `$include` | JSON (JSON5 tolerated by OpenClaw) | All providers (OpenClaw deep-merges; the managed root wins on Conga-owned scalar keys) | **Provider materializes it empty (`{}`); the administrator edits it in place.** Conga never overwrites it except `conga agent rebaseline`. Must **not** declare Conga-owned keys (`$include`/`channels`/`gateway`/`plugins`) — enforced by the integrity check. See `specs/2026-06-09_feature_infrastructure-only-simplification/`. |
+| **Runtime customization (declarative)** | The same un-modeled OpenClaw config as the admin layer below (`mcp.servers`, `skills`, `tools.allow/deny`, …), but **version-controlled in the repo** at two granularities: a **fleet baseline** for every agent and **per-agent** overrides. | **Fleet:** `agents/_defaults/<runtime>/fleet-custom.json` (committed). **Per-agent:** `agents/<name>/custom.json` (gitignored per-agent). Conga deploys them beside `openclaw.json` as `fleet-custom.json` / `agent-managed-custom.json` and references them in the `$include` array. | JSON (JSON5 tolerated) | All providers (OpenClaw deep-merges; later in the `$include` array wins, root wins over all) | **Operator, in the repo.** Re-synced from source on every provision/refresh/bind (propagation). Must **not** declare Conga-owned keys (`$include`/`channels`/`gateway`/`plugins`) — guarded pre-deploy (fail closed) and by the integrity check, and hash-verified on the host. See `specs/2026-06-10_feature_fleet-baseline-configuration/`. |
+| **Runtime customization (admin drift)** | Any OpenClaw config Conga does **not** manage, applied as an **on-host hot-fix** (not version-controlled) — `mcp.servers`, `skills`, `tools.allow/deny`, `agents.defaults.sandbox`, `memorySearch`, `ui`, `cron`, etc. | `agent-custom.json` in the agent **data dir** (`~/.conga/data/<name>/` local, `/opt/conga/data/<name>/` remote/AWS), referenced from the managed `openclaw.json` via `$include` | JSON (JSON5 tolerated by OpenClaw) | All providers (OpenClaw deep-merges; **wins over the declarative layers** but the managed root wins over it) | **Provider materializes it empty (`{}`); the administrator edits it in place.** Conga never overwrites it except `conga agent rebaseline`. Same reserved-key guard as the declarative layer; **not** hashed (drift is expected). See `specs/2026-06-09_feature_infrastructure-only-simplification/`. |
 | **Runtime persistence** | Identity (name, type, runtime choice, allocated port, channel binding state) | `~/.conga/agents/<name>.json` (local) / `/opt/conga/agents/<name>.json` (remote) / SSM `/conga/agents/<name>` (AWS) | JSON | Per-provider | **Materialized by the provider** at provision time, not hand-edited. |
 | **Secrets** | API keys, OAuth tokens, channel bot tokens | Files mode 0400 (`~/.conga/secrets/agents/<name>/<key>` on local/remote) or AWS Secrets Manager (`conga/agents/<name>/<key>` on AWS) | Native | Per-provider | Operator. Authored via tfvars (AWS) or `conga secrets set` (local/remote). Never in git. |
+
+## The custom-config layers (OpenClaw `$include`) — precedence
+
+OpenClaw config that Conga does **not** model is layered via the managed
+`openclaw.json`'s `$include` array. There are **four** effective layers; on a
+conflicting scalar key the higher one wins, and distinct keys union:
+
+| # | Layer | Source (edit here) | Deployed file | Version-controlled? |
+|---|---|---|---|---|
+| 1 (highest) | Managed root | generated by Conga | `openclaw.json` | — |
+| 2 | Admin drift | edit on the host | `agent-custom.json` | No (host hot-fix) |
+| 3 | Per-agent declarative | `agents/<name>/custom.json` | `agent-managed-custom.json` | Yes (gitignored per-agent) |
+| 4 (lowest) | Fleet baseline | `agents/_defaults/<runtime>/fleet-custom.json` | `fleet-custom.json` | Yes (committed) |
+
+Effective precedence: **root > admin-drift > per-agent > fleet.** Admin drift
+is highest among the includes (sacrosanct, never clobbered — a host hot-fix
+overrides repo-declared config); the Conga-owned root always wins over every
+include. Inspect the live, ordered layers with **`conga agent show-config <name>`**
+(CLI / `--output json` / MCP `conga_agent_show_config`).
+
+**Which layer do I want?**
+- Same MCP server / skill / tool for **every** agent → **fleet** (`_defaults/<runtime>/fleet-custom.json`), `conga refresh-all` to propagate.
+- A declarative, reviewable override for **one** agent → **per-agent** (`agents/<name>/custom.json`), `conga refresh --agent <name>`.
+- An urgent **on-host** hot-fix you'll reconcile later → **admin drift** (`agent-custom.json`), reset with `conga agent rebaseline`.
+
+A reserved-key violation (`channels`/`gateway`/`plugins`/`$include`) in the fleet
+or per-agent source **fails the deploy closed** — the bad file never reaches a
+host (fleet blast-radius mitigation). The managed layers are hash-verified on the
+host; admin drift is not.
+
+### The fleet runtime baseline (`openclaw-defaults.json`)
+
+The OpenClaw **runtime baseline** that feeds the managed root (`agents.defaults`
+model, `tools.profile`, heartbeat, …) is operator-editable at
+`agents/_defaults/openclaw/openclaw-defaults.json` (committed; synced to the AWS
+host with the rest of the `agents/` tree). Editing it changes the fleet-wide base
+without a binary/provider release. The binary keeps an embedded copy as a
+fail-safe fallback if the file is absent or malformed. (Today only the Go
+generation paths — `conga refresh` on AWS, plus local/remote — read the file;
+unifying the AWS fresh-boot bash heredocs to consume it is a tracked follow-up.)
 
 ## Decision rule — answer these in order
 
@@ -92,11 +133,16 @@ Walk the rule:
 Walk the rule:
 1. Affects AWS infra? Only the endpoint's **reachability** — the MCP host must be in the egress allowlist (tfvars/policy), same as any new endpoint.
 2. Policy decision? No.
-3. Runtime-consumed, operator-authored, provider-agnostic, **and modeled by Conga**? No — Conga deliberately does **not** model `mcp.servers` (it would be endless to model every OpenClaw config concern). This is **Runtime customization (admin)** → edit **`agent-custom.json`** in the agent data dir directly:
+3. Runtime-consumed, operator-authored, provider-agnostic, **and modeled by Conga**? No — Conga deliberately does **not** model `mcp.servers` (it would be endless to model every OpenClaw config concern). This is **Runtime customization** → pick the layer by scope (see *The custom-config layers* above):
+   - **All agents** (declarative, committed) → `agents/_defaults/openclaw/fleet-custom.json`, then `conga refresh-all`.
+   - **One agent** (declarative, reviewable, in the repo) → `agents/<name>/custom.json`, then `conga refresh --agent <name>`.
+   - **On-host hot-fix** (not version-controlled) → edit `agent-custom.json` in the agent data dir directly; reset with `conga agent rebaseline <name>`.
+
+   The content is the same in any layer:
    ```json
    { "mcp": { "servers": { "linear": { "url": "https://mcp.linear.app/sse", "transport": "sse" } } } }
    ```
-   OpenClaw `$include`-merges it under the managed `openclaw.json`; the edit survives restarts and `conga refresh` (Conga never overwrites the include). To discard it and return to baseline: `conga agent rebaseline <name>`. Do **not** put `channels`/`gateway`/`plugins` here — those are Conga-owned and the integrity check flags them. Note: with a root `$include`, in-container `openclaw config set` fails closed — edit `agent-custom.json` directly or use the Conga CLI.
+   OpenClaw `$include`-merges them under the managed `openclaw.json` (root wins, then admin drift, then per-agent, then fleet); edits survive restarts and `conga refresh`. Don't put `channels`/`gateway`/`plugins` in any layer — those are Conga-owned, rejected pre-deploy (fail closed) and flagged by the integrity check. The MCP host must also be in the egress allowlist; `conga refresh`/provision warns at deploy when a declared `mcp.servers.*.url` isn't allowlisted. Note: with a root `$include`, in-container `openclaw config set` fails closed — edit the source files or use the Conga CLI.
 
 ## Why three layers (overlay vs policy vs infra) instead of one?
 

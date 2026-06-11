@@ -786,14 +786,18 @@ setup_agent_common() {
   mkdir -p /opt/conga/data/$AGENT_NAME/data/{workspace,memory,logs,agents,canvas,cron,devices,identity,media}
   chown -R 1000:1000 /opt/conga/data/$AGENT_NAME
   cp /opt/conga/config/$AGENT_NAME-config.json /opt/conga/data/$AGENT_NAME/openclaw.json
-  # Reference the admin-owned customization include (Infrastructure-Only
-  # Simplification). OpenClaw $include-merges agent-custom.json under this managed
-  # root; the root wins on conflicting Conga-owned keys. A missing $include target
-  # invalidates the whole config, so always create an empty one. root:root 0444
-  # keeps it read-only to the agent (uid 1000) — which still reads it for $include
-  # resolution — so a prompt-injected agent cannot inject a channel binding;
-  # admins edit it via SSM as root. Never clobber existing admin content.
-  jq '. + {"$include": ["agent-custom.json"]}' /opt/conga/data/$AGENT_NAME/openclaw.json > /opt/conga/data/$AGENT_NAME/openclaw.json.tmp \
+  # Reference the layered custom-config includes ($include array, feature #31).
+  # OpenClaw $include-merges them under this managed root in array order (later
+  # wins); the root wins over every include. Effective precedence:
+  # root > agent-custom (admin drift) > agent-managed (per-agent) > fleet.
+  # A missing $include target invalidates the whole config, so all three files
+  # must exist: deploy-agents.sh (below) creates fleet-custom.json +
+  # agent-managed-custom.json from the S3-synced sources (or "{}"); agent-custom.json
+  # is ensured here. root:root 0444 keeps them read-only to the agent (uid 1000) —
+  # which still reads them for $include resolution — so a prompt-injected agent
+  # cannot inject a channel binding; admins edit agent-custom.json via SSM as root.
+  # Never clobber existing admin content.
+  jq '. + {"$include": ["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]}' /opt/conga/data/$AGENT_NAME/openclaw.json > /opt/conga/data/$AGENT_NAME/openclaw.json.tmp \
     && mv /opt/conga/data/$AGENT_NAME/openclaw.json.tmp /opt/conga/data/$AGENT_NAME/openclaw.json
   chown 1000:1000 /opt/conga/data/$AGENT_NAME/openclaw.json
   [ -e /opt/conga/data/$AGENT_NAME/agent-custom.json ] || printf '{}\n' > /opt/conga/data/$AGENT_NAME/agent-custom.json
@@ -1161,25 +1165,43 @@ for HASHFILE in /opt/conga/config/*-config.json.sha256; do
     MSG="$TIMESTAMP Config integrity OK agent=$AGENT_NAME hash=$CURRENT_HASH"
     echo "$MSG" >> "$LOGFILE"
   fi
-  # Guard the admin-owned include: it must not declare Conga-owned keys. OpenClaw
-  # deep-merges (unions) include objects, so an injected channels.* would extend
-  # the channel allowlist (a security boundary) undetected by the root hash above.
-  CUSTOM="/opt/conga/data/$AGENT_NAME/agent-custom.json"
-  if [ -f "$CUSTOM" ]; then
+  # Verify the Conga-managed include layers (feature #31) against their deployed
+  # baseline — detects on-host tampering of these Conga-owned files. The
+  # admin-owned agent-custom.json is intentionally NOT hashed (admin drift is
+  # expected there; it is guarded only by the reserved-key check below).
+  for MFILE in fleet-custom.json agent-managed-custom.json; do
+    MBASE="/opt/conga/config/$AGENT_NAME-$MFILE.sha256"
+    MPATH="/opt/conga/data/$AGENT_NAME/$MFILE"
+    [ -f "$MBASE" ] && [ -f "$MPATH" ] || continue
+    MEXP=$(cat "$MBASE")
+    MCUR=$(sha256sum "$MPATH" | cut -d' ' -f1)
+    if [ "$MEXP" != "$MCUR" ]; then
+      MMSG="$TIMESTAMP CONFIG_INTEGRITY_VIOLATION agent=$AGENT_NAME file=$MFILE expected=$MEXP actual=$MCUR"
+      echo "$MMSG" >> "$LOGFILE"
+      echo "$MMSG" | systemd-cat -t conga-integrity -p warning
+    fi
+  done
+  # Guard EVERY $include layer: none may declare Conga-owned keys. OpenClaw
+  # deep-merges (unions) include objects, so an injected channels.* in ANY layer
+  # would extend the channel allowlist (a security boundary) undetected by the
+  # root hash above. Covers fleet + per-agent (managed) + admin-drift.
+  for IFILE in fleet-custom.json agent-managed-custom.json agent-custom.json; do
+    IPATH="/opt/conga/data/$AGENT_NAME/$IFILE"
+    [ -f "$IPATH" ] || continue
     # Capture jq's exit status directly (not through a pipe — `paste` would mask a
     # parse failure and the invalid-JSON branch would be dead code).
-    if KEYS=$(jq -r 'keys[]' "$CUSTOM" 2>/dev/null); then
+    if KEYS=$(jq -r 'keys[]' "$IPATH" 2>/dev/null); then
       RESERVED=$(printf '%s\n' "$KEYS" | grep -Ex '\$include|channels|gateway|plugins' | paste -sd, -)
       if [ -n "$RESERVED" ]; then
-        CMSG="$TIMESTAMP CONFIG_INTEGRITY_VIOLATION agent=$AGENT_NAME agent-custom.json declares Conga-owned key(s)=$RESERVED"
+        CMSG="$TIMESTAMP CONFIG_INTEGRITY_VIOLATION agent=$AGENT_NAME $IFILE declares Conga-owned key(s)=$RESERVED"
         echo "$CMSG" >> "$LOGFILE"
         echo "$CMSG" | systemd-cat -t conga-integrity -p warning
       fi
     else
-      CMSG="$TIMESTAMP WARN agent=$AGENT_NAME agent-custom.json is not valid JSON; manual review advised"
+      CMSG="$TIMESTAMP WARN agent=$AGENT_NAME $IFILE is not valid JSON; manual review advised"
       echo "$CMSG" >> "$LOGFILE"
     fi
-  fi
+  done
 done
 CHECKSCRIPT
 chmod 0755 /opt/conga/scripts/check-config-integrity.sh

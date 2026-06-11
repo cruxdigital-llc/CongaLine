@@ -181,6 +181,7 @@ func (p *AWSProvider) ProvisionAgent(ctx context.Context, cfg provider.AgentConf
 			common.Warn(ctx, "failed to load agent overlay for egress check: %v", overlayErr)
 		} else {
 			common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
+			common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(behaviorDir, cfg), policy.EffectiveAllowedDomains(egressPolicy), cfg.Name)
 		}
 	}
 
@@ -517,6 +518,7 @@ func (p *AWSProvider) RefreshAgent(ctx context.Context, agentName string) error 
 			} else if pf != nil {
 				merged := pf.MergeForAgent(agentName)
 				common.WarnOverlayEgressGaps(ctx, overlay, policy.EffectiveAllowedDomains(merged.Egress), agentName)
+				common.WarnCustomConfigEgressGaps(ctx, common.ResolveCustomConfigSources(behaviorDir, *agent), policy.EffectiveAllowedDomains(merged.Egress), agentName)
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/channels"
@@ -11,12 +12,30 @@ import (
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 )
 
+// openclawDefaults is the embedded runtime baseline. As of feature #31 it is a
+// FALLBACK: operators may ship an editable copy at
+// agents/_defaults/openclaw/openclaw-defaults.json (resolved by
+// common.ResolveRuntimeDefaults into ConfigParams.RuntimeDefaults). The embed is
+// retained for first-boot / air-gap / tamper-safe operation — a missing or
+// malformed on-disk file fails safe to this known-good baseline.
+//
 //go:embed openclaw-defaults.json
 var openclawDefaults []byte
 
 func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
+	// Prefer the operator-editable on-disk defaults (feature #31 de-embed);
+	// fall back to the embedded baseline if absent or not valid JSON.
+	base := openclawDefaults
+	if len(params.RuntimeDefaults) > 0 {
+		if json.Valid(params.RuntimeDefaults) {
+			base = params.RuntimeDefaults
+		} else {
+			fmt.Fprintln(os.Stderr, "warning: on-disk openclaw-defaults.json is not valid JSON; using embedded runtime defaults")
+		}
+	}
+
 	var config map[string]any
-	if err := json.Unmarshal(openclawDefaults, &config); err != nil {
+	if err := json.Unmarshal(base, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse openclaw-defaults.json: %w", err)
 	}
 
@@ -64,11 +83,17 @@ func (r *Runtime) GenerateConfig(params runtime.ConfigParams) ([]byte, error) {
 		applyTeamChannelDiscipline(config)
 	}
 
-	// Reference the admin-owned customization file. OpenClaw deep-merges it under
-	// this managed root (root wins on conflicting scalars). Conga never reads or
-	// writes the include; providers guarantee it exists (a missing $include target
-	// makes the whole config invalid). See AgentCustomConfigFile.
-	config["$include"] = []string{AgentCustomConfigFile}
+	// Reference the layered custom-config files. OpenClaw deep-merges them under
+	// this managed root in array order (later wins); the root wins over every
+	// include (verified). Effective precedence: root > admin-drift > per-agent > fleet.
+	// Providers guarantee all three exist (a missing $include target makes the
+	// whole config invalid). See FleetCustomConfigFile / AgentManagedCustomConfigFile
+	// / AgentCustomConfigFile.
+	config["$include"] = []string{
+		FleetCustomConfigFile,
+		AgentManagedCustomConfigFile,
+		AgentCustomConfigFile,
+	}
 
 	return json.MarshalIndent(config, "", "  ")
 }
@@ -332,6 +357,15 @@ func (r *Runtime) ConfigFileName() string { return "openclaw.json" }
 // managed openclaw.json via "$include". Providers ensure it exists ("{}") on
 // every config write; a missing $include target invalidates the whole config.
 func (r *Runtime) CustomConfigFileName() string { return AgentCustomConfigFile }
+
+// ManagedCustomConfigFiles returns the Conga-deployed declarative layers
+// (feature #31): fleet-custom.json (all agents) and agent-managed-custom.json
+// (per-agent). Conga re-syncs these from committed sources on every write, so
+// they are hash-verified against their deployed baseline in addition to the
+// reserved-key guard.
+func (r *Runtime) ManagedCustomConfigFiles() []string {
+	return []string{FleetCustomConfigFile, AgentManagedCustomConfigFile}
+}
 
 // buildGatewayConfig produces the gateway section of openclaw.json.
 func buildGatewayConfig(containerPort, hostPort int, token string) map[string]any {

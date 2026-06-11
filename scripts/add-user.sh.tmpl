@@ -104,13 +104,17 @@ OCCONFIG
 mkdir -p /opt/conga/data/$AGENT_NAME/data/{workspace,memory,logs,agents,canvas,cron,devices,identity,media}
 chown -R 1000:1000 /opt/conga/data/$AGENT_NAME
 cp /opt/conga/config/$AGENT_NAME-config.json /opt/conga/data/$AGENT_NAME/openclaw.json
-# Reference the admin-owned customization include ($include). OpenClaw merges
-# agent-custom.json under this managed root; a missing $include target invalidates
-# the whole config, so always create an empty one. root:root 0444 keeps it
-# read-only to the agent (uid 1000) — which still reads it for $include resolution
-# — so a prompt-injected agent can't inject a channel binding; admins edit it via
-# SSM as root. Never clobber existing admin content.
-jq '. + {"$include": ["agent-custom.json"]}' /opt/conga/data/$AGENT_NAME/openclaw.json > /opt/conga/data/$AGENT_NAME/openclaw.json.tmp \
+# Reference the layered custom-config includes ($include array, feature #31).
+# OpenClaw merges them under this managed root in array order (later wins), and
+# the root wins over every include. Effective precedence:
+# root > agent-custom (admin drift) > agent-managed (per-agent) > fleet.
+# A missing $include target invalidates the whole config, so all three files must
+# exist: deploy-agents.sh creates fleet-custom.json + agent-managed-custom.json
+# (from S3-synced sources or "{}"); agent-custom.json is ensured below. root:root
+# 0444 keeps them read-only to the agent (uid 1000) — which still reads them for
+# $include resolution — so a prompt-injected agent can't inject a channel binding;
+# admins edit agent-custom.json via SSM as root. Never clobber existing admin content.
+jq '. + {"$include": ["fleet-custom.json", "agent-managed-custom.json", "agent-custom.json"]}' /opt/conga/data/$AGENT_NAME/openclaw.json > /opt/conga/data/$AGENT_NAME/openclaw.json.tmp \
   && mv /opt/conga/data/$AGENT_NAME/openclaw.json.tmp /opt/conga/data/$AGENT_NAME/openclaw.json
 chown 1000:1000 /opt/conga/data/$AGENT_NAME/openclaw.json
 [ -e /opt/conga/data/$AGENT_NAME/agent-custom.json ] || printf '{}\n' > /opt/conga/data/$AGENT_NAME/agent-custom.json
@@ -130,6 +134,16 @@ echo "$SLACK_MEMBER_ID" > /opt/conga/config/$AGENT_NAME.slack-id
 aws s3 sync "s3://{{.StateBucket}}/conga/agents/" /opt/conga/agents/ --region "$AWS_REGION" 2>/dev/null || true
 if [ -x /opt/conga/bin/deploy-agents.sh ]; then
   /opt/conga/bin/deploy-agents.sh "$AGENT_NAME" "user"
+else
+  # deploy-agents.sh unavailable: it normally creates the #31 managed $include
+  # targets (fleet-custom.json + agent-managed-custom.json) from synced sources.
+  # A missing $include target invalidates the whole OpenClaw config, so seed them
+  # as "{}" here (root:root 0444) to keep the config loadable.
+  for MF in fleet-custom.json agent-managed-custom.json; do
+    [ -e /opt/conga/data/$AGENT_NAME/$MF ] || printf '{}\n' > /opt/conga/data/$AGENT_NAME/$MF
+    chown root:root /opt/conga/data/$AGENT_NAME/$MF
+    chmod 0444 /opt/conga/data/$AGENT_NAME/$MF
+  done
 fi
 
 docker network create --driver bridge "conga-$AGENT_NAME" || true

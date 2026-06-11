@@ -2,8 +2,10 @@ package common
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
@@ -82,6 +84,72 @@ func WarnOverlayEgressGaps(ctx context.Context, overlay *runtime.AgentOverlay, a
 	for _, h := range gaps {
 		Warn(ctx, "%s", FormatEgressGapWarning(agentName, h))
 	}
+}
+
+// CheckCustomConfigEgress returns the MCP-server hostnames declared across the
+// fleet + per-agent custom-config layers (feature #31) that are NOT covered by
+// the effective egress allowlist. It walks mcp.servers.<name>.url in each source
+// — the egress-bearing field operators add when wiring a remote MCP server.
+// Hosts are de-duplicated across layers and returned in a deterministic order
+// (fleet before per-agent, then by server name). Unparseable sources are skipped
+// (the reserved-key/validation paths handle those). Matching mirrors
+// CheckOverlayEgress (exact + "*.suffix" wildcard, case-insensitive).
+func CheckCustomConfigEgress(srcs CustomConfigSources, allowlist []string) []string {
+	seen := make(map[string]bool)
+	var missing []string
+	for _, data := range [][]byte{srcs.Fleet, srcs.PerAgent} {
+		for _, h := range customConfigEgressHosts(data) {
+			lower := strings.ToLower(h)
+			if seen[lower] {
+				continue
+			}
+			seen[lower] = true
+			if !hostMatchesAllowlist(h, allowlist) {
+				missing = append(missing, h)
+			}
+		}
+	}
+	return missing
+}
+
+// WarnCustomConfigEgressGaps emits an egress-gap warning for every MCP endpoint
+// declared in the fleet / per-agent custom config that isn't allowlisted
+// (feature #31 T6.2). Non-blocking — mirrors WarnOverlayEgressGaps.
+func WarnCustomConfigEgressGaps(ctx context.Context, srcs CustomConfigSources, allowlist []string, agentName string) {
+	for _, h := range CheckCustomConfigEgress(srcs, allowlist) {
+		Warn(ctx, "%s", FormatEgressGapWarning(agentName, h))
+	}
+}
+
+// customConfigEgressHosts extracts mcp.servers.<name>.url hostnames from one
+// custom-config source, in server-name order. Returns nil for empty/unparseable
+// input or sources with no MCP servers.
+func customConfigEgressHosts(data []byte) []string {
+	if len(data) == 0 {
+		return nil
+	}
+	var m struct {
+		MCP struct {
+			Servers map[string]struct {
+				URL string `json:"url"`
+			} `json:"servers"`
+		} `json:"mcp"`
+	}
+	if json.Unmarshal(data, &m) != nil {
+		return nil
+	}
+	names := make([]string, 0, len(m.MCP.Servers))
+	for n := range m.MCP.Servers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var hosts []string
+	for _, n := range names {
+		if h := extractHost(m.MCP.Servers[n].URL); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
 }
 
 // extractHost pulls the hostname out of a base_url. Returns "" for empty
