@@ -76,6 +76,10 @@ Brought up a real gateway-only local agent (`testfleet`) on the pinned image and
 
 Not separately triggered: the periodic host-tamper hash + reserved-key integrity check (`RunIntegrityCheck` has no CLI entrypoint) — unit-covered, and the baseline-freshness hash match above exercises the same hash machinery. macOS note: iptables egress rules don't apply on Docker Desktop (documented limitation); container ran healthy regardless.
 
+**Now codified as automated tests** (closing the test-sync gap vs the #30 behavior-overlay sibling, which had an integration test where #31 did not):
+- **Unit — composition contract**: `TestCompositionPrecedenceContract` (`pkg/common`) pins that the generator's deployed `$include` array (low→high, later-wins) and the `show-config` precedence view (high→low) are exact reverses and match root > admin-drift > per-agent > fleet. Guards against silent drift between the two representations OpenClaw's merge depends on.
+- **Integration — configuration application**: `TestFleetAndPerAgentConfig` (`internal/cmd`, `//go:build integration`) reproduces the entire T9.2 flow against a real OpenClaw container — include-array order, layers-from-sources, union + per-agent>fleet + admin-drift>per-agent (via in-container `openclaw config get`), fleet propagation on refresh, `show-config` JSON, reserved-key fail-closed, and managed-baseline cleanup on removal. **13/13 subtests pass** (verified live, 42s). Hermetic: sources written under a guarded temp path in the repo tree and cleaned up; agent + containers torn down.
+
 ### ⏳ Remaining (after merge)
 - **R1 (post-merge)** — `terraform-provider-conga` release (`pkg/` changed).
 - **T2.4 (follow-up)** — AWS bash boot-path de-embed unification.

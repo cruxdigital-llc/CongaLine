@@ -1,14 +1,91 @@
 package common
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/cruxdigital-llc/conga-line/pkg/provider"
 	"github.com/cruxdigital-llc/conga-line/pkg/runtime"
 
 	// Register runtimes so runtime.Get resolves.
 	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/hermes"
 	_ "github.com/cruxdigital-llc/conga-line/pkg/runtime/openclaw"
 )
+
+// TestCompositionPrecedenceContract pins the layer-composition contract that
+// OpenClaw's deep-merge relies on, across the two code paths that represent it:
+//   - the generator's deployed "$include" array — DEPLOY order, lowest precedence
+//     first (OpenClaw merges later-in-array wins);
+//   - EffectiveConfigSpecs — the `show-config` view, highest precedence first.
+//
+// The two must be exact reverses of each other (for the include layers) and must
+// match the documented model root > admin-drift > per-agent > fleet. If anyone
+// reorders ManagedCustomConfigFiles, the generator array, or EffectiveConfigSpecs,
+// this fails — so the operator-facing precedence can never silently drift from
+// what OpenClaw actually merges. (The merge RESULT — union + later-wins — is
+// verified live against real OpenClaw in the integration suite.)
+func TestCompositionPrecedenceContract(t *testing.T) {
+	rt, err := runtime.Get(runtime.RuntimeOpenClaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Deployed $include array (lowest precedence first).
+	out, err := rt.GenerateConfig(runtime.ConfigParams{
+		Agent:        provider.AgentConfig{Name: "t", Type: provider.AgentTypeUser, GatewayPort: 18789},
+		Secrets:      provider.SharedSecrets{Values: map[string]string{}},
+		GatewayToken: "fixed-token",
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	rawInc, ok := cfg["$include"].([]any)
+	if !ok {
+		t.Fatalf("missing $include array: %T", cfg["$include"])
+	}
+	includeOrder := make([]string, len(rawInc))
+	for i, v := range rawInc {
+		includeOrder[i] = v.(string)
+	}
+
+	// show-config view (highest precedence first).
+	specs := EffectiveConfigSpecs(rt)
+
+	// (a) Highest-precedence layer is the managed root.
+	if specs[0].File != rt.ConfigFileName() {
+		t.Fatalf("rank 1 must be the managed root %q, got %q", rt.ConfigFileName(), specs[0].File)
+	}
+
+	// (b) The include layers (specs[1:], high→low) reversed == deployed $include
+	//     array (low→high). This is the contract both paths must honor.
+	includeSpecs := specs[1:]
+	if len(includeSpecs) != len(includeOrder) {
+		t.Fatalf("include count mismatch: show-config has %d, $include has %d", len(includeSpecs), len(includeOrder))
+	}
+	for i, s := range includeSpecs {
+		want := includeOrder[len(includeOrder)-1-i]
+		if s.File != want {
+			t.Errorf("precedence drift at include rank %d: show-config=%q but $include(reversed)=%q", i+2, s.File, want)
+		}
+	}
+
+	// (c) Pin the documented model explicitly so the intent is self-evident.
+	// (Precedence is positional in EffectiveConfigSpecs — BuildConfigLayers stamps
+	// it as index+1, covered by TestBuildConfigLayers.)
+	wantOrder := []string{"openclaw.json", "agent-custom.json", "agent-managed-custom.json", "fleet-custom.json"}
+	if len(specs) != len(wantOrder) {
+		t.Fatalf("expected %d layers, got %d", len(wantOrder), len(specs))
+	}
+	for i, want := range wantOrder {
+		if specs[i].File != want {
+			t.Errorf("rank %d: got %q, want %q", i+1, specs[i].File, want)
+		}
+	}
+}
 
 func TestEffectiveConfigSpecs_OpenClaw(t *testing.T) {
 	rt, err := runtime.Get(runtime.RuntimeOpenClaw)

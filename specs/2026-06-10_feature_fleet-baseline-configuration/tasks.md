@@ -100,12 +100,18 @@
   Example 6 (Linear MCP) to present the layer choice. Header date bumped.
 
 ## Phase 9 — Integration / live / release
-- [x] **T9.1 (Go-testable parts)** Provider deploy test (`TestDeployManagedCustomConfig`): fleet +
-  per-agent deployed from sources (or `{}`), re-synced each call (propagation), admin-drift
-  agent-custom.json untouched, **bad fleet source fails closed** (no partial write). The override
-  *precedence* itself (per-agent over fleet, admin over per-agent) is the OpenClaw runtime merge —
-  live-verified in the foundation probe and re-checked in T9.2. Generator array order tested in
-  `config_test.go`.
+- [x] **T9.1** Provider deploy test (`TestDeployManagedCustomConfig`): fleet + per-agent deployed from
+  sources (or `{}`), re-synced each call (propagation), admin-drift agent-custom.json untouched,
+  **bad fleet source fails closed** (no partial write). **Plus `TestFleetAndPerAgentConfig`**
+  (integration-tagged, Docker) — codifies the full T9.2 flow end-to-end against real OpenClaw: include
+  array order, layers-from-sources, **union**, **per-agent > fleet**, **admin-drift > per-agent**,
+  fleet propagation on refresh, show-config layers, reserved-key **fail-closed**, managed-baseline
+  cleanup on removal. **13/13 subtests pass** (42s live run).
+- [x] **Composition contract (unit)** `TestCompositionPrecedenceContract` (`pkg/common`): pins that the
+  generator's deployed `$include` array (low→high) and the `show-config` precedence view (high→low) are
+  exact reverses and match the documented model root > admin-drift > per-agent > fleet — so the
+  operator-facing precedence can't silently drift from what OpenClaw merges. (The merge *result* is
+  verified live by the integration test.)
 - [x] **T9.2 (verify-feature)** ✅ Live-verified on local Docker (OpenClaw 2026.5.26): deployed
   `$include` array; layers deployed from the live repo (`overlayBehaviorDir`); OpenClaw effective
   merge shows **union** + **per-agent > fleet** + **admin-drift > per-agent > fleet**; fleet
