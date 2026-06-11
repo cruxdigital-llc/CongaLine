@@ -44,6 +44,7 @@ module "infrastructure" {
   repo_root    = var.repo_root
 
   instance_type                 = var.instance_type
+  ami_id                        = var.ami_id
   config_check_interval_minutes = var.config_check_interval_minutes
   alert_email                   = var.alert_email
   egress_ports                  = var.egress_ports

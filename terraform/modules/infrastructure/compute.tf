@@ -1,14 +1,22 @@
 # --- AMI Lookup ---
+# The SSM "latest" parameter is the fallback when var.ami_id is unset. Resolving
+# it ALWAYS yields the newest AL2023 AMI, so leaving the host unpinned means any
+# upstream AMI release forces an instance replacement on the next apply. Pin via
+# var.ami_id (set in tfvars) and bump deliberately for OS patches.
 
 data "aws_ssm_parameter" "al2023_arm64" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
+}
+
+locals {
+  host_ami_id = var.ami_id != "" ? var.ami_id : data.aws_ssm_parameter.al2023_arm64.value
 }
 
 # --- Launch Template ---
 
 resource "aws_launch_template" "conga" {
   name_prefix   = "${var.project_name}-"
-  image_id      = data.aws_ssm_parameter.al2023_arm64.value
+  image_id      = local.host_ami_id
   instance_type = var.instance_type
 
   iam_instance_profile {

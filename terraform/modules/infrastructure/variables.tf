@@ -22,6 +22,12 @@ variable "instance_type" {
   default     = "r6g.medium"
 }
 
+variable "ami_id" {
+  description = "Host AMI ID. Empty string tracks the latest AL2023 ARM64 AMI via SSM (drift forces instance replacement). Set to a specific AMI to pin and avoid surprise replacements."
+  type        = string
+  default     = ""
+}
+
 variable "config_check_interval_minutes" {
   description = "Interval in minutes for config integrity hash checks"
   type        = number
@@ -46,7 +52,10 @@ variable "setup_manifest" {
       "image" = "Docker image for OpenClaw (ECR, GHCR, or Docker Hub)"
     }
     defaults = {
-      "image" = "ghcr.io/openclaw/openclaw:2026.5.26"
+      # Seeds /conga/config/image at `conga admin setup`; this manifest default —
+      # NOT the `image` var — is what a fresh AWS host actually boots on (the var
+      # doesn't repoint the SSM param on change; see ROADMAP image-propagation gap).
+      "image" = "ghcr.io/openclaw/openclaw:2026.6.5"
     }
     secrets = {
       "conga/shared/slack-bot-token"      = "Slack bot token (xoxb-)"

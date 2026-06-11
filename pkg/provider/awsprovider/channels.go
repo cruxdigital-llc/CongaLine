@@ -620,8 +620,13 @@ func (p *AWSProvider) regenerateRoutingOnInstance(ctx context.Context, instanceI
 
 // restartRouterOnInstance restarts the router container on the EC2 instance.
 // Assumes router.env and routing.json are already uploaded.
-func (p *AWSProvider) restartRouterOnInstance(ctx context.Context, instanceID string) error {
-	script := `set -euo pipefail
+// routerRestartScript stops, reinstalls deps for, and restarts the conga-router
+// container, then reconnects it to every agent network. The dep-check, the
+// npm-install mount, and the run-step volume mount MUST all target
+// /opt/conga/router/slack — the slack/telegram split moved the router source
+// (and package.json) there, and the parent dir has none. TestRouterRestartScriptUsesSlackPath
+// guards against regressing to the pre-split /opt/conga/router path.
+const routerRestartScript = `set -euo pipefail
 
 # Skip if no router.env (channel not configured)
 if [ ! -f /opt/conga/config/router.env ]; then
@@ -637,9 +642,11 @@ for i in 1 2 3; do
   sleep "$i"
 done
 
-# Install npm deps if needed
-if [ ! -d /opt/conga/router/node_modules ]; then
-  docker run --rm -v /opt/conga/router:/app -w /app node:22-alpine npm install --production
+# Install npm deps if needed. The router source + package.json live under
+# /opt/conga/router/slack (the slack/telegram split — matching the bootstrap and
+# the run-step volume mount below); the parent dir has no package.json.
+if [ ! -d /opt/conga/router/slack/node_modules ]; then
+  docker run --rm -v /opt/conga/router/slack:/app -w /app node:22-alpine npm install --production
 fi
 
 # Start router
@@ -662,7 +669,8 @@ done
 echo "Router restarted"
 `
 
-	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, script, 120*time.Second)
+func (p *AWSProvider) restartRouterOnInstance(ctx context.Context, instanceID string) error {
+	result, err := awsutil.RunCommand(ctx, p.clients.SSM, instanceID, routerRestartScript, 120*time.Second)
 	if err != nil {
 		return err
 	}
