@@ -52,7 +52,10 @@ variable "setup_manifest" {
       "image" = "Docker image for OpenClaw (ECR, GHCR, or Docker Hub)"
     }
     defaults = {
-      "image" = "ghcr.io/openclaw/openclaw:2026.5.26"
+      # Seeds /conga/config/image at `conga admin setup`; this manifest default —
+      # NOT the `image` var — is what a fresh AWS host actually boots on (the var
+      # doesn't repoint the SSM param on change; see ROADMAP image-propagation gap).
+      "image" = "ghcr.io/openclaw/openclaw:2026.6.5"
     }
     secrets = {
       "conga/shared/slack-bot-token"      = "Slack bot token (xoxb-)"
