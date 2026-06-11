@@ -552,14 +552,20 @@ func (p *LocalProvider) RemoveAgent(ctx context.Context, name string, deleteSecr
 		}
 	}
 
-	for _, f := range []string{
+	filesToRemove := []string{
 		filepath.Join(p.agentsDir(), name+".json"),
 		filepath.Join(p.configDir(), name+".env"),
 		filepath.Join(p.configDir(), name+".sha256"),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s.yaml", name)),
 		filepath.Join(p.configDir(), fmt.Sprintf("egress-%s-entrypoint.sh", name)),
 		filepath.Join(p.configDir(), policy.EgressManifestFileName(name)),
-	} {
+	}
+	// Managed-include integrity baselines (#31). Resolve before the loop removes
+	// the agent record GetAgent reads. No-op for runtimes without managed layers.
+	for _, fname := range p.managedIncludeFiles(ctx, name) {
+		filesToRemove = append(filesToRemove, p.managedIncludeBaselinePath(name, fname))
+	}
+	for _, f := range filesToRemove {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			cleanupErrs = append(cleanupErrs, fmt.Sprintf("remove %s: %v", filepath.Base(f), err))
 		}

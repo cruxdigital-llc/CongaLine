@@ -502,13 +502,26 @@ func (p *RemoteProvider) RemoveAgent(ctx context.Context, name string, deleteSec
 	}
 
 	// Remove remote config files
-	p.ssh.Run(ctx, fmt.Sprintf("rm -f %s %s %s %s %s",
-		shellQuote(posixpath.Join(p.remoteAgentsDir(), name+".json")),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".env")),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), name+".sha256")),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.yaml", name))),
-		shellQuote(posixpath.Join(p.remoteConfigDir(), policy.EgressManifestFileName(name))),
-	))
+	removePaths := []string{
+		posixpath.Join(p.remoteAgentsDir(), name+".json"),
+		posixpath.Join(p.remoteConfigDir(), name+".env"),
+		posixpath.Join(p.remoteConfigDir(), name+".sha256"),
+		posixpath.Join(p.remoteConfigDir(), fmt.Sprintf("egress-%s.yaml", name)),
+		posixpath.Join(p.remoteConfigDir(), policy.EgressManifestFileName(name)),
+	}
+	// Managed-include integrity baselines (#31). Best-effort: resolve the runtime's
+	// managed layers before the rm removes the agent record. No-op when the agent
+	// is already gone or its runtime has no managed layers.
+	if a, gerr := p.GetAgent(ctx, name); gerr == nil {
+		for _, fname := range managedIncludeFiles(*a) {
+			removePaths = append(removePaths, p.managedIncludeBaselinePath(name, fname))
+		}
+	}
+	quoted := make([]string, len(removePaths))
+	for i, pth := range removePaths {
+		quoted[i] = shellQuote(pth)
+	}
+	p.ssh.Run(ctx, "rm -f "+strings.Join(quoted, " "))
 
 	if deleteSecrets {
 		p.ssh.Run(ctx, fmt.Sprintf("rm -rf %s", shellQuote(p.agentSecretsDir(name))))
