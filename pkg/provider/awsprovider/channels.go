@@ -637,9 +637,11 @@ for i in 1 2 3; do
   sleep "$i"
 done
 
-# Install npm deps if needed
-if [ ! -d /opt/conga/router/node_modules ]; then
-  docker run --rm -v /opt/conga/router:/app -w /app node:22-alpine npm install --production
+# Install npm deps if needed. The router source + package.json live under
+# /opt/conga/router/slack (the slack/telegram split — matching the bootstrap and
+# the run-step volume mount below); the parent dir has no package.json.
+if [ ! -d /opt/conga/router/slack/node_modules ]; then
+  docker run --rm -v /opt/conga/router/slack:/app -w /app node:22-alpine npm install --production
 fi
 
 # Start router
