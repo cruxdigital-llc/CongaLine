@@ -235,6 +235,53 @@ func TestReadAgentSecrets_ReadsFromSecretsManager(t *testing.T) {
 	}
 }
 
+// TestRouterRestartScriptUsesSlackPath is a regression guard. restartRouterOnInstance
+// once ran `npm install` against /opt/conga/router (which has no package.json after
+// the router source moved to .../slack in the slack/telegram split), so the install
+// failed under `set -e` *after* the router was already stopped — silently breaking
+// the router on every agent refresh / channel bind. The dep-check, the npm-install
+// mount, and the run-step mount must all target /opt/conga/router/slack.
+func TestRouterRestartScriptUsesSlackPath(t *testing.T) {
+	s := routerRestartScript
+	if strings.Contains(s, "-v /opt/conga/router:/app") {
+		t.Error("router script mounts parent /opt/conga/router (pre-split path); must use /opt/conga/router/slack")
+	}
+	for _, want := range []string{
+		"[ ! -d /opt/conga/router/slack/node_modules ]",
+		"-v /opt/conga/router/slack:/app -w /app node:22-alpine npm install",
+		"-v /opt/conga/router/slack:/app:ro",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("router script missing expected fragment: %q", want)
+		}
+	}
+}
+
+// TestDeleteSecretUsesAgentScopedPath locks the per-agent secret path contract used
+// to purge a credential, and that it touches only the named secret. NOTE: removing a
+// secret from tfvars currently leaves it orphaned in Secrets Manager because the
+// conga_secret resource destroy doesn't call this — that wiring + its acceptance test
+// live in terraform-provider-conga (tracked in ROADMAP.md).
+func TestDeleteSecretUsesAgentScopedPath(t *testing.T) {
+	const target = "conga/agents/nvidia-team/linear-api-key"
+	const keep = "conga/agents/nvidia-team/anthropic-api-key"
+	mock := &mockSecretsManager{secrets: map[string]string{
+		target: "lin_api_xxx",
+		keep:   "sk-keep",
+	}}
+	p := &AWSProvider{clients: &awsutil.Clients{SecretsManager: mock}}
+
+	if err := p.DeleteSecret(context.Background(), "nvidia-team", "linear-api-key"); err != nil {
+		t.Fatalf("DeleteSecret error: %v", err)
+	}
+	if _, ok := mock.secrets[target]; ok {
+		t.Errorf("expected %s deleted from Secrets Manager", target)
+	}
+	if _, ok := mock.secrets[keep]; !ok {
+		t.Error("DeleteSecret must not touch the agent's other secrets")
+	}
+}
+
 func TestResolveAWSBehaviorDir(t *testing.T) {
 	// All scenarios use a sandboxed cwd so the real repo's agents/ dir
 	// (visible at the test runner's cwd) doesn't pollute results.

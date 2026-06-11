@@ -173,6 +173,42 @@ func TestGenerateProxyConfAllowlist(t *testing.T) {
 	}
 }
 
+// TestLoadAndGenerateProxyConfPopulatesAllowlist exercises the load->generate
+// pipeline (LoadEgressPolicy -> GenerateProxyConf) the bootstrap and `conga policy
+// deploy` use end to end: a policy file carrying domains must yield a *populated*
+// Envoy allowlist. Guards the empty-allowlist deny-all class that, on a fresh host,
+// 403'd every agent's outbound (including its LLM) when the policy source wasn't
+// present at generation time.
+func TestLoadAndGenerateProxyConfPopulatesAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `
+apiVersion: conga.dev/v1alpha1
+egress:
+  allowed_domains:
+    - api.anthropic.com
+    - "*.slack.com"
+  mode: validate
+`
+	if err := os.WriteFile(filepath.Join(dir, "conga-policy.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ep, err := LoadEgressPolicy(dir, "agent1")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	conf, err := GenerateProxyConf(ep)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(conf, `"api.anthropic.com"`) {
+		t.Error("expected api.anthropic.com in generated EXACT table")
+	}
+	if !strings.Contains(conf, `".slack.com"`) {
+		t.Error("expected .slack.com in generated SUFFIXES table")
+	}
+}
+
 func TestGenerateProxyConfWildcardDedup(t *testing.T) {
 	// When *.slack.com is present, the Lua filter puts .slack.com in SUFFIXES
 	// and slack.com in EXACT. Both appear because Envoy Lua handles them separately.
