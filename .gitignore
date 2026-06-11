@@ -39,3 +39,8 @@ demo.*
 
 # Obsidian editor config (product-knowledge vault)
 product-knowledge/.obsidian/
+
+# Claude Code local/runtime files (shared .claude/settings.json stays committable)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
