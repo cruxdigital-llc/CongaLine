@@ -228,13 +228,9 @@ func (p *AWSProvider) BindChannel(ctx context.Context, agentName string, binding
 		return fmt.Errorf("failed to regenerate routing: %w", err)
 	}
 
-	// Connect router to agent network and restart
-	if _, err := p.runOnInstance(ctx, instanceID,
-		fmt.Sprintf("docker network connect conga-%s conga-router 2>/dev/null || true", agentName),
-		30*time.Second); err != nil {
-		return fmt.Errorf("failed to connect router to agent network: %w", err)
-	}
-
+	// Restart the router so it picks up the new routing.json. It runs
+	// --network host and reaches the agent via its published 127.0.0.1:<hostPort>,
+	// so there is no per-agent bridge attach.
 	if err := p.restartRouterOnInstance(ctx, instanceID); err != nil {
 		return fmt.Errorf("binding saved but router restart failed: %w", err)
 	}
@@ -610,7 +606,10 @@ func (p *AWSProvider) regenerateRoutingOnInstance(ctx context.Context, instanceI
 		return fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	routingJSON, err := common.GenerateRoutingJSON(agents, nil)
+	// The router runs with --network host (see routerRestartScript), so events
+	// are delivered to each agent's published 127.0.0.1:<hostPort> rather than
+	// over a per-agent Docker bridge network.
+	routingJSON, err := common.GenerateRoutingJSON(agents, common.LoopbackWebhookResolver(""))
 	if err != nil {
 		return fmt.Errorf("failed to generate routing: %w", err)
 	}
@@ -621,11 +620,14 @@ func (p *AWSProvider) regenerateRoutingOnInstance(ctx context.Context, instanceI
 // restartRouterOnInstance restarts the router container on the EC2 instance.
 // Assumes router.env and routing.json are already uploaded.
 // routerRestartScript stops, reinstalls deps for, and restarts the conga-router
-// container, then reconnects it to every agent network. The dep-check, the
-// npm-install mount, and the run-step volume mount MUST all target
-// /opt/conga/router/slack — the slack/telegram split moved the router source
-// (and package.json) there, and the parent dir has none. TestRouterRestartScriptUsesSlackPath
-// guards against regressing to the pre-split /opt/conga/router path.
+// container. The router runs with --network host and reaches each agent through
+// its published 127.0.0.1:<hostPort> (the loopback topology, see
+// common.GenerateRoutingJSON) — it is NOT attached to per-agent bridge networks.
+// The dep-check, the npm-install mount, and the run-step volume mount MUST all
+// target /opt/conga/router/slack — the slack/telegram split moved the router
+// source (and package.json) there, and the parent dir has none.
+// TestRouterRestartScriptUsesSlackPath guards against regressing to the
+// pre-split /opt/conga/router path and against re-introducing the bridge attach.
 const routerRestartScript = `set -euo pipefail
 
 # Skip if no router.env (channel not configured)
@@ -649,10 +651,15 @@ if [ ! -d /opt/conga/router/slack/node_modules ]; then
   docker run --rm -v /opt/conga/router/slack:/app -w /app node:22-alpine npm install --production
 fi
 
-# Start router
+# Start router on the host network. With --network host the router reaches each
+# agent through its published 127.0.0.1:<hostPort> (routing.json uses loopback
+# URLs), so no per-agent bridge attach is needed — and on Docker 25 +
+# kernel 6.1.174 that bridge attach is impossible (route conflict). See
+# specs/2026-06-11_bugfix_router-host-networking/.
 docker run -d \
   --name conga-router \
   --restart unless-stopped \
+  --network host \
   --env-file /opt/conga/config/router.env \
   --cap-drop ALL \
   --security-opt no-new-privileges \
@@ -660,11 +667,6 @@ docker run -d \
   -v /opt/conga/router/slack:/app:ro \
   -v /opt/conga/config/routing.json:/opt/conga/config/routing.json:ro \
   node:22-alpine node /app/src/index.js
-
-# Connect router to each agent's Docker network
-for NET in $(docker network ls --filter name=conga- --format '{{.Name}}' | grep -v '^conga-router$'); do
-  docker network connect "$NET" conga-router 2>/dev/null || true
-done
 
 echo "Router restarted"
 `

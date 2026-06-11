@@ -225,7 +225,7 @@ Platform API
 5. Filter platform noise (bot echoes, duplicate event types, system messages) before fan-out
 6. Reconnect automatically on connection loss without losing events
 
-**Per-agent containers use HTTP webhook mode** (`mode: "http"` in `openclaw.json`) — they never connect to the platform directly. The proxy forwards events with signed HTTP requests to each container's webhook endpoint (`http://conga-{name}:{port}/{platform}/events`).
+**Per-agent containers use HTTP webhook mode** (`mode: "http"` in `openclaw.json`) — they never connect to the platform directly. The proxy forwards events with signed HTTP requests to each container's webhook endpoint. The proxy runs with `--network host` and reaches each agent through its published loopback port (`http://127.0.0.1:{hostPort}/{platform}/events`), where `{hostPort}` is the agent's host-side `GatewayPort`. This replaced the earlier bridge-attach delivery (`http://conga-{name}:{port}/…`), which required hot-attaching the proxy to every per-agent Docker network and broke on Docker 25 + kernel 6.1.174 (route conflict). See `specs/2026-06-11_bugfix_router-host-networking/`. (`common.GenerateRoutingJSON` still emits the bridge form when no loopback resolver is passed.)
 
 ### Adding a New Channel
 

@@ -55,20 +55,6 @@ func (p *RemoteProvider) removeNetwork(ctx context.Context, name string) error {
 	return err
 }
 
-// connectNetwork connects a container to a network on the remote host.
-func (p *RemoteProvider) connectNetwork(ctx context.Context, network, container string) error {
-	_, err := p.dockerRun(ctx, "network", "connect", network, container)
-	if err != nil && strings.Contains(err.Error(), "already exists") {
-		return nil
-	}
-	return err
-}
-
-// disconnectNetwork disconnects a container from a network (best-effort).
-func (p *RemoteProvider) disconnectNetwork(ctx context.Context, network, container string) {
-	p.dockerRun(ctx, "network", "disconnect", network, container)
-}
-
 // agentContainerOpts holds options for starting an agent container.
 type agentContainerOpts struct {
 	Name               string
@@ -149,10 +135,14 @@ type routerContainerOpts struct {
 }
 
 // runRouterContainer starts the router container on the remote host.
+// --network host: the router reaches each agent through its published
+// 127.0.0.1:<hostPort> (routing.json uses loopback URLs), so it is not attached
+// to per-agent bridge networks. See common.GenerateRoutingJSON.
 func (p *RemoteProvider) runRouterContainer(ctx context.Context, opts routerContainerOpts) error {
 	args := []string{
 		"run", "-d",
 		"--name", "conga-router",
+		"--network", "host",
 		"--env-file", opts.EnvFile,
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",

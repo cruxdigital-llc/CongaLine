@@ -237,8 +237,11 @@ Type=simple
 EnvironmentFile=/opt/conga/config/router.env
 ExecStartPre=-/usr/bin/docker rm -f conga-router
 ExecStartPre=/bin/chown -R 1000:1000 /opt/conga/router /opt/conga/config/routing.json
-ExecStart=/usr/bin/docker run --name conga-router --cap-drop ALL --security-opt no-new-privileges --memory 128m --cpus 0.25 --pids-limit 64 --read-only --user 1000:1000 --tmpfs /tmp:rw,noexec,nosuid -v /opt/conga/router/slack:/app:ro -v /opt/conga/config/routing.json:/opt/conga/config/routing.json:ro -e SLACK_APP_TOKEN -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e ROUTER_CONFIG=/opt/conga/config/routing.json node:22-alpine node /app/src/index.js
-ExecStartPost=-/opt/conga/bin/connect-router-networks.sh
+# --network host: the router reaches each agent through its published
+# 127.0.0.1:<hostPort> (routing.json uses loopback URLs), so it is NOT attached
+# to per-agent bridge networks. On Docker 25 + kernel 6.1.174 that attach is
+# impossible (route conflict) — see specs/2026-06-11_bugfix_router-host-networking/.
+ExecStart=/usr/bin/docker run --name conga-router --network host --cap-drop ALL --security-opt no-new-privileges --memory 128m --cpus 0.25 --pids-limit 64 --read-only --user 1000:1000 --tmpfs /tmp:rw,noexec,nosuid -v /opt/conga/router/slack:/app:ro -v /opt/conga/config/routing.json:/opt/conga/config/routing.json:ro -e SLACK_APP_TOKEN -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e ROUTER_CONFIG=/opt/conga/config/routing.json node:22-alpine node /app/src/index.js
 ExecStop=/usr/bin/docker stop conga-router
 StandardOutput=append:/var/log/conga-router.log
 StandardError=append:/var/log/conga-router.log
@@ -249,23 +252,6 @@ TimeoutStartSec=60
 [Install]
 WantedBy=multi-user.target
 ROUTERUNIT
-
-# Companion service: connects the router to agent networks after it starts.
-# Fires on every router (re)start so network links survive container recreation.
-cat > /etc/systemd/system/conga-router-networks.service << 'ROUTERNETS'
-[Unit]
-Description=Connect Conga router to agent networks
-After=conga-router.service
-PartOf=conga-router.service
-
-[Service]
-Type=oneshot
-ExecStart=/opt/conga/bin/connect-router-networks.sh
-
-[Install]
-WantedBy=conga-router.service
-ROUTERNETS
-systemctl enable conga-router-networks.service
 
 echo "Router configured"
 
@@ -970,7 +956,8 @@ ExecStartPre=-/usr/bin/docker rm -f conga-$AGENT_NAME
 # not block the rest of the agent from coming up.
 ExecStartPre=-/usr/bin/docker run --rm --user 1000:1000 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $CONGA_IMAGE openclaw plugins install @openclaw/slack
 ExecStart=/usr/bin/docker run --name conga-$AGENT_NAME --network conga-$AGENT_NAME -p 127.0.0.1:$GATEWAY_PORT:18789 --cap-drop ALL --security-opt no-new-privileges --memory 2g --cpus 0.75 -e NODE_OPTIONS="$NODE_OPTS" --pids-limit 256 --user 1000:1000 -v /opt/conga/data/$AGENT_NAME:/home/node/.openclaw:rw $EGRESS_DOCKER_ARGS $ENV_FLAGS $CONGA_IMAGE
-ExecStartPost=-/usr/bin/docker network connect conga-$AGENT_NAME conga-router
+# The host-networked router reaches this agent via its published
+# 127.0.0.1:$GATEWAY_PORT — no "docker network connect ... conga-router" needed.
 ExecStartPost=-/bin/bash -c 'AGENT_IP=""; for i in \$(seq 1 10); do AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); [ -n "\$AGENT_IP" ] && break; sleep 1; done; NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -C DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -j DROP || echo "WARNING: failed to add iptables DROP rule for conga-$AGENT_NAME (\$AGENT_IP)" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN || echo "WARNING: failed to add iptables subnet RETURN rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN || echo "WARNING: failed to add iptables conntrack RETURN rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -p udp --dport 53 -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -p udp --dport 53 -j RETURN || echo "WARNING: failed to add iptables DNS UDP rule for conga-$AGENT_NAME" >&2; iptables -C DOCKER-USER -s \$AGENT_IP -p tcp --dport 53 -j RETURN 2>/dev/null || iptables -I DOCKER-USER -s \$AGENT_IP -p tcp --dport 53 -j RETURN || echo "WARNING: failed to add iptables DNS TCP rule for conga-$AGENT_NAME" >&2; echo "Egress iptables applied for conga-$AGENT_NAME (\$AGENT_IP)" >&2; else echo "ERROR: egress iptables rules failed for conga-$AGENT_NAME — container IP (\$AGENT_IP) or subnet (\$NET_CIDR) not found after 10s" >&2; fi'
 ExecStopPost=-/bin/bash -c 'AGENT_IP=\$(docker inspect -f "{{(index .NetworkSettings.Networks \"conga-$AGENT_NAME\").IPAddress}}" conga-$AGENT_NAME 2>/dev/null); NET_CIDR=\$(docker network inspect -f "{{range .IPAM.Config}}{{.Subnet}}{{end}}" conga-$AGENT_NAME 2>/dev/null); if [ -n "\$AGENT_IP" ] && [ -n "\$NET_CIDR" ]; then iptables -D DOCKER-USER -s \$AGENT_IP -p tcp --dport 53 -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -p udp --dport 53 -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -d \$NET_CIDR -j RETURN 2>/dev/null || true; iptables -D DOCKER-USER -s \$AGENT_IP -j DROP 2>/dev/null || true; fi'
 ExecStop=/usr/bin/docker stop conga-$AGENT_NAME
@@ -1330,26 +1317,13 @@ systemctl enable --now conga-session-metrics.timer
 # CloudWatch agent
 systemctl enable --now amazon-cloudwatch-agent
 
-# Router network-connect helper — called at boot and by the router systemd unit
-cat > /opt/conga/bin/connect-router-networks.sh << 'CONNECTSCRIPT'
-#!/bin/bash
-# Connect the conga-router container to every agent's Docker network.
-# Idempotent — safe to call repeatedly (already-connected is a no-op).
-# Discovers networks by listing Docker networks named conga-* (works on
-# all providers; doesn't depend on agent config file locations).
-sleep 2  # give the container a moment to start
-for NET in $(docker network ls --filter name=conga- --format '{{.Name}}' 2>/dev/null); do
-  case "$NET" in conga-router) continue;; esac
-  docker network connect "$NET" conga-router 2>/dev/null || true
-done
-CONNECTSCRIPT
-chmod +x /opt/conga/bin/connect-router-networks.sh
-
-# Start router FIRST — it connects to Slack
+# Start router FIRST — it connects to Slack. The router runs --network host and
+# reaches each agent through its published 127.0.0.1:<hostPort>, so there is no
+# per-agent "docker network connect" step (see the conga-router.service unit and
+# specs/2026-06-11_bugfix_router-host-networking/).
 systemctl enable --now conga-router.service
-/opt/conga/bin/connect-router-networks.sh
 
-echo "Router connected to all agent networks"
+echo "Router started (host networking)"
 
 # Start agent containers sequentially — stagger to avoid resource spikes during image load
 for AGENT_NAME in $ALL_AGENT_NAMES; do

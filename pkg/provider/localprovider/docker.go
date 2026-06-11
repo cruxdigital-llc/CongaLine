@@ -68,20 +68,6 @@ func removeNetwork(ctx context.Context, name string) error {
 	return err
 }
 
-// connectNetwork connects a container to a network.
-func connectNetwork(ctx context.Context, network, container string) error {
-	_, err := dockerRun(ctx, "network", "connect", network, container)
-	if err != nil && strings.Contains(err.Error(), "already exists") {
-		return nil
-	}
-	return err
-}
-
-// disconnectNetwork disconnects a container from a network (best-effort).
-func disconnectNetwork(ctx context.Context, network, container string) {
-	dockerRun(ctx, "network", "disconnect", network, container)
-}
-
 // runPluginInstall runs a one-shot container that mounts the agent's data
 // dir and executes a runtime-native plugin install command. Used to seed
 // external runtime plugins (e.g. @openclaw/slack on OpenClaw v2026.5.x+)
@@ -177,9 +163,14 @@ type agentContainerOpts struct {
 
 // runRouterContainer starts the router container.
 func runRouterContainer(ctx context.Context, opts routerContainerOpts) error {
+	// --network host: the router reaches each agent through its published
+	// 127.0.0.1:<hostPort> (routing.json uses loopback URLs), so it is not
+	// attached to per-agent bridge networks. See common.GenerateRoutingJSON and
+	// specs/2026-06-11_bugfix_router-host-networking/.
 	args := []string{
 		"run", "-d",
 		"--name", "conga-router",
+		"--network", "host",
 		"--env-file", opts.EnvFile,
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",

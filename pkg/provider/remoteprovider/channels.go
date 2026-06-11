@@ -256,14 +256,9 @@ func (p *RemoteProvider) BindChannel(ctx context.Context, agentName string, bind
 		return fmt.Errorf("failed to regenerate routing: %w", err)
 	}
 
-	// Ensure router is connected to this agent's network
-	if p.containerExists(ctx, routerContainer) {
-		if err := p.connectNetwork(ctx, networkName(agentName), routerContainer); err != nil {
-			return fmt.Errorf("failed to connect router to agent network %s: %w", agentName, err)
-		}
-	}
-
-	// Restart router to pick up updated routing.json
+	// Restart router to pick up updated routing.json. The router runs
+	// --network host and reaches the agent via its published
+	// 127.0.0.1:<hostPort>, so no per-agent bridge attach is needed.
 	if err := p.restartRouter(ctx); err != nil {
 		return fmt.Errorf("binding saved but router restart failed: %w", err)
 	}

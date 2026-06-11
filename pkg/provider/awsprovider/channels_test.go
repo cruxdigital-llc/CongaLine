@@ -255,6 +255,17 @@ func TestRouterRestartScriptUsesSlackPath(t *testing.T) {
 			t.Errorf("router script missing expected fragment: %q", want)
 		}
 	}
+
+	// Host-networking topology (specs/2026-06-11_bugfix_router-host-networking):
+	// the router runs --network host and reaches each agent via its published
+	// 127.0.0.1:<hostPort>. It must NOT attach to per-agent bridge networks —
+	// that attach is impossible on Docker 25 + kernel 6.1.174 (route conflict).
+	if !strings.Contains(s, "--network host") {
+		t.Error("router script must run the router with --network host (loopback delivery topology)")
+	}
+	if strings.Contains(s, "docker network connect") {
+		t.Error("router script must NOT attach the router to per-agent bridge networks; delivery is via published loopback ports")
+	}
 }
 
 // TestDeleteSecretUsesAgentScopedPath locks the per-agent secret path contract used
