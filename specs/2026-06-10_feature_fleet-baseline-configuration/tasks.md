@@ -106,9 +106,13 @@
   *precedence* itself (per-agent over fleet, admin over per-agent) is the OpenClaw runtime merge —
   live-verified in the foundation probe and re-checked in T9.2. Generator array order tested in
   `config_test.go`.
-- [ ] **T9.2 (verify-feature)** Live: fleet file lands on all agents on `refresh-all`; per-agent
-  `custom.json` overrides the fleet entry; admin drift still wins; integrity flags a reserved key in
-  each layer; `show-config` renders the 4 layers. Run in `/glados:verify-feature`.
+- [x] **T9.2 (verify-feature)** ✅ Live-verified on local Docker (OpenClaw 2026.5.26): deployed
+  `$include` array; layers deployed from the live repo (`overlayBehaviorDir`); OpenClaw effective
+  merge shows **union** + **per-agent > fleet** + **admin-drift > per-agent > fleet**; fleet
+  propagation on `refresh` with baseline rewritten in lockstep (no false violation); pre-deploy
+  **fail-closed** on a reserved-key fleet source (never reached host); egress-gap warning on
+  `mcp.servers.*.url`; orphan baselines cleaned on removal; `show-config` CLI+JSON render the 4 layers.
+  Torn down after. See README "T9.2 Live verification" table.
 - [ ] **R1 (post-merge)** `terraform-provider-conga` release (this PR touches `pkg/`).
 
 ## Open checkpoints (spec §12)

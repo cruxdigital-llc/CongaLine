@@ -187,5 +187,8 @@ Final implementation vs. this spec — divergences, all intentional and traced i
   `_defaults/<runtime>/fleet-custom.json` → deployed `fleet-custom.json`. C2: reuse the `agents/` sync
   (above). C3: a removed source deploys `{}` on next refresh (the `$include` target must exist); the
   include array is never trimmed.
+- **T9.2 live-verified** (verify-feature, local Docker / OpenClaw 2026.5.26): union + full precedence
+  chain (root > admin-drift > per-agent > fleet), fleet propagation + baseline freshness, pre-deploy
+  fail-closed, egress-gap warning, orphan-baseline cleanup, show-config. See README T9.2 table.
 - **Still open (not blockers for this PR):** T2.4 (AWS bash boot-path de-embed unification),
-  T9.2 (live agent verification — needs an image pull + secrets + teardown), R1 (provider release, post-merge).
+  R1 (provider release, post-merge).

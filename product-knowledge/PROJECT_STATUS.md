@@ -348,7 +348,7 @@ No new Conga data-model concept.
   See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
 - See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
 
-### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — ✅ Implemented + Code-Verified (live T9.2 pending; PR #61, not merged)
+### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — ✅ Implemented + Verified (code + live T9.2; PR #61, not merged)
 - **Goal**: make custom OpenClaw config (MCP servers, skills, tools) **declarative + version-controlled
   in the repo** at two levels — a **fleet baseline** (all agents) and **per-agent** (`agents/<name>/`)
   — deployed by Conga via `$include` layering, composing with #30's on-host admin-drift `agent-custom.json`.
@@ -372,10 +372,12 @@ No new Conga data-model concept.
   symmetry, local live-repo resolution, `$include`-target fallback, removal baseline cleanup).
   **Verify-feature**: full `go test ./...` + `go vet` + `gofmt` green; post-impl standards gate PASS
   (caught + fixed an Interface-Parity `json_schema.go` gap for show-config); spec reconciled (§14).
-- **Remaining**: **T9.2** live agent verification (fleet propagation + override precedence + integrity
-  + show-config on a real container — needs an image pull + secrets + teardown); **T2.4** AWS bash
-  boot-path de-embed unification (tracked follow-up); **R1** `terraform-provider-conga` release (post-merge,
-  `pkg/` changed). See `specs/2026-06-10_feature_fleet-baseline-configuration/`.
+- **T9.2 live-verified** (local Docker, OpenClaw 2026.5.26): union + per-agent>fleet + admin-drift>per-agent>fleet
+  merge precedence on a real container; fleet propagation on refresh with baseline rewritten in lockstep;
+  pre-deploy fail-closed on a reserved-key fleet source; egress-gap warnings; orphan-baseline cleanup on
+  removal; show-config CLI+JSON. Torn down after.
+- **Remaining**: **R1** `terraform-provider-conga` release (post-merge, `pkg/` changed); **T2.4** AWS bash
+  boot-path de-embed unification (tracked follow-up). See `specs/2026-06-10_feature_fleet-baseline-configuration/`.
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)

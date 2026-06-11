@@ -4,7 +4,7 @@
 
 - **Created**: 2026-06-10
 - **Owner**: Aaron Stone
-- **Status**: Implemented + verified (code); live T9.2 + provider release (R1) pending. PR #61, not merged.
+- **Status**: Implemented + verified (code **and** live T9.2). Pending: merge + provider release (R1). PR #61.
 - **Spec dir**: `specs/2026-06-10_feature_fleet-baseline-configuration/`
 - **Builds on**: `specs/2026-06-09_feature_infrastructure-only-simplification/` (the `$include` layering + `agent-custom.json` it shipped)
 
@@ -57,8 +57,26 @@ Reconciled `spec.md` §14 with the as-built divergences (all intentional, traced
 ### Test synchronization
 No stale references (the only `ValidateAgentCustomConfig` test references the still-present wrapper). All new public methods covered; added a direct `ManagedCustomConfigFiles` test to close the one gap. Fakes/mocks: the MCP tool-inventory mock surfaces `conga_agent_show_config` correctly; no behavioral fakes diverge. Sibling (#30 `agent-custom.json`) coverage matched. Full suite + vet re-run green.
 
-### ⏳ Remaining before merge / after merge
-- **T9.2 (live, recommended before merge)** — needs a real OpenClaw container: provision a local/AWS agent, populate `agents/_defaults/openclaw/fleet-custom.json` + `agents/<name>/custom.json`, `conga refresh`, then verify deployed `$include` layers, override precedence (per-agent over fleet, admin over per-agent), reserved-key integrity flagging, and `show-config`. Requires an image pull + shared secrets + teardown — not run during this verify pass.
+### ✅ T9.2 Live verification — PASSED (local Docker, OpenClaw 2026.5.26, 2026-06-10)
+Brought up a real gateway-only local agent (`testfleet`) on the pinned image and verified end-to-end, then fully torn down (agent + container + network + test files removed):
+
+| Check | Result |
+|---|---|
+| `$include` array deployed | `["fleet-custom.json","agent-managed-custom.json","agent-custom.json"]` ✓ |
+| Layers deployed from **live repo** sources | `repo_path` auto-set → `overlayBehaviorDir()` read `<repo>/agents/...` (confirms review-fix #2) ✓ |
+| `conga agent show-config` (CLI + `--output json`) | 4 layers, correct precedence/role/owner ✓ |
+| **Union** (OpenClaw effective merge) | `mcp.servers` = fleetmcp (fleet) + agentmcp (per-agent) + shared (both) ✓ |
+| **Per-agent > fleet** | `mcp.servers.shared.url` = `agent.example` (per-agent won) ✓ |
+| **Admin-drift > per-agent > fleet** | after host edit, `shared.url` = `admin.example`; union intact ✓ |
+| **Fleet propagation** on `refresh` | edited fleet source → `fleetv2` appeared in deployed file + effective merge ✓ |
+| **Baseline freshness** | post-refresh managed-include baseline hash == deployed-file hash (no false integrity violation — local analog of blocker-fix #1) ✓ |
+| **Pre-deploy fail-closed** (T6.1) | reserved-key (`channels`) in fleet source aborted the refresh with a clear error; bad content never reached the host; no channel injected ✓ |
+| **Egress-gap warning** (T6.2) | refresh warned on `mcp.servers.*.url` hosts not in the allowlist ✓ |
+| **Orphan-baseline cleanup** on removal | all `testfleet*.sha256` (incl. the 2 managed-include baselines) removed (confirms review-fix `e47e225`) ✓ |
+
+Not separately triggered: the periodic host-tamper hash + reserved-key integrity check (`RunIntegrityCheck` has no CLI entrypoint) — unit-covered, and the baseline-freshness hash match above exercises the same hash machinery. macOS note: iptables egress rules don't apply on Docker Desktop (documented limitation); container ran healthy regardless.
+
+### ⏳ Remaining (after merge)
 - **R1 (post-merge)** — `terraform-provider-conga` release (`pkg/` changed).
 - **T2.4 (follow-up)** — AWS bash boot-path de-embed unification.
 
