@@ -13,11 +13,11 @@ import (
 // The managed root (openclaw.json) is highest; among the $include array the
 // admin-drift file wins, then the per-agent layer, then the fleet baseline.
 type ConfigLayer struct {
-	File       string          `json:"file"`             // deployed filename in the agent data dir
-	Role       string          `json:"role"`             // human label (managed root / admin drift / per-agent / fleet baseline)
-	Owner      string          `json:"owner"`            // who edits it (conga / admin / operator)
-	Precedence int             `json:"precedence"`       // 1 = highest (wins on conflict)
-	Present    bool            `json:"present"`          // file existed on the agent
+	File       string          `json:"file"`              // deployed filename in the agent data dir
+	Role       string          `json:"role"`              // human label (managed root / admin drift / per-agent / fleet baseline)
+	Owner      string          `json:"owner"`             // who edits it (conga / admin / operator)
+	Precedence int             `json:"precedence"`        // 1 = highest (wins on conflict)
+	Present    bool            `json:"present"`           // file existed on the agent
 	Content    json.RawMessage `json:"content,omitempty"` // parsed JSON content (omitted if absent or unparseable)
 }
 

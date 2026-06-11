@@ -298,6 +298,15 @@ var commandSchemas = map[string]CommandSchema{
 			"status": {Type: "string", Description: "Result status", Enum: []string{"rebaselined"}},
 		}},
 	},
+	"agent.show-config": {
+		Command:     "agent show-config <name>",
+		Description: "Show the agent's effective OpenClaw config as its precedence-ordered $include layers (root > admin-drift > per-agent > fleet), read live from the container.",
+		Output: &SchemaSection{Fields: map[string]FieldSchema{
+			"agent":   {Type: "string", Description: "Agent name"},
+			"runtime": {Type: "string", Description: "Runtime name (e.g. openclaw)"},
+			"layers":  {Type: "array", Description: "Config layers, highest precedence first. Each: file (string), role (string), owner (string), precedence (integer, 1=highest), present (boolean), content (object, omitted if absent or not strict JSON)"},
+		}},
+	},
 	"admin.cycle-host": {
 		Command:     "admin cycle-host",
 		Description: "Restart the deployment environment (auto-confirms in JSON mode)",

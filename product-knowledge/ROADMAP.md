@@ -106,6 +106,7 @@ Fallback chains, cost limits, and cross-provider request-time routing (Bifrost) 
 
 ### Operational
 - [ ] Admin-customizable agent config — `agent-custom.json` `$include` layering so operators can add MCP servers / skills / tools that survive restarts. **Implemented on PR #57** (verified live on the pinned image); pending merge + `terraform-provider-conga` release + deployed-path verification. See [specs/2026-06-09_feature_infrastructure-only-simplification/](../specs/2026-06-09_feature_infrastructure-only-simplification/).
+- [ ] Declarative fleet + per-agent config — version-controlled custom-config layers (`agents/_defaults/<runtime>/fleet-custom.json` for all agents, `agents/<name>/custom.json` per-agent) deployed via the `$include` array (precedence root > admin-drift > per-agent > fleet), plus de-embedded operator-editable `openclaw-defaults.json` and `conga agent show-config`. **Implemented + code-verified on PR #61** (two review passes + verify-feature; `go test`/`vet`/`gofmt` green, standards gate PASS); pending **live T9.2** verification + merge + `terraform-provider-conga` release. Follow-up T2.4: unify the AWS bash boot path to consume the de-embedded defaults. See [specs/2026-06-10_feature_fleet-baseline-configuration/](../specs/2026-06-10_feature_fleet-baseline-configuration/).
 - [ ] Per-user SSO permission sets (CongaUser vs CongaAdmin)
 - [ ] Per-user custom SSM documents (each user can only use their own port)
 - [ ] Rewrite Slack router in Go (replace Node.js `router/slack/src/index.js`, land in `channels/slack/`)

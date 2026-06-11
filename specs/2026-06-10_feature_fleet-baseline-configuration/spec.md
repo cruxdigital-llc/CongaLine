@@ -160,3 +160,32 @@ Config-only. New files (`fleet-custom.json`, `agent-managed-custom.json`) live n
 per-provider deploy across all #30 write paths incl. AWS tftpl + provision scripts, integrity
 extension), tests per §9; then `/glados:verify-feature` (live fleet-propagation + override checks)
 and the security gate (§11). `pkg/` change → `terraform-provider-conga` release.
+
+## 14. Implementation reconciliation (verify-feature, 2026-06-10)
+
+Final implementation vs. this spec — divergences, all intentional and traced in README:
+
+- **§3.2 de-embed location/scope.** The operator-editable defaults live at
+  `agents/_defaults/openclaw/openclaw-defaults.json` (committed, runtime-level), reusing the existing
+  `agents/` → `/opt/conga/agents/` S3 sync — **no new terraform/S3 path** (resolves C2). Scope is the
+  **Go generation paths only** (operator-side `conga refresh` on AWS + local/remote); the AWS bash
+  fresh-boot heredocs still hardcode the baseline inline — unifying them is tracked follow-up **T2.4**.
+  On local, the #31 sources + defaults resolve via `overlayBehaviorDir()` (live repo), so edits
+  propagate on `conga refresh` without re-running `admin setup`.
+- **§3.5 effective-config view → layered view (not synthesized merge).** `conga agent show-config`
+  renders the 4 **deployed layers** read live from the container, each labeled by precedence/role/owner,
+  rather than computing a merged config in Go. Operator decision: a synthesized merge could diverge
+  from OpenClaw's actual deep-merge and mislead; show the source-of-truth + precedence contract instead.
+  Shipped this feature with full Interface Parity: CLI + `--output json` (+ `json_schema.go` contract) +
+  MCP `conga_agent_show_config`. (Resolves C3-adjacent §12.3.)
+- **§3.4 integrity baseline lifecycle.** Managed-include baselines (`<name>.<file>.sha256` /
+  `<name>-<file>.sha256` on AWS) are written at every deploy point AND on the AWS Go refresh path
+  (`regenerateAgentConfigOnInstance`), and cleaned up on `RemoveAgent` across all 3 providers — keeping
+  deploy + baseline + guard in sync (caught + fixed in the two PR-review passes).
+- **§12 checkpoints resolved.** C1: source `agents/<name>/custom.json` → deployed
+  `agent-managed-custom.json` (distinct from admin `agent-custom.json`); fleet source
+  `_defaults/<runtime>/fleet-custom.json` → deployed `fleet-custom.json`. C2: reuse the `agents/` sync
+  (above). C3: a removed source deploys `{}` on next refresh (the `$include` target must exist); the
+  include array is never trimmed.
+- **Still open (not blockers for this PR):** T2.4 (AWS bash boot-path de-embed unification),
+  T9.2 (live agent verification — needs an image pull + secrets + teardown), R1 (provider release, post-merge).

@@ -348,7 +348,7 @@ No new Conga data-model concept.
   See `specs/2026-06-09_feature_infrastructure-only-simplification/`.
 - See `specs/2026-06-09_feature_infrastructure-only-simplification/` (`spec.md`).
 
-### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — Specified, Ready for Implementation
+### 31. Fleet Baseline (+ Per-Agent Declarative) Configuration — ✅ Implemented + Code-Verified (live T9.2 pending; PR #61, not merged)
 - **Goal**: make custom OpenClaw config (MCP servers, skills, tools) **declarative + version-controlled
   in the repo** at two levels — a **fleet baseline** (all agents) and **per-agent** (`agents/<name>/`)
   — deployed by Conga via `$include` layering, composing with #30's on-host admin-drift `agent-custom.json`.
@@ -362,12 +362,20 @@ No new Conga data-model concept.
   a binary release).
 - **Load-bearing unknown**: `$include`-**array** precedence (which include wins) — live-verify on the
   pinned image, like #30's root-wins check.
-- **Status**: `/glados:spec-feature` complete — `spec.md` drafted; **`$include`-array precedence
-  live-verified** (later-wins, includes union, root-wins-over-all); persona review APPROVE; standards
-  gate **PASS** (no blocking; config-taxonomy doc-sync + Interface-Parity-if-show-config to honor in
-  impl). 4-layer model: defaults → fleet → per-agent → admin-drift via
-  `$include:[fleet-custom, agent-managed-custom, agent-custom]`; de-embed keeps an embedded fallback.
-  Builds on #30. See `specs/2026-06-10_feature_fleet-baseline-configuration/spec.md`.
+- **Status**: `/glados:implement-feature` + `/glados:verify-feature` complete on branch
+  `plan/fleet-baseline-configuration` (PR #61, **not merged**). P1–P9 landed: generator `$include`
+  array; de-embed w/ embedded fallback (`agents/_defaults/openclaw/openclaw-defaults.json`, Go paths);
+  per-provider deploy (local/remote/AWS Go + AWS bash boot/provision); integrity reserved-key guard on
+  all 3 layers + hash-verify the 2 managed layers; pre-deploy fail-closed (fleet blast-radius) +
+  egress-gap warnings; `conga agent show-config` (layered view, CLI+JSON+MCP); `config-taxonomy.md`
+  updated. **Two PR-review passes** (1 blocker + 3 should-fix, all fixed: AWS-refresh managed-baseline
+  symmetry, local live-repo resolution, `$include`-target fallback, removal baseline cleanup).
+  **Verify-feature**: full `go test ./...` + `go vet` + `gofmt` green; post-impl standards gate PASS
+  (caught + fixed an Interface-Parity `json_schema.go` gap for show-config); spec reconciled (§14).
+- **Remaining**: **T9.2** live agent verification (fleet propagation + override precedence + integrity
+  + show-config on a real container — needs an image pull + secrets + teardown); **T2.4** AWS bash
+  boot-path de-embed unification (tracked follow-up); **R1** `terraform-provider-conga` release (post-merge,
+  `pkg/` changed). See `specs/2026-06-10_feature_fleet-baseline-configuration/`.
 
 ### Backlog / Upcoming
 - [ ] Horizon 2: Operational maturity (secret rotation, backups, dashboards)

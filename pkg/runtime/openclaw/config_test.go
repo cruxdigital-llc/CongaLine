@@ -822,6 +822,18 @@ func TestGenerateConfig_IncludesAdminCustomFile(t *testing.T) {
 	}
 }
 
+// TestManagedCustomConfigFiles asserts the openclaw runtime advertises its two
+// Conga-deployed managed include layers in lowest-precedence-first order (the
+// order EffectiveConfigSpecs reverses and the integrity/hashing paths rely on).
+func TestManagedCustomConfigFiles(t *testing.T) {
+	r := &Runtime{}
+	got := r.ManagedCustomConfigFiles()
+	want := []string{FleetCustomConfigFile, AgentManagedCustomConfigFile}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ManagedCustomConfigFiles = %v, want %v", got, want)
+	}
+}
+
 // TestGenerateConfig_RuntimeDefaults covers the feature #31 de-embed: when
 // ConfigParams.RuntimeDefaults carries an on-disk baseline it replaces the
 // embedded copy as the generation base; absent or malformed bytes fall back to

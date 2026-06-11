@@ -4,7 +4,7 @@
 
 - **Created**: 2026-06-10
 - **Owner**: Aaron Stone
-- **Status**: Planning
+- **Status**: Implemented + verified (code); live T9.2 + provider release (R1) pending. PR #61, not merged.
 - **Spec dir**: `specs/2026-06-10_feature_fleet-baseline-configuration/`
 - **Builds on**: `specs/2026-06-09_feature_infrastructure-only-simplification/` (the `$include` layering + `agent-custom.json` it shipped)
 
@@ -23,6 +23,44 @@ it: *"the fleet baseline is ONE use case, but we may want agent-specific
 configuration in the `agents/{agent}/` folders."* So this is really about a
 **declarative custom-config layer in the repo** (the "configure MCP in code"
 answer), with fleet + per-agent levels — not just a single fleet file.
+
+## ✅ Verify-Feature Report (2026-06-10)
+
+### Automated verification
+- **Test suite**: `go test ./...` — **all green** (every package `ok`; no failures).
+- **Linters**: `go vet ./...` clean; `gofmt -l` clean (fixed `pkg/common/config_layers.go` formatting during verify).
+- **Real-binary smoke test**: rebuilt `bin/conga`; `conga agent show-config --help` renders the 4-layer doc; `conga json-schema agent.show-config` emits the output contract; MCP `conga_agent_show_config` registered + exercised by the tool-inventory test.
+
+### Persona verification (Architect / PM / QA — review of implementation + tests)
+- **Architect — APPROVE.** Reuses #30's verified `$include` + the array precedence; shared logic in `common` (resolver, validators, egress, layer-builder, de-embed loader) with provider packages holding only transport; 3-provider deploy+baseline+guard parity confirmed. The recommended effective-config view shipped (as a layered view — see §3.5/spec §14). De-embed keeps the embedded fallback (air-gap/tamper-safe).
+- **Product Manager — APPROVE.** Both use cases served (fleet baseline + "MCP in code"); operator mental model covered by the `config-taxonomy.md` 4-layer subsection + `show-config`. Scope bounded (free-form, no typed schema). T2.4/T9.2/R1 clearly deferred, not silently dropped.
+- **QA — APPROVE.** Required tests present: fleet blast-radius (reserved-key fleet source fails closed pre-deploy), fleet propagation + admin/per-agent override ordering (generator array order + deploy re-sync; runtime merge live-verified in spec phase), de-embed fallback (file/absent/malformed), reserved-key flagged in each layer, managed-include tamper detection, cross-layer egress dedup. New-method coverage complete (added a direct `ManagedCustomConfigFiles` test during verify). Sibling parity vs #30's `agent-custom.json` tests holds. **Caveat:** T9.2 (live on a real container) not yet run — see below.
+
+### Standards Gate Report (post-implementation)
+| Standard | Severity | Verdict |
+|---|---|---|
+| security.md — Configuration Integrity: channel allowlist is a security boundary | must | ✅ PASS — reserved-key guard on all 3 include layers × 3 providers; root wins (verified) |
+| security.md — Configuration Integrity: hash-based integrity (all) | must | ✅ PASS — 2 managed layers hash-verified vs baseline; deploy+baseline+guard kept in sync (incl. AWS Go refresh + removal cleanup) |
+| security.md — fleet blast radius | must | ✅ PASS — pre-deploy fail-closed validation; bad fleet source never reaches a host |
+| security.md — secrets via env, egress additive | must | ✅ PASS — no secrets in custom files; egress-gap warnings additive |
+| security.md — de-embed defaults integrity + safe fallback | must | ✅ PASS — embedded fallback on absent/malformed; synced file rides integrity-covered tree |
+| architecture.md — Agent Data Safety | must | ✅ PASS — config-only; no reads/writes to agent data; removal cleans config baselines only |
+| architecture.md — Interface Parity (CLI+JSON+MCP) | must | ✅ PASS *(after fix)* — `show-config` was missing its `json_schema.go` contract; **added during this gate** |
+| architecture.md — Provider contract (all 3) | must | ✅ PASS — deploy/integrity/egress wired on local/remote/AWS |
+| config-taxonomy.md — document the new layers | should | ✅ PASS — updated during implement (P8) |
+
+**Gate decision: PASS.** One `must` gap (Interface Parity — `json_schema.go` entry for `show-config`) was found and fixed during the gate; re-verified via the real binary. No remaining violations.
+
+### Spec retrospection
+Reconciled `spec.md` §14 with the as-built divergences (all intentional, traced): de-embed location/scope (`agents/_defaults/openclaw/`, Go-only, `overlayBehaviorDir` on local); §3.5 layered view instead of synthesized merge; baseline lifecycle (AWS Go refresh + removal cleanup); §12 checkpoints C1–C3 resolved. Standards-doc audit: no stale code examples (`ValidateAgentCustomConfig` retained as wrapper; `config-taxonomy.md` already current; security.md integrity entries still accurate).
+
+### Test synchronization
+No stale references (the only `ValidateAgentCustomConfig` test references the still-present wrapper). All new public methods covered; added a direct `ManagedCustomConfigFiles` test to close the one gap. Fakes/mocks: the MCP tool-inventory mock surfaces `conga_agent_show_config` correctly; no behavioral fakes diverge. Sibling (#30 `agent-custom.json`) coverage matched. Full suite + vet re-run green.
+
+### ⏳ Remaining before merge / after merge
+- **T9.2 (live, recommended before merge)** — needs a real OpenClaw container: provision a local/AWS agent, populate `agents/_defaults/openclaw/fleet-custom.json` + `agents/<name>/custom.json`, `conga refresh`, then verify deployed `$include` layers, override precedence (per-agent over fleet, admin over per-agent), reserved-key integrity flagging, and `show-config`. Requires an image pull + shared secrets + teardown — not run during this verify pass.
+- **R1 (post-merge)** — `terraform-provider-conga` release (`pkg/` changed).
+- **T2.4 (follow-up)** — AWS bash boot-path de-embed unification.
 
 ## ⏸️ RESUME HERE (next session)
 
