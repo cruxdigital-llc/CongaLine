@@ -226,7 +226,7 @@ shape. Router forwards telegram events to the Hermes API endpoint.
 ### V4 — Existing Slack paths unchanged
 
 Re-run the existing PR #51 verification scenarios (S1, S2, S3) on
-aaron, confirm nothing regressed.
+user-a, confirm nothing regressed.
 
 ### V5 — MCP path
 

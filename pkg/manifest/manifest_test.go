@@ -16,7 +16,7 @@ setup:
   ssh_user: "ubuntu"
   install_docker: true
 agents:
-  - name: aaron
+  - name: user-a
     type: user
     secrets:
       anthropic-api-key: "sk-test"
@@ -27,7 +27,7 @@ channels:
     secrets:
       slack-bot-token: "xoxb-test"
     bindings:
-      - agent: aaron
+      - agent: user-a
         id: "U0123456789"
       - agent: team
         id: "C0123456789"
@@ -64,7 +64,7 @@ policy:
 	if len(m.Agents) != 2 {
 		t.Fatalf("len(Agents) = %d, want 2", len(m.Agents))
 	}
-	if m.Agents[0].Name != "aaron" || m.Agents[0].Type != "user" {
+	if m.Agents[0].Name != "user-a" || m.Agents[0].Type != "user" {
 		t.Errorf("Agent[0] = %+v", m.Agents[0])
 	}
 	if m.Agents[0].Secrets["anthropic-api-key"] != "sk-test" {
@@ -158,8 +158,8 @@ func TestValidate_DuplicateAgentNames(t *testing.T) {
 		APIVersion: supportedAPIVersion,
 		Kind:       supportedKind,
 		Agents: []ManifestAgent{
-			{Name: "aaron", Type: "user"},
-			{Name: "aaron", Type: "team"},
+			{Name: "user-a", Type: "user"},
+			{Name: "user-a", Type: "team"},
 		},
 	}
 	err := Validate(m)
@@ -202,7 +202,7 @@ func TestValidate_BindingMissingAgent(t *testing.T) {
 	m := &Manifest{
 		APIVersion: supportedAPIVersion,
 		Kind:       supportedKind,
-		Agents:     []ManifestAgent{{Name: "aaron", Type: "user"}},
+		Agents:     []ManifestAgent{{Name: "user-a", Type: "user"}},
 		Channels: []ManifestChannel{
 			{
 				Platform: "slack",
@@ -221,11 +221,11 @@ func TestValidate_BindingMissingID(t *testing.T) {
 	m := &Manifest{
 		APIVersion: supportedAPIVersion,
 		Kind:       supportedKind,
-		Agents:     []ManifestAgent{{Name: "aaron", Type: "user"}},
+		Agents:     []ManifestAgent{{Name: "user-a", Type: "user"}},
 		Channels: []ManifestChannel{
 			{
 				Platform: "slack",
-				Bindings: []ManifestBinding{{Agent: "aaron", ID: ""}},
+				Bindings: []ManifestBinding{{Agent: "user-a", ID: ""}},
 			},
 		},
 	}

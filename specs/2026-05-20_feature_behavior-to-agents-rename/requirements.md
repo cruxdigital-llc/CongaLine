@@ -116,7 +116,7 @@ Every reference to `behavior/agents/`, `behavior/default/`, or "behavior files" 
 
 ### FR-9: No breaking changes for live agents during the transition
 
-A live AWS agent on `2026.3.11` whose host has `/opt/conga/behavior/agents/aaron/agent.yaml` must continue to work after the operator's CLI is updated to the new binary, until the migration script runs. The fallback loader path makes this possible.
+A live AWS agent on `2026.3.11` whose host has `/opt/conga/behavior/agents/user-a/agent.yaml` must continue to work after the operator's CLI is updated to the new binary, until the migration script runs. The fallback loader path makes this possible.
 
 After migration, the old `/opt/conga/behavior/` directory should no longer exist (the migration script `mv`'s it to `/opt/conga/agents/`). The next refresh reads from the new path; the fallback is not exercised.
 

@@ -1,6 +1,6 @@
 # Spec: local-model-routing
 
-**Goal**: Per-agent model override via `behavior/agents/<name>/agent.yaml`, provider-agnostic across AWS/local/remote, with the `aaron`-to-Spark-Qwen flow as the first production use case. Detailed implementation contract.
+**Goal**: Per-agent model override via `behavior/agents/<name>/agent.yaml`, provider-agnostic across AWS/local/remote, with the `user-a`-to-Spark-Qwen flow as the first production use case. Detailed implementation contract.
 
 **Prerequisite**: Phase 0 spike findings in `spike-openclaw-providers.md`. Pin bumps to `v2026.5.18`. Provider path is **Ollama native** (not OpenAI-compatible) for the Spark case.
 
@@ -274,7 +274,7 @@ Add to existing CLI integration test harness (see `specs/2026-04-07_feature_cli-
 
 ### Manual AWS verification (not automated — captured in `verify-feature` step)
 
-Per the plan's "End-to-end verification" section, run against the production `aaron` agent on AWS.
+Per the plan's "End-to-end verification" section, run against the production `user-a` agent on AWS.
 
 ## Data Safety (per architecture standards)
 
@@ -292,7 +292,7 @@ The only file written by this feature is the generated `openclaw.json` at refres
 
 The `Provider` interface is unchanged. All three providers (`aws`, `local`, `remote`) consume the same `pkg/runtime/openclaw/GenerateConfig` function with the same `ConfigParams` shape. The new `Overlay` field is populated identically by each provider's `RefreshAgent` codepath via `common.LoadAgentOverlay`.
 
-The same `behavior/agents/aaron/agent.yaml` file produces identical `openclaw.json` on all three providers (golden test #2 above verifies this property).
+The same `behavior/agents/user-a/agent.yaml` file produces identical `openclaw.json` on all three providers (golden test #2 above verifies this property).
 
 ## Interface Parity (per architecture standards)
 
@@ -329,7 +329,7 @@ ollama list
 # ...
 
 # 2. Use the exact NAME column value as `model.name` in agent.yaml:
-cat > behavior/agents/aaron/agent.yaml <<'YAML'
+cat > behavior/agents/user-a/agent.yaml <<'YAML'
 version: 1
 model:
   provider: ollama
@@ -337,8 +337,8 @@ model:
   base_url: http://192.168.181.97:11434   # NO /v1
 YAML
 
-# 3. (AWS) terraform apply, then conga refresh-agent aaron.
-# 3. (local/remote) conga refresh-agent aaron.
+# 3. (AWS) terraform apply, then conga refresh-agent user-a.
+# 3. (local/remote) conga refresh-agent user-a.
 ```
 
 ## Implementation phases (mapping plan.md → concrete order)
@@ -357,7 +357,7 @@ YAML
    - `product-knowledge/standards/architecture.md` cross-link + Config Format Boundary update.
    - `product-knowledge/ROADMAP.md` cross-link to this spec.
 9. **Phase 8 — Provider release**: tag congaline, bump `terraform-provider-conga`, release per `reference_provider_release_flow.md` (memory).
-10. **Phase 9 — Verification**: AWS end-to-end on `aaron`; local provider parity; control agent regression check.
+10. **Phase 9 — Verification**: AWS end-to-end on `user-a`; local provider parity; control agent regression check.
 
 ## Open Questions (still open, to revisit during implement-feature)
 

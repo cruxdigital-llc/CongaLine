@@ -18,7 +18,7 @@ setup:
   install_docker: true
 
 agents:
-  - name: aaron
+  - name: user-a
     type: user
     secrets:
       anthropic-api-key: "$ANTHROPIC_API_KEY"
@@ -35,7 +35,7 @@ channels:
       slack-signing-secret: "$SLACK_SIGNING_SECRET"
       slack-app-token: "$SLACK_APP_TOKEN"
     bindings:
-      - agent: aaron
+      - agent: user-a
         id: "U0ANSPZPG9X"
       - agent: team
         id: "C0ANFAD41GB"
@@ -273,6 +273,6 @@ No changes to `root.go` needed — the command self-registers via `init()` like 
 3. `go test ./cli/...` — all existing tests still pass
 4. Create `demo.yaml` with real env vars, run `conga bootstrap demo.yaml --provider local`
 5. Run `conga bootstrap demo.yaml` again — verify idempotent (steps show "skipped")
-6. `conga status --agent aaron` + `conga status --agent team` — both running
+6. `conga status --agent user-a` + `conga status --agent team` — both running
 7. `conga policy get` — matches manifest policy
 8. `conga bootstrap demo.yaml --output json` — valid JSON output

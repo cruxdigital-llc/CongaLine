@@ -75,7 +75,7 @@ resource "conga_secret" "global" {
   depends_on = [conga_agent.this]
 }
 
-# Per-agent secrets (e.g. aaron's trello keys)
+# Per-agent secrets (e.g. user-a's trello keys)
 resource "conga_secret" "agent" {
   for_each   = local.agent_secret_keys
   agent      = each.value.agent

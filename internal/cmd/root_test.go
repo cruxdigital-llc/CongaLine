@@ -12,7 +12,7 @@ func TestValidateAgentName(t *testing.T) {
 		}
 	}
 
-	invalid := []string{"Aaron", "ml_team", "a b", "", "a!b", "UPPER", "has.dot"}
+	invalid := []string{"UserA", "ml_team", "a b", "", "a!b", "UPPER", "has.dot"}
 	for _, name := range invalid {
 		if err := validateAgentName(name); err == nil {
 			t.Errorf("validateAgentName(%q) should have returned error", name)

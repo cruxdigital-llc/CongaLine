@@ -54,7 +54,7 @@ skeleton + `Transport` interface + fake test, and routes AWS routing.json genera
   (`ssmTransport` adapter, `var _ managedhost.Transport`). `regenerateRoutingOnInstance` refactored
   through the seam.
 - [x] **T1.6 — Live verify — DONE (no release needed).** Verified via the branch-built `./bin/conga`
-  against the live fleet on both paths: `refresh aaron` (model→4-8 + overlay preserved, routing
+  against the live fleet on both paths: `refresh user-a` (model→4-8 + overlay preserved, routing
   loopback, unit bridge-attach 1→0, ready) and fresh `add-user slice2test` (Go config 4-8, unit
   bridge-attach 0 + egress ExecStartPost present, no bridge refs), then slice2test torn down clean.
   The CLI binary + SSM-pushed embedded scripts exercise the branch `pkg/` directly — a public provider
@@ -197,7 +197,7 @@ are left untouched this step (their auto-subnet network is migrated by the first
   rule** (`DIRECT BLOCKED (timeout)`). Torn down clean (roster back to 6; data/config/orphan-iptables
   swept). The throwaway provision exercised the subnet-migration path (add-user auto-subnet →
   ProvisionAgent→RefreshAgent migrate to 10.99.7.x); operator opted **not** to also migrate a real agent
-  (`aaron`) this pass. **B-2 cleanup note:** `deploy-egress.sh` still adds port-53 DNS RETURN rules that
+  (`user-a`) this pass. **B-2 cleanup note:** `deploy-egress.sh` still adds port-53 DNS RETURN rules that
   `iptables.RemoveRulesCmd` doesn't remove → 2 orphan rules survived teardown (harmless: the IP is gone).
   Reconcile when `deploy-egress`'s discovery-loop iptables is retired in B-2.
 

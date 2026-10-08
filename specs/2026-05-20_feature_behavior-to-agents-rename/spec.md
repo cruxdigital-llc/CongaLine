@@ -317,12 +317,12 @@ If the existing CLI integration test harness (per `specs/2026-04-07_feature_cli-
 ### Migration script test
 
 Shell-based:
-1. Create `/tmp/conga-test/behavior/agents/{aaron,zach}/SOUL.md` (placeholder content).
+1. Create `/tmp/conga-test/behavior/agents/{user-a,user-b}/SOUL.md` (placeholder content).
 2. Create `/tmp/conga-test/behavior/default/openclaw/user/AGENTS.md`.
 3. Run `OPT_CONGA=/tmp/conga-test scripts/migrate-behavior-to-agents.sh` (parameterize the script for testability, or use a wrapper).
 4. Assert:
-   - `/tmp/conga-test/agents/aaron/SOUL.md` exists.
-   - `/tmp/conga-test/agents/zach/SOUL.md` exists.
+   - `/tmp/conga-test/agents/user-a/SOUL.md` exists.
+   - `/tmp/conga-test/agents/user-b/SOUL.md` exists.
    - `/tmp/conga-test/agents/_defaults/openclaw/user/AGENTS.md` exists.
    - `/tmp/conga-test/behavior/` is gone.
 5. Run the script again — assert it exits cleanly with "nothing to do".
@@ -332,7 +332,7 @@ Shell-based:
 Before applying to production:
 1. `terraform plan` against the production state.
 2. Confirm:
-   - Resources `aws_s3_object.agents["agents/aaron/agent.yaml"]` and friends appear as `moved` (no destroy + recreate).
+   - Resources `aws_s3_object.agents["agents/user-a/agent.yaml"]` and friends appear as `moved` (no destroy + recreate).
    - `terraform_data.agents_refresh` appears as `moved`.
    - No unintended changes to EC2, IAM, KMS, NAT, or any other infra.
 

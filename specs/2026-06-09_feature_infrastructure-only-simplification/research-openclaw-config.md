@@ -137,9 +137,9 @@ operators toward the `.env`/secrets mechanisms, not inline `${VAR}`.
 - **Integrity monitor** can hash only the *Conga-managed file* (Approach C) rather than the
   whole config — a cleaner security boundary than re-scoping a whole-file hash (Approach B).
 
-## 5b. Empirical validation on `aaron` (2026-06-09, image `2026.5.26`)
+## 5b. Empirical validation on `user-a` (2026-06-09, image `2026.5.26`)
 
-Live-tested `$include` against the pinned image on the production `aaron` agent (isolated copy
+Live-tested `$include` against the pinned image on the production `user-a` agent (isolated copy
 first via `OPENCLAW_CONFIG_PATH`, then live with backup + byte-exact restore). Results:
 
 - **`$include` works.** An isolated config with `"$include": ["inc.json"]` **validates**
@@ -161,7 +161,7 @@ first via `OPENCLAW_CONFIG_PATH`, then live with backup + byte-exact restore). R
   *"auto-enabled plugins for this runtime **without writing config**."* So the fail-closed rule
   does **not** break normal runtime operation — it only affects interactive `openclaw config
   set`/`configure`/wizard flows run inside the container.
-- **Integrity is whole-file today.** Byte-exact restore re-matched `aaron.sha256` (the monitor
+- **Integrity is whole-file today.** Byte-exact restore re-matched `user-a.sha256` (the monitor
   hashes the whole file), confirming any include-based design must re-scope the integrity target.
 
 **Design consequence (sharpens decision #1):** Approach C is viable and clean, but the
@@ -177,7 +177,7 @@ infra-managed deployment, but must be documented.
 
 The image ships a capable config CLI (`openclaw config get/set/patch/unset/validate/schema`,
 `openclaw channels …`). Worth a real evaluation: **Approach D = Conga drives the CLI** (esp.
-`config patch`) rather than templating `openclaw.json`. Tested `config patch` on `aaron` (isolated
+`config patch`) rather than templating `openclaw.json`. Tested `config patch` on `user-a` (isolated
 copy, 2026-06-09):
 
 - ✅ **Validated recursive merge** — preserved an admin `mcp.servers.linear` block while updating

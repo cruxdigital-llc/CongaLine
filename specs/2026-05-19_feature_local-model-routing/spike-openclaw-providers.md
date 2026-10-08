@@ -3,7 +3,7 @@
 **Goal**: Resolve the two open questions from `plan.md` before writing `spec.md`:
 
 1. Is openclaw/openclaw#45311 still open? If fixed, what's the latest stable pin?
-2. Exact `openclaw.json` schema for routing the `aaron` agent to Qwen on the DGX Spark.
+2. Exact `openclaw.json` schema for routing the `user-a` agent to Qwen on the DGX Spark.
 
 ## Q1: Pin status
 
@@ -19,14 +19,14 @@
 
 ### Acceptance test for the bump
 1. Apply the pinned `2026.5.18` image.
-2. `conga refresh-agent` an existing agent (e.g. `zach`).
+2. `conga refresh-agent` an existing agent (e.g. `user-b`).
 3. Send a Slack DM. Confirm the agent receives and responds.
 4. Tail container + router logs for any "no inbound events" / "ACK" warnings for at least 15 minutes.
 5. Check `openclaw doctor` output if exposed; otherwise inspect `/health` endpoints.
 
 If any Slack regression resurfaces, roll back the pin and proceed with the feature against `2026.3.11` (deferring some `2026.5.x` config features that depend on the newer schema).
 
-## Q2: Routing aaron to Qwen on the Spark
+## Q2: Routing user-a to Qwen on the Spark
 
 ### Critical finding — the planning answer was wrong
 The plan-feature decision was "Native OpenAI-compatible support" (`OPENAI_BASE_URL` + `openai/<model>`). **This path is broken for our case.** From `docs/providers/ollama.md` in `v2026.5.18`:
@@ -80,7 +80,7 @@ Top-level structure of `openclaw.json` for this case:
 For IaC reproducibility, generate **explicit** `models.providers.ollama` config from the overlay. The overlay carries `provider`, `name`, and `base_url`; the runtime config generator writes both the `agents.defaults.model.primary` and the `models.providers.<provider>` blocks.
 
 ### Generalizing the overlay
-The overlay schema should NOT hardcode "ollama" — Aaron may swap the Spark from Ollama to vLLM, llama.cpp (with `llama-server`), or a Bedrock proxy later. Supported provider values (v1):
+The overlay schema should NOT hardcode "ollama" — the operator may swap the Spark from Ollama to vLLM, llama.cpp (with `llama-server`), or a Bedrock proxy later. Supported provider values (v1):
 
 | `provider` value in overlay | OpenClaw provider key | Notes |
 |---|---|---|
@@ -88,9 +88,9 @@ The overlay schema should NOT hardcode "ollama" — Aaron may swap the Spark fro
 | `openai` | `openai` | Native OpenAI / OpenAI-compatible endpoints (vLLM, llama.cpp `--api`, OpenAI itself). Use `baseUrl` ending in `/v1`. Requires `openai-api-key` secret. |
 | (others) | (deferred) | Add when needed. The overlay loader rejects unknown providers. |
 
-**For Aaron's Spark today**: `provider: ollama`, `name: qwen3:6b` (or whatever `ollama list` shows), `base_url: http://192.168.181.97:11434` — **no `/v1`**.
+**For the operator's Spark today**: `provider: ollama`, `name: qwen3:6b` (or whatever `ollama list` shows), `base_url: http://192.168.181.97:11434` — **no `/v1`**.
 
-If Aaron later switches to vLLM serving Qwen at a different port: `provider: openai`, `name: qwen3-6b`, `base_url: http://192.168.181.97:8000/v1` — **with `/v1`**.
+If the operator later switches to vLLM serving Qwen at a different port: `provider: openai`, `name: qwen3-6b`, `base_url: http://192.168.181.97:8000/v1` — **with `/v1`**.
 
 ## Verification against the running image
 

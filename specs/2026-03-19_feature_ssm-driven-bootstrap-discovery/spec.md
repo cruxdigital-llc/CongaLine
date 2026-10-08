@@ -12,7 +12,7 @@ All agents live under `/conga/agents/<name>`:
 
 ```
 /conga/agents/myagent   → {"type":"user","slack_member_id":"UEXAMPLE01","gateway_port":18789,"iam_identity":"exampleuser"}
-/conga/agents/zach    → {"type":"user","slack_member_id":"UEXAMPLE02","gateway_port":18790,"iam_identity":"zachhendershot"}
+/conga/agents/user-b    → {"type":"user","slack_member_id":"UEXAMPLE02","gateway_port":18790,"iam_identity":"user-b"}
 /conga/agents/devops  → {"type":"team","slack_channel":"CEXAMPLE01","gateway_port":18800}
 ```
 
@@ -191,11 +191,11 @@ agents = {
     gateway_port    = 18789
     iam_identity    = "exampleuser"
   }
-  zach = {
+  user-b = {
     type            = "user"
     slack_member_id = "UEXAMPLE02"
     gateway_port    = 18790
-    iam_identity    = "zachhendershot"
+    iam_identity    = "user-b"
   }
 }
 ```

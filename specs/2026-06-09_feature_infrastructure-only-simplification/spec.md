@@ -24,7 +24,7 @@ deep-merges the two at load time, with the **root taking precedence** on conflic
 | `agent-custom.json` perms | **Read-only to agent uid (0444)**; admins edit via privileged path | security gate |
 | `openclaw` CLI | **Validation only** (`config validate`), not mutation (§research 5c) | confirmed |
 
-### Verified mechanics (image `2026.5.26`, on `aaron`)
+### Verified mechanics (image `2026.5.26`, on `user-a`)
 - `$include` merges + validates; survives restart + hot-reload.
 - On conflicting keys, **the root file wins** (`gateway.port`, `session.dmScope` probes).
 - OpenClaw **fails closed** on owned-writes (`config set`/`patch`) when root has `$include` —
@@ -207,7 +207,7 @@ can make it fatal. This closes the hand-maintained-key-spelling risk (research o
   path flags a channel not present in the agent record. Guards the deep-merge-union finding (§4).
 - **Live (verify-feature)**: on AWS, add an MCP server to one agent's include, `systemctl restart`,
   confirm via `conga_container_exec` that it survives and the agent runs. (Mechanics already proven
-  on `aaron`.)
+  on `user-a`.)
 
 ## 11a. Data Safety (required — architecture.md §Agent Data Safety, must)
 
@@ -298,7 +298,7 @@ Divergences from this spec, all intentional and verified:
   `ErrCustomConfigUnparseable` / a WARN rather than risk unsafe comment-stripping (URLs contain
   `//`). An attacker writing JSON5 evades the key-name check (WARN, not blocked); compensated by
   AWS perms. Optional hardening: in-container `openclaw config get channels` (tasks T3.5).
-- **Verified live** on `aaron`/`2026.5.26`: MCP-in-include survives restart; the integrity jq guard
+- **Verified live** on `user-a`/`2026.5.26`: MCP-in-include survives restart; the integrity jq guard
   flags an injected `channels` and passes a clean mcp include.
 
 ## 15. Handoff

@@ -80,7 +80,7 @@ func TestToolChannelsList(t *testing.T) {
 func TestToolChannelsBind(t *testing.T) {
 	c := newChannelTestClient(t)
 	result := callTool(t, c, "conga_channels_bind", map[string]any{
-		"agent_name": "aaron",
+		"agent_name": "user-a",
 		"channel":    "slack:U0123456789",
 	})
 	if result.IsError {
@@ -94,7 +94,7 @@ func TestToolChannelsBind(t *testing.T) {
 func TestToolChannelsBindInvalidFormat(t *testing.T) {
 	c := newChannelTestClient(t)
 	result := callTool(t, c, "conga_channels_bind", map[string]any{
-		"agent_name": "aaron",
+		"agent_name": "user-a",
 		"channel":    "invalid-format",
 	})
 	if !result.IsError {
@@ -105,7 +105,7 @@ func TestToolChannelsBindInvalidFormat(t *testing.T) {
 func TestToolChannelsUnbind(t *testing.T) {
 	c := newChannelTestClient(t)
 	result := callTool(t, c, "conga_channels_unbind", map[string]any{
-		"agent_name": "aaron",
+		"agent_name": "user-a",
 		"platform":   "slack",
 	})
 	if result.IsError {

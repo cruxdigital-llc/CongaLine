@@ -11,7 +11,7 @@ func TestValidateAgentName(t *testing.T) {
 		{"ml-team", true},
 		{"agent1", true},
 		{"a-b-c", true},
-		{"Aaron", false},   // uppercase
+		{"UserA", false},   // uppercase
 		{"ml_team", false}, // underscore
 		{"", false},        // empty
 		{"with space", false},

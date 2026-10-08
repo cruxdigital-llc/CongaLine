@@ -14,7 +14,7 @@ runtime baseline is editable without a binary/provider release.
 
 ## 2. Verified merge model (the foundation)
 
-Live-verified on `aaron`/`2026.5.26` (probe, §research/README 2026-06-10):
+Live-verified on `user-a`/`2026.5.26` (probe, §research/README 2026-06-10):
 - **Root wins** over all includes (Conga-owned `gateway`/`channels`/`auth` stay authoritative).
 - Within the `$include` **array, later wins**.
 - Distinct keys **union** across all layers.

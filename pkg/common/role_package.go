@@ -207,7 +207,7 @@ func resolveAgentsDirForRepoRoot(repoRoot string) string {
 //
 // Worktree `.git` files look like:
 //
-//	gitdir: /Users/aaron/Development/crux/congaline/.git/worktrees/explore-agent-routing
+//	gitdir: /Users/<operator>/Development/crux/congaline/.git/worktrees/explore-agent-routing
 //
 // The main worktree is the directory that contains the `.git` directory
 // referenced by that gitdir line (walk up three levels: worktrees/<name> →

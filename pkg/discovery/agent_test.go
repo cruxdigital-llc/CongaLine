@@ -142,7 +142,7 @@ func TestResolveAgent_GenericAWSErrorIsSurfaced(t *testing.T) {
 		},
 	}
 
-	_, err := ResolveAgent(context.Background(), ssmMock, "aaron")
+	_, err := ResolveAgent(context.Background(), ssmMock, "user-a")
 	if err == nil {
 		t.Fatal("expected error")
 	}

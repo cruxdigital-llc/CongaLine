@@ -55,7 +55,7 @@ for this platform, and deletes the shared credentials.`,
 		Long: `Add a channel binding to an existing agent.
 
 Example:
-  conga channels bind aaron slack:U0123456789
+  conga channels bind user-a slack:U0123456789
   conga channels bind leadership slack:C0123456789`,
 		Args: cobra.ExactArgs(2),
 		RunE: channelsBindRun,

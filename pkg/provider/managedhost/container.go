@@ -19,7 +19,7 @@ const DefaultNodeOptions = "--max-old-space-size=1536"
 // text and the host process table (consistent with the secrets-as-env, not
 // secrets-in-config posture — #9627).
 type AgentContainer struct {
-	Name          string // container name, e.g. "conga-aaron"
+	Name          string // container name, e.g. "conga-user-a"
 	Image         string
 	Network       string // per-agent bridge network name
 	IP            string // static IP on Network — the deterministic egress source

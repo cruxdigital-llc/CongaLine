@@ -78,7 +78,7 @@ Maps to `provider.Get(providerType, cfg)`.
 3. **Agent is immutable** — name/type changes force recreate (`RequiresReplace`)
 4. **Secret sensitivity** — `Sensitive: true` on value attribute
 5. **RefreshAll after policy** — matches `conga policy deploy` behavior
-6. **Import by name** — `terraform import conga_agent.aaron aaron`
+6. **Import by name** — `terraform import conga_agent.user_a user-a`
 7. **Channel secrets in state** — token names (not values) for drift detection
 
 ## Key Import Paths

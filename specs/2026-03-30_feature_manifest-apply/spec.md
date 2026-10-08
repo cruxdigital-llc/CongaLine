@@ -42,9 +42,9 @@ setup:
 
 ```yaml
 agents:
-  - name: "aaron"                    # required, lowercase alphanumeric + hyphens
+  - name: "user-a"                   # required, lowercase alphanumeric + hyphens
     type: "user"                     # required, "user" or "team"
-    iam_identity: "aaron@co.com"     # optional, AWS provider only
+    iam_identity: "user-a@co.com"    # optional, AWS provider only
     secrets:                         # optional, map of secret-name → value/$VAR
       anthropic-api-key: "$ANTHROPIC_API_KEY"
       custom-secret: "literal-value"
@@ -68,9 +68,9 @@ channels:
       slack-signing-secret: "$SLACK_SIGNING_SECRET"
       slack-app-token: "$SLACK_APP_TOKEN"
     bindings:                        # optional, list of agent→channel bindings
-      - agent: "aaron"              # must reference an agent in the agents list
+      - agent: "user-a"             # must reference an agent in the agents list
         id: "U0ANSPZPG9X"          # platform-specific ID
-        label: "Aaron DM"          # optional human label
+        label: "User A DM"         # optional human label
       - agent: "team"
         id: "C0ANFAD41GB"
 ```
@@ -124,7 +124,7 @@ policy:
 
 **Error example**:
 ```
-expanding secrets for agent "aaron": environment variable ANTHROPIC_API_KEY is not set
+expanding secrets for agent "user-a": environment variable ANTHROPIC_API_KEY is not set
 ```
 
 ---
@@ -640,9 +640,9 @@ When `--output json` or `--json` is active:
 | Invalid YAML syntax | `loading manifest: yaml: ...` (passthrough from yaml.v3) |
 | Unknown `apiVersion` | `validating manifest: unsupported apiVersion "v2"` |
 | Unknown `kind` | `validating manifest: unsupported kind "Cluster"` |
-| Missing env var for secret | `expanding secrets for agent "aaron": environment variable ANTHROPIC_API_KEY is not set` |
-| Agent name with uppercase | `validating manifest: invalid agent name "Aaron": must be lowercase...` |
-| Duplicate agent names | `validating manifest: duplicate agent name "aaron"` |
+| Missing env var for secret | `expanding secrets for agent "user-a": environment variable ANTHROPIC_API_KEY is not set` |
+| Agent name with uppercase | `validating manifest: invalid agent name "UserA": must be lowercase...` |
+| Duplicate agent names | `validating manifest: duplicate agent name "user-a"` |
 | Binding references missing agent | `validating manifest: channel "slack" binding: agent "bob" not in agents list` |
 | Provider not configured | Setup step runs; if setup section missing, `prov.ListAgents()` errors propagate |
 | Step fails mid-bootstrap | Error returned with partial `BootstrapResult`. Already-completed steps are idempotent on re-run. |
@@ -720,6 +720,6 @@ No new filesystem operations introduced outside of the existing provider contrac
 2. `go test ./cli/...` — all tests pass (existing + new)
 3. `conga bootstrap demo.yaml --provider local` — full provisioning
 4. `conga bootstrap demo.yaml --provider local` — idempotent re-run
-5. `conga status --agent aaron` + `conga status --agent team` — running
+5. `conga status --agent user-a` + `conga status --agent team` — running
 6. `conga policy get` — matches manifest policy
 7. `conga bootstrap demo.yaml --output json` — valid JSON output

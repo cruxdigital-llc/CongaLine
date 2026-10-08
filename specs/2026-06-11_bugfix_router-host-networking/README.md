@@ -20,7 +20,7 @@ dependency on hot-attaching the router to N isolated `/16` bridge networks.
   network. Full detail in memory `project_router_bridge_route_conflict`.
 - **2026-06-11 — Live mitigation (manual, unmanaged):** router → `--network host`;
   `routing.json` → loopback published ports (`http://127.0.0.1:<hostPort>/slack/events`).
-  Verified: aaron replied over Slack. NOTE: reverted by any provider refresh/apply.
+  Verified: user-a replied over Slack. NOTE: reverted by any provider refresh/apply.
 - **2026-06-11 — Plan-fix (this dir):** `plan.md`. **Chosen strategy:** make
   host-networking + loopback delivery the **standard router topology for all
   providers** (single-host AWS/local/remote), removing the multi-bridge-attach

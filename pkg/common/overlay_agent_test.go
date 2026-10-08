@@ -99,13 +99,13 @@ func TestLoadAgentOverlay_EmptyFile(t *testing.T) {
 func TestLoadAgentOverlay_ValidOllama(t *testing.T) {
 	resetOverlayWarnings()
 	dir := t.TempDir()
-	writeOverlay(t, dir, "aaron", `version: 1
+	writeOverlay(t, dir, "user-a", `version: 1
 model:
   provider: ollama
   name: qwen3:6b
   base_url: http://192.168.181.97:11434
 `)
-	got, err := LoadAgentOverlay(dir, newAgent("aaron"))
+	got, err := LoadAgentOverlay(dir, newAgent("user-a"))
 	if err != nil {
 		t.Fatalf("want nil error, got %v", err)
 	}
@@ -174,7 +174,7 @@ model:
 func TestLoadAgentOverlay_V2WithSubagents(t *testing.T) {
 	resetOverlayWarnings()
 	dir := t.TempDir()
-	writeOverlay(t, dir, "aaron", `version: 2
+	writeOverlay(t, dir, "user-a", `version: 2
 subagents:
   model:
     provider: openai
@@ -183,7 +183,7 @@ subagents:
   delegation_mode: prefer
   max_concurrent: 4
 `)
-	got, err := LoadAgentOverlay(dir, newAgent("aaron"))
+	got, err := LoadAgentOverlay(dir, newAgent("user-a"))
 	if err != nil {
 		t.Fatalf("want nil error, got %v", err)
 	}

@@ -340,7 +340,7 @@ func TestResolveOperatorBehaviorDir_WorktreeRedirectsToMain(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(main, ".git"), 0755); err != nil {
 		t.Fatalf("mkdir main: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(main, "agents", "aaron"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(main, "agents", "user-a"), 0755); err != nil {
 		t.Fatalf("mkdir main agents: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(wt, "agents", "_defaults"), 0755); err != nil {
@@ -416,32 +416,32 @@ func TestMainWorktreeAgentsFromGitdir(t *testing.T) {
 	}{
 		{
 			name:         "absolute gitdir",
-			gitContent:   "gitdir: /Users/aaron/repo/.git/worktrees/feature\n",
-			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
-			want:         "/Users/aaron/repo/agents",
+			gitContent:   "gitdir: /Users/user-a/repo/.git/worktrees/feature\n",
+			worktreeRoot: "/Users/user-a/repo/.claude/worktrees/feature",
+			want:         "/Users/user-a/repo/agents",
 		},
 		{
 			name:         "relative gitdir resolved against worktree root",
 			gitContent:   "gitdir: ../../../.git/worktrees/feature\n",
-			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
-			want:         filepath.Join("/Users/aaron/repo/.claude/worktrees/feature", "../../../.git/worktrees/feature", "..", "..", "..", "agents"),
+			worktreeRoot: "/Users/user-a/repo/.claude/worktrees/feature",
+			want:         filepath.Join("/Users/user-a/repo/.claude/worktrees/feature", "../../../.git/worktrees/feature", "..", "..", "..", "agents"),
 		},
 		{
 			name:         "extra whitespace tolerated",
-			gitContent:   "  gitdir:    /Users/aaron/repo/.git/worktrees/feature   \n",
-			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
-			want:         "/Users/aaron/repo/agents",
+			gitContent:   "  gitdir:    /Users/user-a/repo/.git/worktrees/feature   \n",
+			worktreeRoot: "/Users/user-a/repo/.claude/worktrees/feature",
+			want:         "/Users/user-a/repo/agents",
 		},
 		{
 			name:         "non-gitdir lines ignored",
-			gitContent:   "# comment\nworktree-purpose: feature\ngitdir: /Users/aaron/repo/.git/worktrees/feature\n",
-			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
-			want:         "/Users/aaron/repo/agents",
+			gitContent:   "# comment\nworktree-purpose: feature\ngitdir: /Users/user-a/repo/.git/worktrees/feature\n",
+			worktreeRoot: "/Users/user-a/repo/.claude/worktrees/feature",
+			want:         "/Users/user-a/repo/agents",
 		},
 		{
 			name:         "no gitdir found",
 			gitContent:   "# nothing useful here\n",
-			worktreeRoot: "/Users/aaron/repo/.claude/worktrees/feature",
+			worktreeRoot: "/Users/user-a/repo/.claude/worktrees/feature",
 			want:         "",
 		},
 	}

@@ -62,7 +62,7 @@ file or format.
 - **Operator deploying a new agent** wants to say "this agent is a Code/Dev
   agent — give it Opus as primary, Qwen as the cheap delegator, hook it up
   to the right Slack channel" without writing three config files.
-- **Operator dogfooding** wants to bind their personal `aaron` agent so that
+- **Operator dogfooding** wants to bind their personal `user-a` agent so that
   Opus drives the conversation but lookups, file digests, and CSV crunching
   use Qwen — observable in the bill (fewer Anthropic tokens).
 - **Operator running team agents** wants a persistent `ops` agent on Qwen

@@ -362,7 +362,7 @@ Flags: --json, --force (skip confirmation)
 ```
 This will:
   - Stop the Slack router
-  - Remove Slack bindings from agents: aaron, leadership
+  - Remove Slack bindings from agents: user-a, leadership
   - Delete Slack credentials
 
 Continue? [y/N]
@@ -380,7 +380,7 @@ Flags: --output json
 **Human output**:
 ```
 PLATFORM  STATUS      ROUTER  BOUND AGENTS
-slack     configured  running aaron, leadership
+slack     configured  running user-a, leadership
 ```
 
 **JSON output**:
@@ -390,7 +390,7 @@ slack     configured  running aaron, leadership
     "platform": "slack",
     "configured": true,
     "router_running": true,
-    "bound_agents": ["aaron", "leadership"]
+    "bound_agents": ["user-a", "leadership"]
   }
 ]
 ```
@@ -403,11 +403,11 @@ Args:  agent name, channel binding (e.g., "slack:U0123456789")
 Flags: --json
 ```
 
-**JSON input**: `{"agent_name": "aaron", "channel": "slack:U0123456789"}`
+**JSON input**: `{"agent_name": "user-a", "channel": "slack:U0123456789"}`
 
 **Validation errors**:
 - `"slack is not configured; run 'conga channels add slack' first"` — channel not added
-- `"agent 'aaron' already has a slack binding; use 'channels unbind' first"` — duplicate
+- `"agent 'user-a' already has a slack binding; use 'channels unbind' first"` — duplicate
 - `"invalid slack user ID: must match U + 10 alphanumeric characters"` — bad ID format
 - `"user agents require a Slack member ID (U...), not a channel ID (C...)"` — type mismatch
 
@@ -484,7 +484,7 @@ s.addTool(s.toolChannelsUnbind()),
 | 1 | `conga_setup` with SSH + Slack tokens | `conga_setup` with SSH only (gateway-only) |
 | 2 | `conga_provision_agent` × 2 with `--channel` | `conga_provision_agent` × 2 (no channel flag) |
 | 3 | `conga_set_secret` API keys | `conga_channels_add slack` (collect Slack creds) |
-| 4 | `conga_policy_set_egress` | `conga_channels_bind aaron slack:U...` |
+| 4 | `conga_policy_set_egress` | `conga_channels_bind user-a slack:U...` |
 | 5 | `conga_policy_deploy` | `conga_channels_bind leadership slack:C...` |
 | 6 | `conga_get_status` | `conga_set_secret` API keys |
 | 7 | Connect + seed memories | `conga_policy_set_egress` + `conga_policy_deploy` |
@@ -510,9 +510,9 @@ This better showcases the modular architecture and makes the demo resilient to S
 | `channels remove slack` when not configured | No-op. Print "slack is not configured." Return nil. |
 | `channels remove slack` when agents have bindings | Auto-strips bindings first (step 3 in RemoveChannel), then removes credentials. |
 | `channels bind` when channel not configured | Error: `"slack is not configured; run 'conga channels add slack' first"` |
-| `channels bind` when agent already bound | Error: `"agent 'aaron' already has a slack binding; use 'channels unbind' first"` |
+| `channels bind` when agent already bound | Error: `"agent 'user-a' already has a slack binding; use 'channels unbind' first"` |
 | `channels bind` with wrong ID type | Error from `ch.ValidateBinding()`: `"user agents require a Slack member ID (U...), not a channel ID (C...)"` |
-| `channels unbind` when agent has no binding | Error: `"agent 'aaron' has no slack binding"` |
+| `channels unbind` when agent has no binding | Error: `"agent 'user-a' has no slack binding"` |
 | `channels unbind` on paused agent | Works. Updates config on disk. Changes take effect when agent is unpaused. |
 | `channels add` when setup hasn't been run | Error: `"conga is not set up; run 'conga admin setup' first"` (check for config dir) |
 | Router fails to start after `channels add` | Error propagated. Secrets are still saved (can retry by re-running `channels add`). |

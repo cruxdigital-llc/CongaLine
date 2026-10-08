@@ -39,10 +39,10 @@ type LifecycleHooks struct {
 // no systemd-ism (ExecStartPost, WantedBy, …) may appear in ServiceSpec — those
 // live only inside a backend.
 type ServiceSpec struct {
-	Name        string // e.g. "conga-aaron"
+	Name        string // e.g. "conga-user-a"
 	Description string
 	RunCmd      string // the full foreground run command (e.g. `docker run … <image>`)
-	StopCmd     string // optional stop command (e.g. `docker stop conga-aaron`)
+	StopCmd     string // optional stop command (e.g. `docker stop conga-user-a`)
 	EnvFile     string // optional env file path
 	After       []string
 	Requires    []string

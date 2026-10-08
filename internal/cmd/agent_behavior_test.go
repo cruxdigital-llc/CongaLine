@@ -20,28 +20,28 @@ func TestSyncBehaviorToDeployed_PreservesIdentityJSON(t *testing.T) {
 	// Set up a fake repo with one agent's overlay.
 	repoRoot := t.TempDir()
 	repoAgents := filepath.Join(repoRoot, "agents")
-	if err := os.MkdirAll(filepath.Join(repoAgents, "aaron"), 0755); err != nil {
-		t.Fatalf("mkdir repo aaron: %v", err)
+	if err := os.MkdirAll(filepath.Join(repoAgents, "user-a"), 0755); err != nil {
+		t.Fatalf("mkdir repo user-a: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoAgents, "aaron", "SOUL.md"), []byte("aaron soul"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoAgents, "user-a", "SOUL.md"), []byte("user-a soul"), 0644); err != nil {
 		t.Fatalf("write repo SOUL.md: %v", err)
 	}
 
-	// Set up dataDir with: an existing identity JSON for aaron, an
-	// identity JSON for nathan (no overlay), and an old overlay file
+	// Set up dataDir with: an existing identity JSON for user-a, an
+	// identity JSON for user-c (no overlay), and an old overlay file
 	// for a deleted agent.
 	dataDir := t.TempDir()
 	deployedAgents := filepath.Join(dataDir, "agents")
 	if err := os.MkdirAll(deployedAgents, 0755); err != nil {
 		t.Fatalf("mkdir deployed: %v", err)
 	}
-	aaronJSON := filepath.Join(deployedAgents, "aaron.json")
-	nathanJSON := filepath.Join(deployedAgents, "nathan.json")
-	if err := os.WriteFile(aaronJSON, []byte(`{"name":"aaron","type":"user"}`), 0600); err != nil {
-		t.Fatalf("write aaron.json: %v", err)
+	userAJSON := filepath.Join(deployedAgents, "user-a.json")
+	userCJSON := filepath.Join(deployedAgents, "user-c.json")
+	if err := os.WriteFile(userAJSON, []byte(`{"name":"user-a","type":"user"}`), 0600); err != nil {
+		t.Fatalf("write user-a.json: %v", err)
 	}
-	if err := os.WriteFile(nathanJSON, []byte(`{"name":"nathan","type":"user"}`), 0600); err != nil {
-		t.Fatalf("write nathan.json: %v", err)
+	if err := os.WriteFile(userCJSON, []byte(`{"name":"user-c","type":"user"}`), 0600); err != nil {
+		t.Fatalf("write user-c.json: %v", err)
 	}
 	// Old overlay for an agent that's been removed from the repo.
 	if err := os.MkdirAll(filepath.Join(deployedAgents, "removed-agent"), 0755); err != nil {
@@ -60,15 +60,15 @@ func TestSyncBehaviorToDeployed_PreservesIdentityJSON(t *testing.T) {
 
 	syncBehaviorToDeployed(dataDir)
 
-	// Forward-copy did its job — aaron's SOUL.md is now in deployed.
-	if data, err := os.ReadFile(filepath.Join(deployedAgents, "aaron", "SOUL.md")); err != nil {
-		t.Fatalf("aaron's SOUL.md should have been synced to deployed: %v", err)
-	} else if string(data) != "aaron soul" {
-		t.Fatalf("SOUL.md content: want 'aaron soul', got %q", string(data))
+	// Forward-copy did its job — user-a's SOUL.md is now in deployed.
+	if data, err := os.ReadFile(filepath.Join(deployedAgents, "user-a", "SOUL.md")); err != nil {
+		t.Fatalf("user-a's SOUL.md should have been synced to deployed: %v", err)
+	} else if string(data) != "user-a soul" {
+		t.Fatalf("SOUL.md content: want 'user-a soul', got %q", string(data))
 	}
 
 	// Identity JSON files MUST survive — they're not overlay content.
-	for _, p := range []string{aaronJSON, nathanJSON} {
+	for _, p := range []string{userAJSON, userCJSON} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("identity JSON %s was deleted by sync — this is the regression we're guarding against: %v", filepath.Base(p), err)
 		}

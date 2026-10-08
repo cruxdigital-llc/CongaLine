@@ -192,7 +192,7 @@ are wired for a router model the host no longer uses.
   native file transfer, output truncation. The engine must issue **few, small** file-puts and short
   idempotent commands — never stream large scripts. (This is *why* logic runs client-side in Go.)
 - **No regression of the v0.1.8 host-networking router model.**
-- **Live production fleet** (e.g. `aaron`). Isolated-agent probes first; byte-exact backup/restore
+- **Live production fleet** (e.g. `user-a`). Isolated-agent probes first; byte-exact backup/restore
   discipline as in prior infra specs.
 - **Security standards review required** (`product-knowledge/standards/security.md`) before
   implementation — egress enforcement, channel allowlist, secrets handling are all touched.

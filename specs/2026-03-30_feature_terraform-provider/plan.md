@@ -71,8 +71,8 @@ resource "conga_environment" "main" {
   install_docker = true
 }
 
-resource "conga_agent" "aaron" {
-  name       = "aaron"
+resource "conga_agent" "user_a" {
+  name       = "user-a"
   type       = "user"
   depends_on = [conga_environment.main]
 }
@@ -83,8 +83,8 @@ resource "conga_agent" "team" {
   depends_on = [conga_environment.main]
 }
 
-resource "conga_secret" "aaron_api_key" {
-  agent = conga_agent.aaron.name
+resource "conga_secret" "user_a_api_key" {
+  agent = conga_agent.user_a.name
   name  = "anthropic-api-key"
   value = var.anthropic_api_key
 }
@@ -99,8 +99,8 @@ resource "conga_channel" "slack" {
   depends_on = [conga_environment.main]
 }
 
-resource "conga_channel_binding" "aaron_slack" {
-  agent   = conga_agent.aaron.name
+resource "conga_channel_binding" "user_a_slack" {
+  agent   = conga_agent.user_a.name
   channel = conga_channel.slack.platform
   id      = "U0ANSPZPG9X"
 }
@@ -175,7 +175,7 @@ Each resource file follows the `terraform-plugin-framework` pattern:
 
 4. **Secret sensitivity**: The `value` attribute on `conga_secret` uses `Sensitive: true` — Terraform redacts it in plan output and state is encrypted at rest (if using remote backend).
 
-5. **Import by name**: `terraform import conga_agent.aaron aaron` imports by agent name. `terraform import conga_channel.slack slack` imports by platform name. `terraform import conga_policy.main policy` imports the singleton policy.
+5. **Import by name**: `terraform import conga_agent.user_a user-a` imports by agent name. `terraform import conga_channel.slack slack` imports by platform name. `terraform import conga_policy.main policy` imports the singleton policy.
 
 6. **Channel secrets in state**: `conga_channel` stores token names (not values) in state for drift detection. Actual values are only sent during Create/Update. This matches Terraform's pattern for provider credentials.
 

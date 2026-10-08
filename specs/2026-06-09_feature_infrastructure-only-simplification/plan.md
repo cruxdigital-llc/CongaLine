@@ -28,7 +28,7 @@ The feature is fundamentally about drawing — and enforcing — that boundary.
 | **C** | **Layered config via `$include`** (Conga owns a managed file, admin owns an included file; OpenClaw deep-merges) | ✅ | ✅ | Low — **validated live** (§5b); fails closed, never flattens |
 | D | **Conga drives `openclaw config patch`** (CLI-managed merge) | ✅ | ✅ | Medium — validated/version-correct + `null`-deletes (§5c), but **strips admin comments** and **needs in-container exec** per change |
 
-### Recommended: **Approach C** — validated on `aaron` (2026-06-09)
+### Recommended: **Approach C** — validated on `user-a` (2026-06-09)
 
 The original recommendation was B. Config research (§4) plus a live experiment on the pinned
 `2026.5.26` image (`research-openclaw-config.md` §5b) make **C the recommendation**:

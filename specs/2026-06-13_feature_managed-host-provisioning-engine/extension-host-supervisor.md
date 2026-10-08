@@ -42,7 +42,7 @@ testability *today* — assertions run against the spec, not templated bash.)
 ```go
 // ServiceSpec is the init-system-agnostic description of one managed agent service.
 type ServiceSpec struct {
-    Name          string            // e.g. "conga-aaron"
+    Name          string            // e.g. "conga-user-a"
     Description   string
     RunCmd        []string          // the `docker run ...` argv
     EnvFile       string            // path to the agent env file on the host

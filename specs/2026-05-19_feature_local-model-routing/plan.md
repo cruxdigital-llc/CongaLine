@@ -116,20 +116,20 @@ Per `CLAUDE.md`: changes to `pkg/` require:
 ### Phase 6 — End-to-end verification
 
 #### AWS (primary path)
-1. `behavior/agents/aaron/agent.yaml` populated with Spark URL.
-2. `terraform/environments/production/terraform.tfvars`: add `"openai-api-key" = "<key-or-dummy>"` under `agents.aaron.secrets`.
+1. `behavior/agents/user-a/agent.yaml` populated with Spark URL.
+2. `terraform/environments/production/terraform.tfvars`: add `"openai-api-key" = "<key-or-dummy>"` under `agents.user-a.secrets`.
 3. `terraform apply` from `terraform/environments/production/`.
-4. `conga refresh-agent aaron`.
-5. `mcp__conga__conga_container_exec --agent aaron` running `cat /home/node/.openclaw/openclaw.json` — verify the model block.
-6. DM `aaron` in Slack: "hello" → expect Qwen response.
-7. `mcp__conga__conga_get_logs --agent aaron` — outbound URL is the Spark.
-8. `mcp__conga__conga_get_proxy_logs --agent aaron` — Envoy connect target is `192.168.181.97:11434`.
-9. Control: DM `zach` → Anthropic response. Their `openclaw.json` is unchanged (diff is empty).
+4. `conga refresh-agent user-a`.
+5. `mcp__conga__conga_container_exec --agent user-a` running `cat /home/node/.openclaw/openclaw.json` — verify the model block.
+6. DM `user-a` in Slack: "hello" → expect Qwen response.
+7. `mcp__conga__conga_get_logs --agent user-a` — outbound URL is the Spark.
+8. `mcp__conga__conga_get_proxy_logs --agent user-a` — Envoy connect target is `192.168.181.97:11434`.
+9. Control: DM `user-b` → Anthropic response. Their `openclaw.json` is unchanged (diff is empty).
 
 #### Local provider parity
-1. Fresh `conga admin setup --provider local` on a dev machine with `behavior/agents/aaron/agent.yaml` present.
-2. `conga secrets set openai-api-key --agent aaron --value dummy`.
-3. `docker exec conga-aaron cat /home/node/.openclaw/openclaw.json` — same model overlay as on AWS.
+1. Fresh `conga admin setup --provider local` on a dev machine with `behavior/agents/user-a/agent.yaml` present.
+2. `conga secrets set openai-api-key --agent user-a --value dummy`.
+3. `docker exec conga-user-a cat /home/node/.openclaw/openclaw.json` — same model overlay as on AWS.
 
 #### Remote provider parity
 1. Same overlay, `conga admin setup --provider remote` against a Raspberry Pi or VPS.
@@ -152,7 +152,7 @@ Per `CLAUDE.md`: changes to `pkg/` require:
 |---|---|
 | OpenClaw 2026.3.11 (or chosen target) doesn't natively support OpenAI-compatible | Spike catches this in Phase 0; we stop before writing code and re-plan around Bifrost |
 | Spark IP changes | Documented as a manual update in both `terraform.tfvars` and `agent.yaml`; surface in the spec's operational notes |
-| `aaron` opts in but `openai-api-key` is missing | Container starts, upstream auth fails, visible in `conga logs`. Acceptable failure mode for v1; can add a validator later |
+| `user-a` opts in but `openai-api-key` is missing | Container starts, upstream auth fails, visible in `conga logs`. Acceptable failure mode for v1; can add a validator later |
 | Image pin bump (Phase 1) introduces unrelated regressions | Apply separately, commit separately, verify Slack + existing agents before merging the feature |
 
 ## Open Questions (deferred to `spec.md`)

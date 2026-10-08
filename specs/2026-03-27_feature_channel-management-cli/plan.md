@@ -94,7 +94,7 @@ Register in `tools.go` alongside existing tool groups.
   1. `conga_setup` (gateway-only, no Slack prompts)
   2. `conga_provision_agent` × 2 (no `--channel` flag)
   3. `conga_channels_add slack` (collects credentials, starts router)
-  4. `conga_channels_bind aaron slack:U...` + `conga_channels_bind leadership slack:C...`
+  4. `conga_channels_bind user-a slack:U...` + `conga_channels_bind leadership slack:C...`
   5. Continue with secrets, policy, connect, interactions
 
 ## Dependency Order

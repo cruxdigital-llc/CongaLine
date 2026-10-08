@@ -15,7 +15,7 @@ On the AWS host (Docker **25.0.16**, kernel **6.1.174-217.345.amzn2023.aarch64**
 that attach now fails:
 
 ```
-docker network connect conga-aaron conga-router
+docker network connect conga-user-a conga-router
 Error: cannot program address 172.18.0.3/16 in sandbox interface because it
 conflicts with existing route {Dst: 0.0.0.0/0 Gw: 172.17.0.1 Table: 254}
 ```
